@@ -1,0 +1,36 @@
+name: CI
+
+# 这个项目唯一的运行时依赖是 ws。node --test 会 import src/transport/ws.js，
+# 所以任何依赖装配缺失都会在测试阶段直接暴露——此前 ws 只是 Vite 顺带装进
+# node_modules 的传递依赖，本地全绿、干净环境 ERR_MODULE_NOT_FOUND。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # 用 npm ci 而非 npm install：ci 严格按 lockfile 装，
+      # package.json 与 lockfile 不一致时直接失败而不是悄悄补装。
+      - name: Install from lockfile
+        run: npm ci
+
+      - name: Verify lockfile is in sync with package.json
+        run: git diff --exit-code -- package-lock.json
+
+      - name: Run tests
+        run: npm test

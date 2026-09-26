@@ -1,19 +1,37 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { ValidationError } from '../daemon/coordinator.js';
 
 // daemon 只监听 127.0.0.1，但浏览器不理会目标地址是不是本机：
 // 页面里的 fetch 照样能打到 127.0.0.1:4100。原来这里无条件回 '*'，
 // 等于任何网站都能注册 agent、读全部协调状态、往库里写消息。
-// 改为只放行同源请求（无 Origin 的直连，如 hook 脚本与 MCP 客户端不受影响），
-// 需要跨源时用 NEXUS_ALLOWED_ORIGINS 显式列出，逗号分隔。
-const ALLOWED_ORIGINS = (process.env.NEXUS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
+// 改为只放行 NEXUS_ALLOWED_ORIGINS 显式列出的来源（逗号分隔）；
+// 无 Origin 的直连（hook 脚本、MCP 客户端）不受白名单影响。
+//
+// 允许的跨源列表按请求读取，而非在模块加载时求值一次。
+// 模块加载时机早于任何配置注入，缓存下来会让 NEXUS_ALLOWED_ORIGINS 在
+// 长驻进程里永远读到空值——白名单配了也不生效。按环境变量原文做记忆化，
+// 配置没变时不会重复解析。
+let allowedOriginsCache = { raw: null, list: [] };
+
+function allowedOrigins() {
+  const raw = process.env.NEXUS_ALLOWED_ORIGINS || '';
+  if (raw !== allowedOriginsCache.raw) {
+    allowedOriginsCache = {
+      raw,
+      list: raw.split(',').map((o) => o.trim()).filter(Boolean)
+    };
+  }
+  return allowedOriginsCache.list;
+}
+
+function isOriginAllowed(req) {
+  const origin = req.headers.origin;
+  return Boolean(origin) && allowedOrigins().includes(origin);
+}
 
 function applyCors(req, res) {
-  const origin = req.headers.origin;
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
+  if (isOriginAllowed(req)) {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Agent-ID');
@@ -27,13 +45,17 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
   return async function handleRest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
+    // 真正响应上也必须回 CORS 头。浏览器只在实际响应里看到
+    // Access-Control-Allow-Origin 才放行响应体；只在预检里回，等于白名单没生效。
+    applyCors(req, res);
+
     if (req.method === 'OPTIONS') {
-      if (applyCors(req, res)) {
-        res.writeHead(204);
-      } else {
+      if (!isOriginAllowed(req)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Origin not allowed' }));
+        return;
       }
+      res.writeHead(204);
       res.end();
       return;
     }
@@ -165,7 +187,16 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       sendJson(404, { error: 'Not Found' });
     } catch (err) {
-      sendJson(500, { error: err.message });
+      // 调用方给了非法输入是 400，不是 500。原始错误串（尤其是 SQLite 绑定报错）
+      // 不能直接透出去，它会暴露底层 schema 且对调用方毫无可操作性。
+      if (err instanceof ValidationError) {
+        return sendJson(err.statusCode || 400, { error: err.message, field: err.field });
+      }
+      if (err instanceof SyntaxError) {
+        return sendJson(400, { error: 'Request body is not valid JSON' });
+      }
+      console.error('[Agent-Nexus] Unhandled request error:', err);
+      sendJson(500, { error: 'Internal Server Error' });
     }
   };
 }

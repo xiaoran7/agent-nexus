@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node src/cli.js start",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "ci": "npm ci && npm test"
   },
   "keywords": [
     "agent",
@@ -21,5 +22,8 @@
     "conflict-detection"
   ],
   "author": "tangwg",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
 }

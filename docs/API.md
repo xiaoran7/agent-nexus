@@ -1,6 +1,27 @@
 # Agent-Nexus API 参考手册
 
-所有 REST 接口默认监听 `http://127.0.0.1:4100`，返回标准 JSON，支持 CORS。
+所有 REST 接口默认监听 `http://127.0.0.1:4100`，返回标准 JSON。
+
+跨源默认不放行：`NEXUS_ALLOWED_ORIGINS` 白名单外的来源既拿不到 CORS 响应头，预检也返回 403。该变量按请求读取，改完无需重启。
+
+## 〇、错误约定
+
+| 状态码 | 含义 |
+| --- | --- |
+| 400 | 请求体不是合法 JSON，或字段不满足契约。响应为 `{"error": "...", "field": "claims[].target"}` |
+| 403 | 预检来源不在 `NEXUS_ALLOWED_ORIGINS` 白名单内 |
+| 404 | 资源不存在（含租约不存在或不属于该 agent） |
+| 500 | 服务端内部错误，只回 `{"error": "Internal Server Error"}`，细节写服务端日志 |
+
+入参硬性要求，任何一条不满足都返回 400 且**不写入任何协调记录**（不会留下半截 intent 或 claim）：
+
+- `agent_id`：非空字符串。协调核心与 hook 通道都必须有它。
+- `summary` / `prompt_hint` 之类的描述字段：非空字符串。
+- `claims[].type`：`file` | `module` | `symbol` 之一。
+- `claims[].target`：
+  - `file` / `module`——可相对可绝对，但归一化后不得落在工作目录或盘符根。空串、纯空白、`.`、`./` 都会被拒。这一点很关键：曾经缺失的 `file_path` 会被归一化成 `''` 并当成一条真实 claim，导致第一个这样做的 agent 把所有同样发空目标的 agent 全部锁死。
+  - `symbol`——非空且不以空白或路径分隔符开头。
+- hook 通道的 `file_path` 必填，与 `claims[].target` 同规则。
 
 ---
 
@@ -87,6 +108,7 @@
     "reason": "BLOCKED: File 'src/InteractionResolver.kt' is locked by [重构 InteractionResolver] for \"重构 InteractionResolver 的候选决策逻辑\"."
   }
   ```
+- **响应 (入参非法)**：`400`，`{"error": "\"claims[].target\" is required and must be a non-empty string", "field": "claims[].target"}`。Hook 收到 4xx 会按"协调库无法评估"处理并拦截（退出码 2），不会当成放行。
 
 ---
 
