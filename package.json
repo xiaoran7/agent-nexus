@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/daemon/index.js",
-    "test": "node test/runner.js"
+    "test": "node --test \"test/**/*.test.js\""
   },
   "keywords": [
     "agent",

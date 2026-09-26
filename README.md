@@ -11,7 +11,7 @@ npm.cmd start
 npm.cmd test
 ```
 
-默认面板为 `http://127.0.0.1:4100`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`。测试使用内存 SQLite，不证明宿主工具已接入。
+默认面板为 `http://127.0.0.1:4100`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`。测试使用 `node --test` 跑 `test/**/*.test.js`，覆盖协调判冲、Hook 拦截、共享状态与 CAS、消息总线和 MCP 工具分发；测试不证明宿主工具已接入。
 
 ## 实现与限制
 
