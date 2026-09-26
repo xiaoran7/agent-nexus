@@ -5,7 +5,7 @@
 
 import { request } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, isAbsolute, join, relative } from 'node:path';
 
 const PORT = parseInt(process.env.NEXUS_PORT || '4100', 10);
 const HOST = process.env.NEXUS_HOST || '127.0.0.1';
@@ -40,7 +40,16 @@ function resolveAgentIdentity(payload) {
   return { provider, sessionId, agentId, promptHint };
 }
 
+// 只有真正改文件的工具才值得去问协调库。Read/Grep/Glob/LS 之类拿到 file_path
+// 也不该被判冲——误拦的代价（agent 认为文件被占用而绕路）远大于漏拦。
+const WRITE_TOOLS = new Set([
+  'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update', 'apply_patch'
+]);
+
 function resolveTargetFile(payload) {
+  const toolName = payload.tool_name;
+  if (toolName && !WRITE_TOOLS.has(toolName)) return null;
+
   const toolInput = payload.tool_input || payload.input || {};
   if (toolInput.file_path) return toolInput.file_path;
   if (toolInput.path) return toolInput.path;
@@ -55,6 +64,52 @@ function resolveTargetFile(payload) {
   }
 
   return process.env.CLAUDE_TOOL_FILE || process.env.TOOL_INPUT_PATH || null;
+}
+
+// Bash 没有 file_path，目标是命令行本身。只在命令确实会写入、且参数里带有
+// 本地文件路径时才挑一个目标出来。
+//
+// 两个条件都必须满足，缺一不可：
+//   1. 命令是写入动作（>、tee、sed -i、cp/mv 目的端、截断重定向……）。
+//      否则 `cat src/a.js` 也会被当成写入，把只读操作误判成冲突。
+//   2. 路径能解析到本仓库工作目录之下。装到全局的 hook 会收到别处的调用，
+//      拿 /etc/hosts、别个项目的文件去判冲只会平白阻断。
+const WRITE_COMMAND_RE =
+  /(?:^|[^>])>{1,2}\s*|(?:^|\s)(?:tee|truncate)\s|(?:^|\s)(?:sed|perl)\s[^|;]*\s-i(?:\s|$)|(?:\bcp\b|\bmv\b|\binstall\b)\s/;
+
+// cp/mv/install 改写的是目的端，不是源。取最后一个路径参数才是真正被写入的文件。
+const COPY_COMMAND_RE = /(?:\bcp\b|\bmv\b|\binstall\b)\s/;
+
+function extractBashTarget(payload, workspaceDir) {
+  const command = (payload.tool_input || payload.input || {}).command;
+  if (typeof command !== 'string' || !command) return null;
+  if (!WRITE_COMMAND_RE.test(command)) return null;
+
+  // 先按出现顺序取出全部路径 token，再决定取哪个。
+  // 不能先按"在工作目录内"过滤：cp 的源和目的分处两侧时，过滤会把源留下，
+  // 于是 `cp a.js /tmp/b.js` 反倒判成"要写 a.js"，把一次无关的拷贝拦下来。
+  const paths = [];
+  for (const token of command.match(/"[^"]*"|'[^']*'|[^\s;&|]+/g) || []) {
+    const candidate = token.replace(/^["']|["']$/g, '');
+    // 反引号与 $() 里的内容无法静态还原，跳过而不是猜。
+    if (/[`$()]/.test(candidate)) continue;
+    // 纯命令行开关（-rf、--config）不含路径分隔符，排除。
+    if (!candidate.includes('/') && !candidate.includes(String.fromCharCode(92))) continue;
+    paths.push(candidate);
+  }
+
+  if (paths.length === 0) return null;
+
+  // cp/mv/install 改写的是目的端（最后一个路径），其余写入命令取第一个。
+  const target = COPY_COMMAND_RE.test(command) ? paths[paths.length - 1] : paths[0];
+
+  // 工作目录之外的文件不参与判冲：hook 装到全局后，会收到别处项目的调用，
+  // 拿那些路径去判冲只会平白阻断。
+  const abs = isAbsolute(target) ? target : join(workspaceDir, target);
+  const rel = relative(workspaceDir, abs);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+
+  return target;
 }
 
 function checkPermission(payload) {
@@ -112,7 +167,11 @@ function checkPermission(payload) {
 
 async function main() {
   const payload = readStdinJson();
-  const targetFile = resolveTargetFile(payload);
+  // 工作目录优先取载荷里的 cwd（宿主告诉我们的调用位置），退回环境变量。
+  // daemon 用自己的 cwd 解析相对路径，两者不一致会让判冲落到不同文件上。
+  const workspaceDir = payload.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+
+  const targetFile = resolveTargetFile(payload) || extractBashTarget(payload, workspaceDir);
 
   if (!targetFile) {
     process.exit(0);

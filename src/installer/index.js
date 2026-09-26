@@ -18,6 +18,16 @@ function assertHookScriptExists() {
   return HOOK_SCRIPT_PATH;
 }
 
+// 一次 Bash 调用只检查一个文件，多写目标只会互相判冲、让彼此都没法干活。
+function makeHookGroup(hookCommand) {
+  return {
+    // 命中可能写文件的命令。刻意不写 "*"：每条命令都会起一次 node 进程，
+    // 而这个 hook 的单次预算是 1000ms。
+    matcher: `Bash|Write|Edit|MultiEdit|NotebookEdit`,
+    hooks: [{ type: 'command', command: hookCommand, timeout: 5 }]
+  };
+}
+
 // 1. 注入 Claude Code
 export function installClaudeHook() {
   const hookPath = assertHookScriptExists();
@@ -53,12 +63,40 @@ export function installClaudeHook() {
 
   // 统一分隔符：Windows 上 JSON 里的反斜杠必须转义，否则写出的配置解析不了。
   const hookCommand = `node "${isAbsolute(hookPath) ? hookPath : resolve(hookPath)}"`;
-  const exists = settings.hooks.PreToolUse.some(h => typeof h === 'string' && h.includes('nexus-hook.mjs'));
 
-  if (!exists) {
-    settings.hooks.PreToolUse.push(hookCommand);
+  // Claude Code 的 PreToolUse 是「matcher 分组 + 内嵌 hooks 处理器」的嵌套结构，
+  // 不是命令字符串数组。写成 ["node ..."] 宿主根本不会执行它。
+  // 同时兼容历史的字符串写法：已装过的旧配置升级成正确结构。
+  let installed = false;
+  let upgraded = false;
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.flatMap((group) => {
+    if (typeof group === 'string') {
+      if (!group.includes('nexus-hook.mjs')) return [group];
+      if (installed) return []; // 旧版会重复 push 同一路径，这里顺手去重
+      installed = true;
+      upgraded = true;
+      return [makeHookGroup(hookCommand)];
+    }
+    // 已用正确结构装过：整组判定，不去动别人写的 matcher 分组。
+    if (installed) return [group];
+    const handlers = Array.isArray(group.hooks) ? group.hooks : [];
+    if (!handlers.some((h) => h && typeof h.command === 'string' && h.command.includes('nexus-hook.mjs'))) {
+      return [group];
+    }
+    installed = true;
+    return [group];
+  });
+
+  if (!installed) {
+    settings.hooks.PreToolUse.push(makeHookGroup(hookCommand));
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
     console.log(`[Agent-Nexus] Successfully installed PreToolUse hook to Claude Code (${settingsPath})`);
+  } else if (upgraded) {
+    // 旧版写的是命令字符串数组，宿主不认；本次已就地升级成嵌套结构。
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+    console.log(
+      `[Agent-Nexus] Upgraded legacy PreToolUse hook entry to the matcher-group format in ${settingsPath}`
+    );
   } else {
     console.log(`[Agent-Nexus] Claude Code hook already installed.`);
   }

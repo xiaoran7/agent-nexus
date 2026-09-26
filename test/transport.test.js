@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
+import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { startTestDaemon } from './helpers.js';
 import {
@@ -339,8 +340,107 @@ test('WebSocket 广播时间线与唤醒事件', async (t) => {
   });
 });
 
-// 安装器会改写用户配置。这里把 HOME 指到临时目录，验证写出的结构与副作用，
-// 不会碰用户的真实配置。
+// Hook 脚本按真实 Claude Code 的载荷形状解析目标文件。
+// PreToolUse 的 stdin 里有 tool_name 和 tool_input；Write/Edit 带 file_path，
+// Bash 只有 command，需要从中认出写入目标。
+test('hook 脚本识别真实 Claude Code 载荷', async (t) => {
+  const d = await startTestDaemon();
+  t.after(() => d.close());
+
+  const hook = join(import.meta.dirname, '../src/hook/nexus-hook.mjs');
+
+  // 用真实的 PreToolUse 载荷跑一次 hook 脚本，拿退出码。
+  const runHook = (payload, sessionId) =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [hook], {
+        env: {
+          ...process.env,
+          NEXUS_PORT: String(d.port),
+          NEXUS_SESSION_ID: sessionId,
+          // 继承宿主进程的环境会让所有用例塌成同一个 agent（都算"自己人"，
+          // 于是永远放行）。显式清掉身份变量，行为才可预测。
+          CLAUDE_CODE_SESSION_ID: undefined,
+          NEXUS_AGENT_PROVIDER: undefined
+        },
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      let stderr = '';
+      child.stderr.on('data', (c) => (stderr += c));
+      child.on('close', (code) => resolve({ code, stderr }));
+      child.stdin.end(JSON.stringify(payload));
+    });
+
+  const preToolUse = (toolName, toolInput) => ({
+    session_id: 'hs1',
+    cwd: process.cwd(),
+    hook_event_name: 'PreToolUse',
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_use_id: 'toolu_test'
+  });
+
+  await d.request('/api/hook/check', {
+    method: 'POST',
+    body: { agent_id: 'holder', provider: 'claude', session_id: 'holder', file_path: 'src/locked.js' }
+  });
+
+  await t.test('Edit 他人锁定的文件被拦截', async () => {
+    const res = await runHook(
+      preToolUse('Edit', { file_path: 'src/locked.js', old_string: 'a', new_string: 'b' }),
+      'intruder'
+    );
+
+    assert.equal(res.code, 2, '他人持锁时应以退出码 2 拦截');
+    assert.match(res.stderr, /CONFLICT|BLOCKED/i);
+  });
+
+  await t.test('Bash 写入他人锁定的文件同样被拦截', async () => {
+    const res = await runHook(
+      preToolUse('Bash', { command: `echo "{}" > "src/locked.js"` }),
+      'intruder2'
+    );
+
+    assert.equal(res.code, 2, 'Bash 重定向写入被锁文件时应拦截');
+  });
+
+  await t.test('Bash 读取被锁文件不被误拦', async () => {
+    const read = await runHook(
+      preToolUse('Bash', { command: 'cat src/locked.js' }),
+      'reader'
+    );
+    assert.equal(read.code, 0, '读取不应被当成写入');
+
+    // 写目标完全在工作目录之外：不该拿源文件去判冲，
+    // 否则 `cp a.js /tmp/backup.js` 会被误判成"要写 a.js"。
+    const outside = await runHook(
+      preToolUse('Bash', { command: 'cp src/locked.js /tmp/backup-nx-test.js' }),
+      'reader2'
+    );
+    assert.equal(outside.code, 0, '写目标在仓库外时不应判冲');
+  });
+
+  await t.test('cp 到工作目录内时按目的端判冲', async () => {
+    await d.request('/api/hook/check', {
+      method: 'POST',
+      body: { agent_id: 'holder2', provider: 'claude', session_id: 'holder2', file_path: 'src/dest.js' }
+    });
+
+    const res = await runHook(
+      preToolUse('Bash', { command: 'cp src/other.js src/dest.js' }),
+      'copier'
+    );
+
+    assert.equal(res.code, 2, 'cp 的目的端被锁时应拦截');
+  });
+
+  await t.test('无目标文件时静默放行', async () => {
+    // Read 工具没有写入语义，脚本不该把它的 file_path 当成写入目标。
+    const res = await runHook(preToolUse('Read', { file_path: 'src/locked.js' }), 'readonly');
+
+    assert.equal(res.code, 0, '只读工具不应被当成写入而拦截');
+  });
+});
+
 test('安装器把 hook 写进宿主配置', async (t) => {
   const originalEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   const originalCwd = process.cwd();
@@ -360,31 +460,58 @@ test('安装器把 hook 写进宿主配置', async (t) => {
 
   const readSettings = () =>
     JSON.parse(readFileSync(join(fakeHome, '.claude', 'settings.json'), 'utf8'));
-  const hookEntries = (settings) =>
-    settings.hooks.PreToolUse.filter((h) => h.includes('nexus-hook.mjs'));
+  // Claude Code 的 PreToolUse 是 matcher 分组结构，不是命令字符串数组。
+  const hookHandlers = (settings) =>
+    settings.hooks.PreToolUse.flatMap((g) => g.hooks || []).filter((h) => h.command.includes('nexus-hook.mjs'));
+  const hookCommands = (settings) => hookHandlers(settings).map((h) => h.command);
 
-  await t.test('写入 settings.json 并包含 hook 命令', () => {
+  await t.test('写出 Claude Code 期望的嵌套结构', () => {
     installClaudeHook();
 
     const settingsPath = join(fakeHome, '.claude', 'settings.json');
     assert.ok(existsSync(settingsPath), '应创建 Claude 配置文件');
 
     const settings = readSettings();
-    assert.ok(Array.isArray(settings.hooks.PreToolUse));
-    assert.equal(hookEntries(settings).length, 1, 'hook 命令应指向 nexus-hook.mjs');
+    for (const group of settings.hooks.PreToolUse) {
+      assert.equal(typeof group, 'object', 'PreToolUse 元素应是 matcher 分组对象，不是字符串');
+      assert.ok('matcher' in group, '分组应带 matcher');
+      assert.ok(Array.isArray(group.hooks), '分组应带 hooks 数组');
+    }
+
+    const [handler] = hookHandlers(settings);
+    assert.equal(handler.type, 'command', '处理器 type 必须是 command');
+    assert.ok(handler.timeout > 0, '应设置超时，避免挂死宿主');
   });
 
   await t.test('重复安装不产生重复条目', () => {
     installClaudeHook();
     installClaudeHook();
 
-    assert.equal(hookEntries(readSettings()).length, 1, '重复安装应保持幂等');
+    assert.equal(hookHandlers(readSettings()).length, 1, '重复安装应保持幂等');
+  });
+
+  await t.test('升级历史字符串写法的旧条目', () => {
+    // 旧版写的是 ["node \"...\""]，宿主不认；再装一次应就地升级而不是叠加。
+    const settingsPath = join(fakeHome, '.claude', 'settings.json');
+    const script = hookCommands(readSettings())[0].replace(/^node\s+"|"$/g, '');
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ hooks: { PreToolUse: [`node "${script}"`] } }, null, 2),
+      'utf8'
+    );
+
+    installClaudeHook();
+
+    const settings = readSettings();
+    assert.equal(hookHandlers(settings).length, 1, '旧条目应被升级替换，不重复叠加');
+    for (const group of settings.hooks.PreToolUse) {
+      assert.equal(typeof group, 'object', '升级后不应再有字符串条目');
+    }
   });
 
   await t.test('写出的路径真实存在', () => {
     // 写进用户配置的是一条长期生效的命令，路径必须指向实际文件。
-    const command = hookEntries(readSettings())[0];
-    const scriptPath = command.replace(/^node\s+"|"$/g, '');
+    const scriptPath = hookCommands(readSettings())[0].replace(/^node\s+"|"$/g, '');
 
     assert.ok(isAbsolute(scriptPath), `hook 路径应为绝对路径: ${scriptPath}`);
     assert.ok(existsSync(scriptPath), `hook 路径必须真实存在: ${scriptPath}`);
@@ -398,7 +525,7 @@ test('安装器把 hook 写进宿主配置', async (t) => {
     process.chdir(elsewhere);
     installClaudeHook();
 
-    const scriptPath = hookEntries(readSettings())[0].replace(/^node\s+"|"$/g, '');
+    const scriptPath = hookCommands(readSettings())[0].replace(/^node\s+"|"$/g, '');
     assert.ok(
       existsSync(scriptPath),
       `从 ${elsewhere} 执行安装，写出的 hook 路径仍应指向真实文件`
@@ -408,14 +535,17 @@ test('安装器把 hook 写进宿主配置', async (t) => {
   await t.test('保留用户已有的其他 hook', () => {
     const settingsPath = join(fakeHome, '.claude', 'settings.json');
     const settings = readSettings();
-    settings.hooks.PreToolUse.unshift('node "/somebody-else/lint.mjs"');
+    settings.hooks.PreToolUse.unshift({ matcher: 'Bash', hooks: [{ type: 'command', command: 'lint.sh' }] });
+    settings.hooks.PostToolUse = [{ matcher: '*', hooks: [{ type: 'command', command: 'notify.sh' }] }];
     settings.model = 'opus';
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 
     installClaudeHook();
 
     const after = readSettings();
-    assert.ok(after.hooks.PreToolUse.includes('node "/somebody-else/lint.mjs"'), '不应抹掉别人的 hook');
+    const allCommands = after.hooks.PreToolUse.flatMap((g) => g.hooks || []).map((h) => h.command);
+    assert.ok(allCommands.includes('lint.sh'), '不应抹掉别人的 PreToolUse hook');
+    assert.equal(after.hooks.PostToolUse[0].hooks[0].command, 'notify.sh', '不应动其他事件');
     assert.equal(after.model, 'opus', '不应动无关配置');
   });
 

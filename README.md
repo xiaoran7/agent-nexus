@@ -14,7 +14,7 @@ npm.cmd test
 
 默认面板为 `http://127.0.0.1:4100`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`。必须用 `npm ci`（或 `npm install`）安装依赖后再启动：唯一运行时依赖是 `ws`，缺失时 daemon 会在 `src/transport/ws.js` 直接报 `ERR_MODULE_NOT_FOUND`。
 
-测试用 `node --test` 跑 `test/**/*.test.js`，共 82 个用例：`comprehensive.test.js` 覆盖协调判冲、共享状态与 CAS、消息总线和 MCP 工具分发，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、跨源策略和安装器。测试不证明宿主工具已接入。
+测试用 `node --test` 跑 `test/**/*.test.js`，共 89 个用例：`comprehensive.test.js` 覆盖协调判冲、共享状态与 CAS、消息总线和 MCP 工具分发，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、跨源策略、Hook 载荷解析和安装器。测试不证明宿主工具已接入。
 
 daemon 只监听本机，跨源请求默认不放行（浏览器不理会目标地址是否本机，任何网站都能读写你的协调库）。确需跨源时用 `NEXUS_ALLOWED_ORIGINS` 列出来源，逗号分隔；该变量按请求读取，改完无需重启。
 
@@ -23,8 +23,8 @@ daemon 只监听本机，跨源请求默认不放行（浏览器不理会目标�
 - `src/daemon/coordinator.js` 实现 file/module/symbol claim、默认 300 秒租约与等待唤醒；输入非法（缺 `agent_id`、claim 目标为空或解析后落在工作目录/盘符根）时抛 `ValidationError`，REST 层映射为 400 且不落任何记录。
 - `src/transport/` 提供 REST 和 WebSocket；`src/ui/` 提供面板。
 - `src/mcp/server.js` 只有工具定义和处理函数；daemon 未接入标准 MCP 传输端点，不能直接把它当成可连接的 MCP 服务。
-- Hook 仅检查解析出的目标文件，`files` 数组只取第一个；离线、超时或无法解析响应时放行。daemon 明确拒绝请求（HTTP 4xx）时改为拦截，避免"协调库不知道这个文件"被当成检查通过。它不是操作系统文件锁或强制沙箱。
-- `hook:install` 会改写用户配置；安装文件存在不证明 Claude/Codex/ZCode 实际执行 Hook。hook 路径由脚本自身位置推导，从任意目录执行结果一致；目标配置无法解析时直接报错，不会用空配置覆盖。
+- Hook 按真实 PreToolUse 载荷解析写入目标：写入类工具取 `file_path`，Bash 从命令里认重定向/tee/sed -i/cp/mv 的目标（按目的端判定，且必须落在工作目录内）；只读工具不判冲。离线、超时或无法解析响应时放行，daemon 拒绝请求时拦截。它不是操作系统文件锁或强制沙箱。
+- `hook:install` 写的是 Claude Code 期望的 matcher 分组结构（已按官方文档核对），并会把历史的字符串写法就地升级；目标配置无法解析时直接报错，不会用空配置覆盖。安装文件存在仍不证明宿主真的会执行。
 
 ## 文档
 
