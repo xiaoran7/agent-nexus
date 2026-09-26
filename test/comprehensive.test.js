@@ -87,6 +87,42 @@ test('消息总线', async (t) => {
   });
 });
 
+test('agent 列表查询', async (t) => {
+  const h = createHarness();
+  t.after(() => h.close());
+  const { coordinator } = h;
+
+  await t.test('按最近心跳排序返回全部 agent', () => {
+    coordinator.registerAgent({ id: 'stale-1', name: '先注册', provider: 'codex', sessionId: 's1' });
+    coordinator.registerAgent({ id: 'fresh-1', name: '后注册', provider: 'claude', sessionId: 's2' });
+
+    // 两次注册可能落在同一毫秒，此时 last_heartbeat 相等、排序无定义。
+    // 这里显式拉开心跳，固定住 listAgents 承诺的排序契约。
+    h.db.prepare("UPDATE agents SET last_heartbeat = 1000 WHERE id = 'stale-1'").run();
+    h.db.prepare("UPDATE agents SET last_heartbeat = 2000 WHERE id = 'fresh-1'").run();
+
+    const agents = coordinator.listAgents();
+    assert.equal(agents.length, 2);
+    assert.equal(agents[0].id, 'fresh-1', '心跳较新的应排在前面');
+    assert.equal(agents[1].id, 'stale-1', '心跳较旧的应排在后面');
+  });
+
+  await t.test('重复注册刷新心跳而不是产生新行', () => {
+    coordinator.registerAgent({ id: 'stale-1', name: '先注册', provider: 'codex', sessionId: 's1' });
+
+    const agents = coordinator.listAgents();
+    assert.equal(agents.length, 2, '重复注册不应新增 agent');
+    assert.equal(agents[0].id, 'stale-1', '刷新心跳后应排到最前');
+  });
+
+  await t.test('空库返回空数组', () => {
+    const empty = createHarness();
+    t.after(() => empty.close());
+
+    assert.deepEqual(empty.coordinator.listAgents(), []);
+  });
+});
+
 test('MCP 工具定义与分发', async (t) => {
   const h = createHarness();
   t.after(() => h.close());

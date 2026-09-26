@@ -36,6 +36,10 @@ export class CoordinatorEngine {
     return this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
   }
 
+  listAgents() {
+    return this.db.prepare('SELECT * FROM agents ORDER BY last_heartbeat DESC').all();
+  }
+
   updateAgentStatus(id, status) {
     this.db.prepare('UPDATE agents SET status = ?, last_heartbeat = ? WHERE id = ?').run(status, Date.now(), id);
     this.eventBus.emit('agent:status', { agent_id: id, status });

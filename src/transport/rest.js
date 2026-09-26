@@ -1,6 +1,4 @@
-import { createServer } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export function createRestRouter(coordinator, stateService, messageService, uiPath) {
   return async function handleRest(req, res) {
@@ -41,8 +39,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       // 2. Agents
       if (url.pathname === '/api/agents' && req.method === 'GET') {
-        const agents = coordinator.db.prepare('SELECT * FROM agents ORDER BY last_heartbeat DESC').all();
-        return sendJson(200, agents);
+        return sendJson(200, coordinator.listAgents());
       }
       if (url.pathname === '/api/agents/register' && req.method === 'POST') {
         const data = await readJson();
