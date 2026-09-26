@@ -1,7 +1,6 @@
 import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createDatabase } from '../storage/database.js';
 import { CoordinatorEngine } from './coordinator.js';
 import { StateService } from '../domain/state.js';
@@ -12,7 +11,7 @@ import { createWsServer } from '../transport/ws.js';
 export function startDaemon(options = {}) {
   const port = options.port || parseInt(process.env.NEXUS_PORT || '4100', 10);
   const dbPath = options.dbPath || null;
-  const uiPath = options.uiPath || join(process.cwd(), 'src/ui/index.html');
+  const uiPath = options.uiPath || join(import.meta.dirname, '../ui/index.html');
 
   const eventBus = new EventEmitter();
   const db = createDatabase(dbPath);
@@ -38,15 +37,4 @@ export function startDaemon(options = {}) {
       resolve({ server, wss, coordinator, stateService, messageService, eventBus, db });
     });
   });
-}
-
-// 跨平台直接启动检测
-const isDirectRun = process.argv[1] && (
-  process.argv[1].endsWith('daemon/index.js') ||
-  process.argv[1].endsWith('daemon\index.js') ||
-  process.argv[1] === fileURLToPath(import.meta.url)
-);
-
-if (isDirectRun) {
-  startDaemon();
 }

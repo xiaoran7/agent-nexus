@@ -1,15 +1,39 @@
 import { readFileSync, existsSync } from 'node:fs';
 
+// daemon 只监听 127.0.0.1，但浏览器不理会目标地址是不是本机：
+// 页面里的 fetch 照样能打到 127.0.0.1:4100。原来这里无条件回 '*'，
+// 等于任何网站都能注册 agent、读全部协调状态、往库里写消息。
+// 改为只放行同源请求（无 Origin 的直连，如 hook 脚本与 MCP 客户端不受影响），
+// 需要跨源时用 NEXUS_ALLOWED_ORIGINS 显式列出，逗号分隔。
+const ALLOWED_ORIGINS = (process.env.NEXUS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Agent-ID');
+    return true;
+  }
+  // 非放行来源：浏览器自会拦截响应，这里不必再回 CORS 头
+  return false;
+}
+
 export function createRestRouter(coordinator, stateService, messageService, uiPath) {
   return async function handleRest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Agent-ID');
-
     if (req.method === 'OPTIONS') {
-      res.writeHead(204);
+      if (applyCors(req, res)) {
+        res.writeHead(204);
+      } else {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Origin not allowed' }));
+      }
       res.end();
       return;
     }

@@ -251,3 +251,65 @@ test('三级冲突判定与等待唤醒', async (t) => {
     assert.equal(res.status, 'GRANTED');
   });
 });
+
+// 模块判冲按路径分段比较：同前缀但不同分支的兄弟目录不该互相阻塞。
+// 这组用例逐条固定边界语义，任何一方改动都能立刻定位到具体关系。
+test('模块判冲的路径边界', async (t) => {
+  // held 持有 src/network，probe 的每个用例都用独立 agent，声明后即释放，互不干扰。
+  const check = (claim) => {
+    const h = createHarness();
+    t.after(() => h.close());
+    h.coordinator.registerAgent({ id: 'holder', name: 'holder', provider: 'codex', sessionId: 'sh' });
+    h.coordinator.registerAgent({ id: 'probe', name: 'probe', provider: 'claude', sessionId: 'sp' });
+
+    h.coordinator.declareIntent({
+      agentId: 'holder',
+      intentSummary: 'hold src/network',
+      claims: [{ type: 'module', target: 'src/network' }]
+    });
+
+    return h.coordinator
+      .declareIntent({ agentId: 'probe', intentSummary: 'probe', claims: [claim] })
+      .status;
+  };
+
+  const shouldBlock = [
+    ['模块内的文件', { type: 'file', target: 'src/network/client.ts' }],
+    ['模块内的嵌套目录文件', { type: 'file', target: 'src/network/deep/nested.ts' }],
+    ['模块本身', { type: 'module', target: 'src/network' }],
+    ['嵌套子模块', { type: 'module', target: 'src/network/deep' }],
+  ];
+
+  const shouldPass = [
+    ['同前缀兄弟目录', { type: 'file', target: 'src/network-legacy/index.ts' }],
+    ['同前缀兄弟模块', { type: 'module', target: 'src/network-legacy' }],
+    ['中间层同前缀', { type: 'file', target: 'src/network-utils/x.ts' }],
+    ['无斜杠同前缀文件', { type: 'file', target: 'src/networkx' }],
+    ['完全不同树', { type: 'file', target: 'src/ui/Panel.tsx' }],
+  ];
+
+  for (const [label, claim] of shouldBlock) {
+    await t.test(`${label} 应被阻塞`, () => {
+      assert.equal(check(claim), 'WAITING', `${JSON.stringify(claim)} 应命中 src/network 的租约`);
+    });
+  }
+
+  for (const [label, claim] of shouldPass) {
+    await t.test(`${label} 应放行`, () => {
+      assert.equal(check(claim), 'GRANTED', `${JSON.stringify(claim)} 不该被 src/network 的租约挡住`);
+    });
+  }
+
+  await t.test('pathsOverlap 直接单测', () => {
+    const h = createHarness();
+    t.after(() => h.close());
+    const { pathsOverlap } = h.coordinator;
+
+    assert.equal(pathsOverlap('a/b', 'a/b'), true, '相同路径应重叠');
+    assert.equal(pathsOverlap('a/b', 'a/b/c'), true, '子路径应重叠');
+    assert.equal(pathsOverlap('a/b/c', 'a/b'), true, '反向包含应重叠');
+    assert.equal(pathsOverlap('a/b', 'a/bc'), false, '同前缀兄弟应不重叠');
+    assert.equal(pathsOverlap('a/b', 'a/bc/d'), false, '中间层同前缀应不重叠');
+    assert.equal(pathsOverlap('', 'a/b'), false, '空路径不匹配任何东西');
+  });
+});

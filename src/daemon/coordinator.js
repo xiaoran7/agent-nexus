@@ -13,6 +13,14 @@ export class CoordinatorEngine {
     return normalize(resolve(filePath)).replace(/\\/g, '/').toLowerCase();
   }
 
+  // 判断两个已归一化的路径是否落在同一目录树下 (任一方是另一方的祖先，或完全相同)。
+  // 按 '/' 分段比较而非裸 startsWith，否则 src/network 会误判为包含 src/network-legacy。
+  pathsOverlap(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return a.startsWith(b + '/') || b.startsWith(a + '/');
+  }
+
   // 1. Agent 注册或心跳续期
   registerAgent({ id, name, provider, sessionId, workspaceDir }) {
     const now = Date.now();
@@ -101,9 +109,9 @@ export class CoordinatorEngine {
           }
         }
 
-        // Rule 2: 模块 / 目录包含关系
+        // Rule 2: 模块 / 目录包含关系 (按路径分段比较，避免 src/network 误伤 src/network-legacy)
         if (claim.type === 'module' || active.claim_type === 'module') {
-          if (claim.target.startsWith(active.claim_target) || active.claim_target.startsWith(claim.target)) {
+          if (this.pathsOverlap(claim.target, active.claim_target)) {
             conflict = {
               blockedByAgentId: active.agent_id,
               blockedByAgentName: active.agent_name,
@@ -226,7 +234,16 @@ export class CoordinatorEngine {
     if (nextWaiter) {
       // 从等待队列中移除
       this.db.prepare(`DELETE FROM wait_queue WHERE intent_id = ?`).run(nextWaiter.intent_id);
-      
+
+      // 该意图已出队，不再处于等待：置为 released 并清掉判冲留痕。
+      // 否则这条陈旧的 waiting 记录会在面板快照里盖过 agent 重新声明后的 granted 意图，
+      // 让正在运行的 agent 显示为"等待中"并挂着早已失效的 blocked_reason。
+      this.db.prepare(`
+        UPDATE intents
+        SET status = 'released', blocked_by_agent_id = NULL, blocked_reason = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(now, nextWaiter.intent_id);
+
       this.logActivity(nextWaiter.agent_id, 'agent:woken', nextWaiter.intent_id, `Notified waiter ${nextWaiter.agent_name} to recheck`);
       this.eventBus.emit('agent:woken', {
         agent_id: nextWaiter.agent_id,

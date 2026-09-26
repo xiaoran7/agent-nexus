@@ -93,6 +93,22 @@ test('文件冲突：租约、Hook 拦截、释放、唤醒、二次声明', asy
     assert.ok(res.leaseId);
   });
 
+  await t.test('唤醒后旧意图不再显示为等待中', () => {
+    // 等待方的旧 intent 在被唤醒时出队；若仍留在 waiting 状态，
+    // 面板快照会把它当成"当前意图"，让正在运行的 agent 显示为等待中。
+    const stale = h.db
+      .prepare("SELECT id, status, blocked_by_agent_id, blocked_reason FROM intents WHERE status = 'waiting'")
+      .all();
+    assert.deepEqual(stale, [], '唤醒后不应残留 waiting 意图');
+
+    const released = h.db.prepare("SELECT id FROM intents WHERE status = 'released'").all();
+    assert.equal(released.length, 1, '被唤醒的意图应转为 released');
+
+    const agent = coordinator.getDashboardSnapshot().agents.find((a) => a.id === 'claude-sess_02');
+    assert.equal(agent.current_intent_status, 'granted', '面板应显示 granted 而非 waiting');
+    assert.equal(agent.blocked_reason, null, '不应残留已失效的判冲原因');
+  });
+
   await t.test('面板快照反映两个 agent 与完整时间线', () => {
     const snapshot = coordinator.getDashboardSnapshot();
 

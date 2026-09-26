@@ -72,10 +72,9 @@ for (const claim of normalizedClaims) {
     }
 
     // 2. Module: 路径包含关系 (父目录包含子文件，或子文件处于已锁定的父目录中)
+    //    按 '/' 分段比较，避免 src/network 误判为包含 src/network-legacy
     if (claim.type === 'module' || active.claim_type === 'module') {
-      if (claim.target.startsWith(active.claim_target) || active.claim_target.startsWith(claim.target)) {
-        return CONFLICT;
-      }
+      if (this.pathsOverlap(claim.target, active.claim_target)) return CONFLICT;
     }
 
     // 3. Symbol: 相同符号名重合
@@ -100,5 +99,7 @@ for (const claim of normalizedClaims) {
    - 入队 `wait_queue`，写入 Activity Log。
 5. **RELEASE / WAKE-UP**：
    - 前序 Agent 调用 `/api/leases/:id/release` 释放资源；
-   - 从 `wait_queue` 捞出最优先的等待者，通过 EventBus / WebSocket 发出 `agent:woken`；
+   - 从 `wait_queue` 捞出最优先的等待者，把该意图置为 `released` 并清除判冲留痕
+     （否则陈旧的 `waiting` 记录会在面板快照里盖过重新声明后的 `granted` 意图）；
+   - 通过 EventBus / WebSocket 发出 `agent:woken`；
    - 被唤醒的 Agent 收到信号后重新读取工作区代码，重新提交 Intent。
