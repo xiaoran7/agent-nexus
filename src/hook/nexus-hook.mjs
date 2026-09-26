@@ -78,9 +78,23 @@ function checkPermission(payload) {
         try {
           resolvePromise(JSON.parse(buf));
         } catch {
-          resolvePromise({ allow: true });
+          resolvePromise({ allow: true, reason: 'unparseable-response' });
         }
       });
+    });
+
+    // daemon 明确拒收这个请求（如目标文件缺失）时不能放行。
+    // 直接 exit 0 会把「协调库不知道这个文件」变成一次静默放行，
+    // 而调用方以为检查通过了。fail-closed 并把原因交给 stderr。
+    req.on('response', (res) => {
+      if (res.statusCode >= 400) {
+        res.resume();
+        resolvePromise({
+          allow: false,
+          rejected: true,
+          reason: `Agent-Nexus rejected this request (HTTP ${res.statusCode}). The coordinator could not evaluate it.`
+        });
+      }
     });
 
     req.on('error', (e) => {

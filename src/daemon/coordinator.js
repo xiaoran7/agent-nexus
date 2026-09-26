@@ -1,6 +1,67 @@
 import { randomUUID } from 'node:crypto';
 import { normalize, resolve } from 'node:path';
 
+export class ValidationError extends Error {
+  constructor(message, field) {
+    super(message);
+    this.name = 'ValidationError';
+    this.field = field;
+    // 供 transport 层映射成 400，而不是混同于 500 的服务端内部错误。
+    this.statusCode = 400;
+  }
+}
+
+const CLAIM_TYPES = new Set(['file', 'module', 'symbol']);
+
+// symbol 目标按字面比较，不做路径解析；只要求它不是以分隔符/空白开头。
+const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
+
+function toComparablePath(value) {
+  return normalize(resolve(value)).replace(/\\/g, '/').toLowerCase();
+}
+
+function requireString(value, field) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ValidationError(`"${field}" is required and must be a non-empty string`, field);
+  }
+  return value;
+}
+
+function requireAgentId(value) {
+  return requireString(value, 'agent_id');
+}
+
+function assertClaimTarget(raw, claimType) {
+  const target = requireString(raw, 'claims[].target');
+
+  if (!CLAIM_TYPES.has(claimType)) {
+    throw new ValidationError(
+      `Unsupported claim type "${claimType}"; expected one of ${[...CLAIM_TYPES].join(', ')}`,
+      'claims[].type'
+    );
+  }
+
+  if (claimType === 'symbol') {
+    if (!CLAIM_TARGET_RE.test(target)) {
+      throw new ValidationError('Symbol target must not start with a path separator or whitespace', 'claims[].target');
+    }
+    return { type: claimType, target: target.toLowerCase() };
+  }
+
+  // 校验必须发生在归一化之后：相对路径是合法输入，会按 daemon 的工作目录解析。
+  // 真正的判据是「解析后能否变成一个可用于比较的路径」——resolve() 会把
+  // undefined / null / '' / '.' 一律变成工作目录或盘符根，这些都不能拿去做
+  // file claim，否则一条空声明就能把所有同样发空目标的 agent 一起锁死。
+  const normalized = toComparablePath(target);
+  if (normalized === toComparablePath('.') || normalized === toComparablePath('/')) {
+    throw new ValidationError(
+      `Claim target "${target}" resolves to a directory root or the working directory, not a specific resource`,
+      'claims[].target'
+    );
+  }
+  return { type: claimType, target: normalized };
+}
+
 export class CoordinatorEngine {
   constructor(db, eventBus) {
     this.db = db;
@@ -8,6 +69,8 @@ export class CoordinatorEngine {
   }
 
   // 规范化文件路径 (跨系统统一小写与正斜杠，用于确定性比较)
+  // 缺少有效路径时返回 ''，不可用于声明。上一级必须先经 assertClaimTarget
+  // 拦截，否则空串会变成一条真实的 file claim，把所有同样发空路径的 agent 一起锁死。
   normalizePath(filePath) {
     if (!filePath) return '';
     return normalize(resolve(filePath)).replace(/\\/g, '/').toLowerCase();
@@ -23,9 +86,13 @@ export class CoordinatorEngine {
 
   // 1. Agent 注册或心跳续期
   registerAgent({ id, name, provider, sessionId, workspaceDir }) {
+    requireAgentId(id);
+
     const now = Date.now();
-    const finalName = name || `${provider}-${sessionId.slice(0, 6)}`;
-    
+    const finalSessionId = sessionId == null ? 'default' : String(sessionId);
+    const finalProvider = provider == null ? 'unknown' : String(provider);
+    const finalName = name || `${finalProvider}-${finalSessionId.slice(0, 6)}`;
+
     const stmt = this.db.prepare(`
       INSERT INTO agents (id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at)
       VALUES (?, ?, ?, ?, ?, 'idle', ?, ?)
@@ -34,9 +101,9 @@ export class CoordinatorEngine {
         workspace_dir = excluded.workspace_dir,
         last_heartbeat = excluded.last_heartbeat
     `);
-    stmt.run(id, finalName, provider, sessionId, workspaceDir || '', now, now);
+    stmt.run(id, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now);
 
-    this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${provider}) registered/heartbeat`);
+    this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${finalProvider}) registered/heartbeat`);
     return this.getAgent(id);
   }
 
@@ -55,6 +122,21 @@ export class CoordinatorEngine {
 
   // 2. 意图声明与确定性冲突检查 (Core Algorithm)
   declareIntent({ agentId, intentSummary, claims = [], ttlSeconds = 300 }) {
+    requireAgentId(agentId);
+    const summary = requireString(intentSummary, 'summary');
+
+    if (!Array.isArray(claims)) {
+      throw new ValidationError('"claims" must be an array', 'claims');
+    }
+
+    // 先整体校验再落任何记录：一条非法声明不应留下半截 intent 或 claim 残影。
+    const normalizedClaims = claims.map((c) => {
+      if (!c || typeof c !== 'object') {
+        throw new ValidationError('"claims" entries must be objects', 'claims');
+      }
+      return assertClaimTarget(c.target, c.type);
+    });
+
     this.expireLeases(); // 每次检查前先剔除过期租约
     const now = Date.now();
     const intentId = `intent_${randomUUID().slice(0, 8)}`;
@@ -67,18 +149,12 @@ export class CoordinatorEngine {
       const sessionId = parts.slice(1).join('-') || `${now}`;
       this.registerAgent({
         id: agentId,
-        name: intentSummary.slice(0, 30),
+        name: summary.slice(0, 30),
         provider,
         sessionId,
         workspaceDir: ''
       });
     }
-
-    // 规范化 claims
-    const normalizedClaims = claims.map(c => ({
-      type: c.type, // 'file' | 'module' | 'symbol'
-      target: (c.type === 'file' || c.type === 'module') ? this.normalizePath(c.target) : c.target.toLowerCase()
-    }));
 
     // 检查冲突: 查找当前所有 ACTIVE leases 对应的 claims
     const activeClaims = this.db.prepare(`
@@ -141,7 +217,7 @@ export class CoordinatorEngine {
       this.db.prepare(`
         INSERT INTO intents (id, agent_id, summary, status, created_at, updated_at)
         VALUES (?, ?, ?, 'granted', ?, ?)
-      `).run(intentId, agentId, intentSummary, now, now);
+      `).run(intentId, agentId, summary, now, now);
 
       const claimInsert = this.db.prepare(`
         INSERT INTO claims (intent_id, agent_id, claim_type, claim_target, created_at)
@@ -159,7 +235,7 @@ export class CoordinatorEngine {
       `).run(leaseId, intentId, agentId, ttlSeconds, expiresAt, now);
 
       this.updateAgentStatus(agentId, 'running');
-      this.logActivity(agentId, 'intent:granted', claims.map(c => c.target).join(', '), `Granted lease for intent: "${intentSummary}"`);
+      this.logActivity(agentId, 'intent:granted', claims.map(c => c.target).join(', '), `Granted lease for intent: "${summary}"`);
 
       return {
         status: 'GRANTED',
@@ -173,7 +249,7 @@ export class CoordinatorEngine {
       this.db.prepare(`
         INSERT INTO intents (id, agent_id, summary, status, blocked_by_agent_id, blocked_reason, created_at, updated_at)
         VALUES (?, ?, ?, 'waiting', ?, ?, ?, ?)
-      `).run(intentId, agentId, intentSummary, conflict.blockedByAgentId, conflict.reason, now, now);
+      `).run(intentId, agentId, summary, conflict.blockedByAgentId, conflict.reason, now, now);
 
       // 保存期望声明的 claims
       const claimInsert = this.db.prepare(`
@@ -205,6 +281,11 @@ export class CoordinatorEngine {
 
   // 3. 租约释放与等待者主动唤醒 (Wake-up Bus)
   releaseLease(leaseIdOrIntentId, agentId) {
+    // 租约不存在属于常态竞态（已过期或已释放），返回 404 而不是 400。
+    if (leaseIdOrIntentId == null || leaseIdOrIntentId === '') {
+      return { success: false, message: 'Lease not found or not owned by agent' };
+    }
+
     const now = Date.now();
     const lease = this.db.prepare(`
       SELECT * FROM leases WHERE (id = ? OR intent_id = ?) AND agent_id = ?
@@ -269,13 +350,18 @@ export class CoordinatorEngine {
 
   // 5. 极速权限检查与自动补报 (针对通用 Hook)
   fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, promptHint }) {
+    // 这是 hook 最容易被绕过的一层：宿主没解析出目标文件时会发来空载荷。
+    // 过去空路径会被归一化成 '' 并落成一条 file claim，锁死所有同样发空路径的 agent。
+    requireAgentId(agentId);
+    assertClaimTarget(filePath, 'file');
+
     const normalizedFile = this.normalizePath(filePath);
     const now = Date.now();
 
     // 确保证件已注册
     this.registerAgent({
       id: agentId,
-      name: promptHint ? promptHint.slice(0, 30) : `${provider}-${sessionId.slice(0, 6)}`,
+      name: promptHint ? promptHint.slice(0, 30) : `${provider || 'agent'}-${(sessionId || 'default').slice(0, 6)}`,
       provider,
       sessionId,
       workspaceDir: ''
