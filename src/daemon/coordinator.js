@@ -1,0 +1,353 @@
+import { randomUUID } from 'node:crypto';
+import { normalize, resolve } from 'node:path';
+
+export class CoordinatorEngine {
+  constructor(db, eventBus) {
+    this.db = db;
+    this.eventBus = eventBus;
+  }
+
+  // 规范化文件路径 (跨系统统一小写与正斜杠，用于确定性比较)
+  normalizePath(filePath) {
+    if (!filePath) return '';
+    return normalize(resolve(filePath)).replace(/\\/g, '/').toLowerCase();
+  }
+
+  // 1. Agent 注册或心跳续期
+  registerAgent({ id, name, provider, sessionId, workspaceDir }) {
+    const now = Date.now();
+    const finalName = name || `${provider}-${sessionId.slice(0, 6)}`;
+    
+    const stmt = this.db.prepare(`
+      INSERT INTO agents (id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at)
+      VALUES (?, ?, ?, ?, ?, 'idle', ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        workspace_dir = excluded.workspace_dir,
+        last_heartbeat = excluded.last_heartbeat
+    `);
+    stmt.run(id, finalName, provider, sessionId, workspaceDir || '', now, now);
+
+    this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${provider}) registered/heartbeat`);
+    return this.getAgent(id);
+  }
+
+  getAgent(id) {
+    return this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
+  }
+
+  updateAgentStatus(id, status) {
+    this.db.prepare('UPDATE agents SET status = ?, last_heartbeat = ? WHERE id = ?').run(status, Date.now(), id);
+    this.eventBus.emit('agent:status', { agent_id: id, status });
+  }
+
+  // 2. 意图声明与确定性冲突检查 (Core Algorithm)
+  declareIntent({ agentId, intentSummary, claims = [], ttlSeconds = 300 }) {
+    this.expireLeases(); // 每次检查前先剔除过期租约
+    const now = Date.now();
+    const intentId = `intent_${randomUUID().slice(0, 8)}`;
+
+    // 确保 agent 已在表中存在，避免 FOREIGN KEY constraint 失败
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      const parts = agentId.split('-');
+      const provider = parts[0] || 'agent';
+      const sessionId = parts.slice(1).join('-') || `${now}`;
+      this.registerAgent({
+        id: agentId,
+        name: intentSummary.slice(0, 30),
+        provider,
+        sessionId,
+        workspaceDir: ''
+      });
+    }
+
+    // 规范化 claims
+    const normalizedClaims = claims.map(c => ({
+      type: c.type, // 'file' | 'module' | 'symbol'
+      target: (c.type === 'file' || c.type === 'module') ? this.normalizePath(c.target) : c.target.toLowerCase()
+    }));
+
+    // 检查冲突: 查找当前所有 ACTIVE leases 对应的 claims
+    const activeClaims = this.db.prepare(`
+      SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, a.name as agent_name
+      FROM claims c
+      JOIN leases l ON c.intent_id = l.intent_id
+      JOIN agents a ON c.agent_id = a.id
+      WHERE l.expires_at > ?
+    `).all(now);
+
+    let conflict = null;
+    for (const claim of normalizedClaims) {
+      for (const active of activeClaims) {
+        if (active.agent_id === agentId) {
+          // 同一 Agent 允许重入/扩展
+          continue;
+        }
+
+        // Rule 1: 文件精确重合
+        if (claim.type === 'file' && active.claim_type === 'file') {
+          if (claim.target === active.claim_target) {
+            conflict = {
+              blockedByAgentId: active.agent_id,
+              blockedByAgentName: active.agent_name,
+              reason: `File conflict: '${claim.target}' is currently locked by ${active.agent_name}`
+            };
+            break;
+          }
+        }
+
+        // Rule 2: 模块 / 目录包含关系
+        if (claim.type === 'module' || active.claim_type === 'module') {
+          if (claim.target.startsWith(active.claim_target) || active.claim_target.startsWith(claim.target)) {
+            conflict = {
+              blockedByAgentId: active.agent_id,
+              blockedByAgentName: active.agent_name,
+              reason: `Module conflict between '${claim.target}' and '${active.claim_target}' held by ${active.agent_name}`
+            };
+            break;
+          }
+        }
+
+        // Rule 3: 符号精确重合
+        if (claim.type === 'symbol' && active.claim_type === 'symbol') {
+          if (claim.target === active.claim_target) {
+            conflict = {
+              blockedByAgentId: active.agent_id,
+              blockedByAgentName: active.agent_name,
+              reason: `Symbol conflict: '${claim.target}' is being modified by ${active.agent_name}`
+            };
+            break;
+          }
+        }
+      }
+      if (conflict) break;
+    }
+
+    if (!conflict) {
+      // GRANTED: 记录意图，保存 claims，颁发 Lease
+      this.db.prepare(`
+        INSERT INTO intents (id, agent_id, summary, status, created_at, updated_at)
+        VALUES (?, ?, ?, 'granted', ?, ?)
+      `).run(intentId, agentId, intentSummary, now, now);
+
+      const claimInsert = this.db.prepare(`
+        INSERT INTO claims (intent_id, agent_id, claim_type, claim_target, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const c of normalizedClaims) {
+        claimInsert.run(intentId, agentId, c.type, c.target, now);
+      }
+
+      const leaseId = `lease_${randomUUID().slice(0, 8)}`;
+      const expiresAt = now + (ttlSeconds * 1000);
+      this.db.prepare(`
+        INSERT INTO leases (id, intent_id, agent_id, ttl_seconds, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(leaseId, intentId, agentId, ttlSeconds, expiresAt, now);
+
+      this.updateAgentStatus(agentId, 'running');
+      this.logActivity(agentId, 'intent:granted', claims.map(c => c.target).join(', '), `Granted lease for intent: "${intentSummary}"`);
+
+      return {
+        status: 'GRANTED',
+        intentId,
+        leaseId,
+        expiresAt,
+        claims: normalizedClaims
+      };
+    } else {
+      // WAITING: 记录意图为 waiting，加入等待队列
+      this.db.prepare(`
+        INSERT INTO intents (id, agent_id, summary, status, blocked_by_agent_id, blocked_reason, created_at, updated_at)
+        VALUES (?, ?, ?, 'waiting', ?, ?, ?, ?)
+      `).run(intentId, agentId, intentSummary, conflict.blockedByAgentId, conflict.reason, now, now);
+
+      // 保存期望声明的 claims
+      const claimInsert = this.db.prepare(`
+        INSERT INTO claims (intent_id, agent_id, claim_type, claim_target, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const c of normalizedClaims) {
+        claimInsert.run(intentId, agentId, c.type, c.target, now);
+      }
+
+      this.db.prepare(`
+        INSERT INTO wait_queue (intent_id, agent_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(intentId, agentId, now);
+
+      this.updateAgentStatus(agentId, 'waiting');
+      this.logActivity(agentId, 'intent:blocked', claims.map(c => c.target).join(', '), `Blocked by ${conflict.blockedByAgentName}: ${conflict.reason}`);
+
+      return {
+        status: 'WAITING',
+        intentId,
+        blockedBy: conflict.blockedByAgentId,
+        blockedByName: conflict.blockedByAgentName,
+        reason: conflict.reason,
+        claims: normalizedClaims
+      };
+    }
+  }
+
+  // 3. 租约释放与等待者主动唤醒 (Wake-up Bus)
+  releaseLease(leaseIdOrIntentId, agentId) {
+    const now = Date.now();
+    const lease = this.db.prepare(`
+      SELECT * FROM leases WHERE (id = ? OR intent_id = ?) AND agent_id = ?
+    `).get(leaseIdOrIntentId, leaseIdOrIntentId, agentId);
+
+    if (!lease) {
+      return { success: false, message: 'Lease not found or not owned by agent' };
+    }
+
+    // 标记意图完成并删除租约和 claims
+    this.db.prepare(`UPDATE intents SET status = 'completed', updated_at = ? WHERE id = ?`).run(now, lease.intent_id);
+    this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
+    this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(lease.intent_id);
+
+    this.updateAgentStatus(agentId, 'idle');
+    this.logActivity(agentId, 'lease:released', lease.id, `Agent released lease for intent ${lease.intent_id}`);
+
+    // 检查并主动唤醒等待者
+    const nextWaiter = this.db.prepare(`
+      SELECT w.intent_id, w.agent_id, i.summary, a.name as agent_name
+      FROM wait_queue w
+      JOIN intents i ON w.intent_id = i.id
+      JOIN agents a ON w.agent_id = a.id
+      ORDER BY w.id ASC LIMIT 1
+    `).get();
+
+    if (nextWaiter) {
+      // 从等待队列中移除
+      this.db.prepare(`DELETE FROM wait_queue WHERE intent_id = ?`).run(nextWaiter.intent_id);
+      
+      this.logActivity(nextWaiter.agent_id, 'agent:woken', nextWaiter.intent_id, `Notified waiter ${nextWaiter.agent_name} to recheck`);
+      this.eventBus.emit('agent:woken', {
+        agent_id: nextWaiter.agent_id,
+        intent_id: nextWaiter.intent_id,
+        message: 'Resource released. Please refresh workspace and re-evaluate intent.'
+      });
+    }
+
+    return { success: true, releasedLeaseId: lease.id, notifiedWaiter: nextWaiter || null };
+  }
+
+  // 4. 过期租约定时清理
+  expireLeases() {
+    const now = Date.now();
+    const expired = this.db.prepare('SELECT * FROM leases WHERE expires_at <= ?').all(now);
+    for (const l of expired) {
+      this.db.prepare(`UPDATE intents SET status = 'aborted', updated_at = ? WHERE id = ?`).run(now, l.intent_id);
+      this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(l.id);
+      this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(l.intent_id);
+      this.logActivity(l.agent_id, 'lease:expired', l.id, `Lease ${l.id} expired due to TTL timeout`);
+    }
+  }
+
+  // 5. 极速权限检查与自动补报 (针对通用 Hook)
+  fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, promptHint }) {
+    const normalizedFile = this.normalizePath(filePath);
+    const now = Date.now();
+
+    // 确保证件已注册
+    this.registerAgent({
+      id: agentId,
+      name: promptHint ? promptHint.slice(0, 30) : `${provider}-${sessionId.slice(0, 6)}`,
+      provider,
+      sessionId,
+      workspaceDir: ''
+    });
+
+    this.expireLeases();
+
+    // 检查该文件是否被其他人占用
+    const existingLock = this.db.prepare(`
+      SELECT c.agent_id, a.name as agent_name, i.summary, l.id as lease_id
+      FROM claims c
+      JOIN leases l ON c.intent_id = l.intent_id
+      JOIN agents a ON c.agent_id = a.id
+      JOIN intents i ON c.intent_id = i.id
+      WHERE c.claim_type = 'file' AND c.claim_target = ? AND l.expires_at > ?
+    `).get(normalizedFile, now);
+
+    if (existingLock) {
+      if (existingLock.agent_id === agentId) {
+        // 自己已经持锁：直接放行
+        return { allow: true, reason: 'self-held-lease' };
+      } else {
+        // 他人持锁：硬拦截
+        this.logActivity(agentId, 'hook:blocked', normalizedFile, `Blocked write to ${normalizedFile} (held by ${existingLock.agent_name})`);
+        return {
+          allow: false,
+          holder: existingLock.agent_name,
+          reason: `BLOCKED: File '${filePath}' is locked by [${existingLock.agent_name}] for "${existingLock.summary}". Please wait or choose another task.`
+        };
+      }
+    }
+
+    // 无人占用：自动补办 Lease 并放行 (Auto-Claim)
+    const intentRes = this.declareIntent({
+      agentId,
+      intentSummary: promptHint ? `Editing ${filePath}: ${promptHint.slice(0, 40)}` : `Auto-claimed edit on ${filePath}`,
+      claims: [{ type: 'file', target: filePath }],
+      ttlSeconds: 180
+    });
+
+    return {
+      allow: true,
+      autoClaimed: true,
+      leaseId: intentRes.leaseId
+    };
+  }
+
+  logActivity(agentId, eventType, target, description) {
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO activity_log (agent_id, event_type, target, description, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(agentId, eventType, target, description, now);
+
+    this.eventBus.emit('timeline:event', {
+      agent_id: agentId,
+      event_type: eventType,
+      target,
+      description,
+      created_at: now
+    });
+  }
+
+  // 6. 获取全局状态矩阵与时间线 (面向 Dashboard)
+  getDashboardSnapshot() {
+    const agents = this.db.prepare(`
+      SELECT a.*, 
+        (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
+        (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent,
+        (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
+        (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason
+      FROM agents a
+    `).all(Date.now());
+
+    const activeClaims = this.db.prepare(`
+      SELECT c.*, a.name as agent_name, l.expires_at
+      FROM claims c
+      JOIN leases l ON c.intent_id = l.intent_id
+      JOIN agents a ON c.agent_id = a.id
+      WHERE l.expires_at > ?
+    `).all(Date.now());
+
+    const timeline = this.db.prepare(`
+      SELECT al.*, a.name as agent_name, a.provider
+      FROM activity_log al
+      LEFT JOIN agents a ON al.agent_id = a.id
+      ORDER BY al.id DESC LIMIT 50
+    `).all();
+
+    return {
+      agents,
+      activeClaims,
+      timeline
+    };
+  }
+}

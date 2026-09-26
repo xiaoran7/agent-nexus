@@ -1,0 +1,25 @@
+{
+  "name": "agent-nexus",
+  "version": "0.1.0",
+  "description": "Passive Agent Coordinator - Multi-agent conflict detection, lease management and real-time coordination dashboard",
+  "main": "src/daemon/index.js",
+  "type": "module",
+  "bin": {
+    "nexus": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/daemon/index.js",
+    "test": "node test/runner.js"
+  },
+  "keywords": [
+    "agent",
+    "coordinator",
+    "claude-code",
+    "codex",
+    "zcode",
+    "multi-agent",
+    "conflict-detection"
+  ],
+  "author": "tangwg",
+  "license": "MIT"
+}

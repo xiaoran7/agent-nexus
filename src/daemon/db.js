@@ -1,0 +1,85 @@
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { mkdirSync } from 'node:fs';
+
+const NEXUS_DIR = join(homedir(), '.agent-nexus');
+mkdirSync(NEXUS_DIR, { recursive: true });
+const DB_PATH = process.env.NEXUS_DB_PATH || join(NEXUS_DIR, 'nexus.db');
+
+export function initDatabase() {
+  const db = new DatabaseSync(DB_PATH);
+
+  // 开启 WAL 模式加速并发写入
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA synchronous = NORMAL;');
+  db.exec('PRAGMA foreign_keys = ON;');
+
+  db.exec(`
+    -- 1. Agent 注册表
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      workspace_dir TEXT,
+      status TEXT NOT NULL DEFAULT 'idle',
+      last_heartbeat INTEGER NOT NULL,
+      registered_at INTEGER NOT NULL
+    );
+
+    -- 2. 意图总账 (Intent Ledger)
+    CREATE TABLE IF NOT EXISTS intents (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL, -- 'granted' | 'waiting' | 'running' | 'completed' | 'released' | 'aborted'
+      blocked_by_agent_id TEXT REFERENCES agents(id),
+      blocked_reason TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    -- 3. 资源声明表 (Resource Claims)
+    CREATE TABLE IF NOT EXISTS claims (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      intent_id TEXT NOT NULL REFERENCES intents(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      claim_type TEXT NOT NULL, -- 'file' | 'module' | 'symbol'
+      claim_target TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_claims_type_target ON claims(claim_type, claim_target);
+
+    -- 4. 租约表 (Leases)
+    CREATE TABLE IF NOT EXISTS leases (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL UNIQUE REFERENCES intents(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      ttl_seconds INTEGER NOT NULL DEFAULT 300,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
+
+    -- 5. 等待队列 (Wait Queue)
+    CREATE TABLE IF NOT EXISTS wait_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      intent_id TEXT NOT NULL UNIQUE REFERENCES intents(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      created_at INTEGER NOT NULL
+    );
+
+    -- 6. 事件与活动流水 (Activity Log - 面向 Dashboard Timeline)
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      target TEXT,
+      description TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+
+  return db;
+}

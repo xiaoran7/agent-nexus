@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent-Nexus | S.C.H.A.L.E. Multi-Agent Coordinator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --bg-gradient: radial-gradient(circle at 85% 15%, rgba(14, 165, 233, 0.12) 0%, transparent 45%),
+                         radial-gradient(circle at 15% 85%, rgba(99, 102, 241, 0.08) 0%, transparent 40%),
+                         #090d16;
+      --card-bg: rgba(15, 23, 42, 0.75);
+      --card-hover: rgba(22, 34, 60, 0.85);
+      --border: rgba(56, 189, 248, 0.18);
+      --border-subtle: rgba(255, 255, 255, 0.06);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-faint: #64748b;
+      --schale-sky: #0ea5e9;
+      --schale-blue: #38bdf8;
+      --schale-glow: rgba(14, 165, 233, 0.35);
+      --halo-gold: #f59e0b;
+      --status-running: #10b981;
+      --status-waiting: #f59e0b;
+      --status-blocked: #f43f5e;
+      --status-idle: #64748b;
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Top Navigation Bar */
+    header {
+      height: 64px;
+      padding: 0 28px;
+      background: rgba(11, 17, 32, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand-container {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .schale-logo-mark {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      box-shadow: 0 4px 14px var(--schale-glow);
+      flex-shrink: 0;
+    }
+
+    .schale-logo-mark svg {
+      width: 22px;
+      height: 22px;
+      stroke-width: 2.2;
+    }
+
+    .schale-halo {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 2px solid #bae6fd;
+      background: #0284c7;
+      box-shadow: 0 0 8px #38bdf8;
+      animation: pulse-halo 2.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse-halo {
+      0%, 100% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.25); opacity: 1; filter: drop-shadow(0 0 6px #38bdf8); }
+    }
+
+    .brand-text-block {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-title {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--schale-blue);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .badge-schale {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 20px;
+      background: rgba(14, 165, 233, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      letter-spacing: 0.2px;
+    }
+
+    .top-right-meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .sensei-capsule {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 14px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-subtle);
+      border-radius: 24px;
+      font-size: 12px;
+      color: var(--text-main);
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-running);
+      box-shadow: 0 0 8px var(--status-running);
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    /* Main Container */
+    .app-main {
+      flex: 1;
+      max-width: 1680px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 28px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Greeting Banner (Schale Style) */
+    .greeting-banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: 4px 0 8px;
+      position: relative;
+    }
+
+    .greeting-text h2 {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.6px;
+      color: #ffffff;
+    }
+
+    .greeting-text p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+
+    .slogan-calligraphy {
+      text-align: right;
+      display: none;
+    }
+    @media (min-width: 900px) {
+      .slogan-calligraphy { display: block; }
+    }
+
+    .slogan-jp {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--schale-blue);
+      letter-spacing: 1px;
+    }
+
+    .slogan-en {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-faint);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    /* 4 Summary Metric Cards (Beszel Style) */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .metric-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--card-accent, var(--schale-sky)), transparent);
+      opacity: 0.6;
+    }
+
+    .metric-card:hover {
+      background: var(--card-hover);
+      border-color: rgba(56, 189, 248, 0.3);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .metric-icon-box {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      background: rgba(14, 165, 233, 0.1);
+      color: var(--schale-sky);
+    }
+
+    .metric-icon-box.green { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+    .metric-icon-box.amber { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+    .metric-icon-box.rose { background: rgba(244, 63, 94, 0.12); color: #f43f5e; }
+
+    .metric-data {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .metric-val {
+      font-size: 24px;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.1;
+      font-family: var(--font-sans);
+    }
+
+    .metric-label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Workspace 2-Column Layout */
+    .dashboard-body {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 1024px) {
+      .dashboard-body {
+        grid-template-columns: 1.25fr 1fr;
+      }
+    }
+
+    .glass-panel {
+      background: var(--card-bg);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: #bae6fd;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-meta {
+      font-size: 12px;
+      color: var(--text-faint);
+      font-family: var(--font-mono);
+    }
+
+    /* Agents Card Grid */
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+
+    .agent-card {
+      background: rgba(18, 27, 48, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.25s ease;
+      position: relative;
+    }
+
+    .agent-card:hover {
+      border-color: rgba(56, 189, 248, 0.35);
+      background: rgba(22, 34, 60, 0.7);
+      transform: translateY(-2px);
+    }
+
+    .agent-card.running { border-left: 4px solid var(--status-running); }
+    .agent-card.waiting { border-left: 4px solid var(--status-waiting); }
+    .agent-card.idle { border-left: 4px solid var(--status-idle); }
+
+    .agent-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .agent-id-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .agent-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: rgba(14, 165, 233, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--schale-blue);
+      font-size: 12px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    .agent-title-text {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: #ffffff;
+      max-width: 170px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-tag.running { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .status-tag.waiting { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .status-tag.idle { background: rgba(100, 116, 139, 0.18); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+
+    .intent-box {
+      font-size: 12.5px;
+      color: #cbd5e1;
+      line-height: 1.45;
+      background: rgba(11, 17, 32, 0.4);
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .blocked-callout {
+      font-size: 11.5px;
+      color: #fca5a5;
+      background: rgba(244, 63, 94, 0.12);
+      border: 1px solid rgba(244, 63, 94, 0.25);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .claims-zone {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .claims-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--text-faint);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .claims-flex {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .claim-pill {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(14, 165, 233, 0.12);
+      color: #7dd3fc;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Timeline Stream (Right Panel) */
+    .timeline-stream {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      max-height: 520px;
+      padding-right: 6px;
+    }
+
+    .timeline-stream::-webkit-scrollbar {
+      width: 5px;
+    }
+    .timeline-stream::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .timeline-stream::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+    }
+
+    .timeline-card {
+      display: flex;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.45);
+      border: 1px solid var(--border-subtle);
+      transition: all 0.2s ease;
+    }
+
+    .timeline-card:hover {
+      background: rgba(22, 34, 60, 0.55);
+      border-color: rgba(56, 189, 248, 0.25);
+    }
+
+    .timeline-time-col {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-faint);
+      padding-top: 2px;
+      min-width: 56px;
+    }
+
+    .timeline-body-col {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1;
+    }
+
+    .timeline-action-tag {
+      font-size: 11px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .timeline-action-tag.granted { color: #34d399; }
+    .timeline-action-tag.blocked { color: #f43f5e; }
+    .timeline-action-tag.released { color: #38bdf8; }
+    .timeline-action-tag.woken { color: #fbbf24; }
+
+    .timeline-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* Bottom Schale Footer */
+    footer {
+      padding: 18px 28px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text-faint);
+      font-size: 11px;
+      max-width: 1680px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .footer-right {
+      letter-spacing: 0.8px;
+      font-weight: 600;
+      color: var(--schale-blue);
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <!-- Topbar -->
+  <header>
+    <div class="brand-container">
+      <div class="schale-logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+        </svg>
+        <span class="schale-halo"></span>
+      </div>
+      <div class="brand-text-block">
+        <div class="brand-title">
+          <span>Agent-Nexus</span>
+          <span class="badge-schale">S.C.H.A.L.E.</span>
+        </div>
+        <span class="brand-sub">Traffic Control Core</span>
+      </div>
+    </div>
+
+    <div class="top-right-meta">
+      <div class="sensei-capsule">
+        <span class="pulse-dot"></span>
+        <span style="font-weight: 600;">Sensei Active</span>
+        <span style="color: var(--text-faint);">|</span>
+        <span id="daemon-status" style="color: #38bdf8;">127.0.0.1:4100</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="app-main">
+    <!-- Greeting Banner -->
+    <div class="greeting-banner">
+      <div class="greeting-text">
+        <h2 id="greeting-title">Good morning, Sensei.</h2>
+        <p id="greeting-desc">All agents at a glance. Multi-agent coordination and conflict-free execution active.</p>
+      </div>
+      <div class="slogan-calligraphy">
+        <div class="slogan-jp">いつも、どこでも。協調する知性。</div>
+        <div class="slogan-en">PASSIVE TRAFFIC CONTROL, A PEACEFUL WORKSPACE.</div>
+      </div>
+    </div>
+
+    <!-- 4 Summary Metric Cards -->
+    <div class="metric-grid">
+      <!-- 1. Total Agents -->
+      <div class="metric-card" style="--card-accent: #0ea5e9;">
+        <div class="metric-icon-box">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+        </div>
+        <div class="metric-data">
+          <span class="metric-val" id="metric-total-agents">0</span>
+          <span class="metric-label">Active Agents</span>
+        </div>
+      </div>
+
+      <!-- 2. Running -->
+      <div class="metric-card" style="--card-accent: #10b981;">
+        <div class="metric-icon-box green">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </div>
+        <div class="metric-data">
+          <span class="metric-val" id="metric-running">0</span>
+          <span class="metric-label">Running Leases</span>
+        </div>
+      </div>
+
+      <!-- 3. Waiting / Blocked -->
+      <div class="metric-card" style="--card-accent: #f59e0b;">
+        <div class="metric-icon-box amber">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+        <div class="metric-data">
+          <span class="metric-val" id="metric-waiting">0</span>
+          <span class="metric-label">Waiting in Queue</span>
+        </div>
+      </div>
+
+      <!-- 4. Locked Claims -->
+      <div class="metric-card" style="--card-accent: #6366f1;">
+        <div class="metric-icon-box" style="background: rgba(99, 102, 241, 0.12); color: #818cf8;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <div class="metric-data">
+          <span class="metric-val" id="metric-locked-claims">0</span>
+          <span class="metric-label">Exclusive Claims</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2-Column Dashboard Workspace -->
+    <div class="dashboard-body">
+      <!-- Left Panel: Agent Matrix & Claims -->
+      <section class="glass-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+            <span>Agent Matrix & Claims</span>
+          </div>
+          <span class="panel-meta" id="matrix-last-updated">LIVE</span>
+        </div>
+
+        <div class="agent-grid" id="agents-container">
+          <!-- 动态注入 Agent 卡片 -->
+        </div>
+      </section>
+
+      <!-- Right Panel: Activity Timeline Stream -->
+      <section class="glass-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span>Activity Timeline</span>
+          </div>
+          <span class="panel-meta">REALTIME WEBSOCKET</span>
+        </div>
+
+        <div class="timeline-stream" id="timeline-container">
+          <!-- 动态注入时间线流水 -->
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-left">
+      <span>Agent-Nexus Coordinator v0.1.0</span>
+      <span>•</span>
+      <span>Passive Traffic Control Engine for Claude Code, Codex, and ZCode</span>
+    </div>
+    <div class="footer-right">
+      S.C.H.A.L.E. General Support Bureau
+    </div>
+  </footer>
+
+  <script>
+    // 动态问候语
+    (function updateGreeting() {
+      const hour = new Date().getHours();
+      const el = document.getElementById('greeting-title');
+      if (hour >= 5 && hour < 12) el.textContent = 'Good morning, Sensei.';
+      else if (hour >= 12 && hour < 18) el.textContent = 'Good afternoon, Sensei.';
+      else if (hour >= 18 && hour < 22) el.textContent = 'Good evening, Sensei.';
+      else el.textContent = 'Good night, Sensei.';
+    })();
+
+    async function fetchDashboard() {
+      try {
+        const res = await fetch('/api/dashboard');
+        if (!res.ok) return;
+        const data = await res.json();
+        renderMetrics(data);
+        renderAgents(data.agents, data.activeClaims);
+        renderTimeline(data.timeline);
+      } catch (err) {
+        console.error('Fetch error:', err);
+      }
+    }
+
+    function renderMetrics(data) {
+      const agents = data.agents || [];
+      const claims = data.activeClaims || [];
+      
+      const totalAgents = agents.length;
+      const runningCount = agents.filter(a => a.status === 'running').length;
+      const waitingCount = agents.filter(a => a.status === 'waiting').length;
+      const lockedClaimsCount = claims.length;
+
+      document.getElementById('metric-total-agents').textContent = totalAgents;
+      document.getElementById('metric-running').textContent = runningCount;
+      document.getElementById('metric-waiting').textContent = waitingCount;
+      document.getElementById('metric-locked-claims').textContent = lockedClaimsCount;
+
+      const desc = document.getElementById('greeting-desc');
+      if (totalAgents === 0) {
+        desc.textContent = 'No agents connected. Start an agent or trigger universal hooks to register.';
+      } else {
+        desc.innerHTML = `All agents at a glance. <strong style="color: #fff;">${runningCount} of ${totalAgents}</strong> running smoothly, <span style="color: #fbbf24;">${waitingCount} waiting</span>.`;
+      }
+    }
+
+    function renderAgents(agents, activeClaims) {
+      const container = document.getElementById('agents-container');
+      if (!agents || agents.length === 0) {
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 14px;">
+            No active agents registered. Declare an intent or trigger a tool edit to coordinate.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = agents.map(a => {
+        const status = a.status || 'idle';
+        const claims = (activeClaims || []).filter(c => c.agent_id === a.id);
+        const providerShort = (a.provider || 'A').toUpperCase().slice(0, 2);
+
+        return `
+          <div class="agent-card ${status}">
+            <div class="agent-top-row">
+              <div class="agent-id-name">
+                <div class="agent-icon">${providerShort}</div>
+                <div class="agent-title-text" title="${a.name}">${a.name}</div>
+              </div>
+              <span class="status-tag ${status}">${status}</span>
+            </div>
+
+            <div class="intent-box">
+              ${a.current_intent ? `<strong>Intent:</strong> ${a.current_intent}` : '<span style="color: var(--text-faint);">No active declared intent</span>'}
+            </div>
+
+            ${a.blocked_reason ? `
+              <div class="blocked-callout">
+                <span style="font-size: 13px;">⚠️</span>
+                <span>${a.blocked_reason}</span>
+              </div>
+            ` : ''}
+
+            ${claims.length > 0 ? `
+              <div class="claims-zone">
+                <span class="claims-label">Locked Resources (${claims.length})</span>
+                <div class="claims-flex">
+                  ${claims.map(c => `
+                    <span class="claim-pill" title="${c.claim_target}">
+                      [${c.claim_type}] ${c.claim_target.split('/').pop()}
+                    </span>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderTimeline(timeline) {
+      const container = document.getElementById('timeline-container');
+      if (!timeline || timeline.length === 0) {
+        container.innerHTML = `
+          <div style="padding: 30px; text-align: center; color: var(--text-faint); font-size: 13px;">
+            No coordination events logged yet.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = timeline.map(item => {
+        const date = new Date(item.created_at);
+        const timeStr = date.toTimeString().split(' ')[0];
+        
+        let typeClass = 'granted';
+        let badgeIcon = '✓';
+        if (item.event_type.includes('blocked')) { typeClass = 'blocked'; badgeIcon = '✕'; }
+        else if (item.event_type.includes('released')) { typeClass = 'released'; badgeIcon = '○'; }
+        else if (item.event_type.includes('woken')) { typeClass = 'woken'; badgeIcon = '⚡'; }
+
+        return `
+          <div class="timeline-card">
+            <div class="timeline-time-col">${timeStr}</div>
+            <div class="timeline-body-col">
+              <div class="timeline-action-tag ${typeClass}">
+                <span>${badgeIcon}</span>
+                <span>[${item.agent_name || item.agent_id}] ${item.event_type}</span>
+              </div>
+              <div class="timeline-text">${item.description}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    fetchDashboard();
+    setInterval(fetchDashboard, 2500);
+
+    // WebSocket 连接
+    try {
+      const ws = new WebSocket(`ws://${location.host}`);
+      ws.onmessage = (event) => {
+        fetchDashboard();
+      };
+      ws.onopen = () => {
+        document.getElementById('matrix-last-updated').textContent = 'LIVE WS';
+      };
+      ws.onclose = () => {
+        document.getElementById('matrix-last-updated').textContent = 'POLLING';
+      };
+    } catch (_) {}
+  </script>
+</body>
+</html>

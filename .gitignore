@@ -1,0 +1,20 @@
+node_modules/
+
+# 运行时产物
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# 本地环境与凭据
+.env
+.env.*
+
+# 临时产物
+_scratch/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
