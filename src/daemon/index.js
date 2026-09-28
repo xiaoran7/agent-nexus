@@ -59,7 +59,7 @@ export function startDaemon(options = {}) {
       console.log(`[Agent-Nexus] Real-time Dashboard: http://127.0.0.1:${boundPort}/`);
       console.log(`[Agent-Nexus] Operator token (read + write + mint, printed once, not stored):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, eventBus, db, tokenStore, port: boundPort });
+      resolve({ server, wss, coordinator, stateService, messageService, eventBus, db, tokenStore, cleanupTimer, port: boundPort });
     });
   });
 }
@@ -87,7 +87,12 @@ function describeListenError(err, port) {
 // 关停入口。顺序很关键：先断掉所有已建立的连接，再等 close() 回调。
 // node:http 的 server.close() 只停止接受新连接，keep-alive 套接字会一直挂着；
 // 而 ws 的 close() 在还有存活连接时同样不返回。先 terminate 掉它们，两边才能干净退出。
-export async function stopDaemon({ server, wss, db }) {
+export async function stopDaemon({ server, wss, db, cleanupTimer }) {
+  // 必须先停掉清理定时器，再关库。unref() 只保证它不拖住进程退出，
+  // 不会阻止它在进程还活着时照常触发：stopDaemon 关掉 db 之后，下一次
+  // expireLeases 就会打进已关闭的库，抛 "database is not open"。
+  // 进程还在跑时（测试逐个起停 daemon）这不是噪音，是会污染后续用例的真错误。
+  if (cleanupTimer) clearInterval(cleanupTimer);
   for (const client of wss.clients) client.terminate();
   await new Promise((resolve) => wss.close(resolve));
   for (const socket of server.closeAllConnections?.() || []) socket.destroy();

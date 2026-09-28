@@ -898,3 +898,25 @@ test('签发令牌时顺带登记 agent', async (t) => {
     assert.equal(res.status, 200, '轮换令牌不该要求重新注册');
   });
 });
+
+// stopDaemon 关掉 db 后，清理定时器仍在跑就会打进已关闭的库，抛
+// "database is not not open"，并作为 uncaughtException 落到下一个用例头上。
+// unref() 只保证它不拖住进程退出，不阻止它在进程还活着时触发——所以这个
+// bug 只在"进程内反复起停 daemon"时出现，单跑一次看不出来。
+test('关停后不再有活动打到已关闭的数据库', async (t) => {
+  const errors = [];
+  const onUncaught = (err) => errors.push(err);
+  process.on('uncaughtException', onUncaught);
+  t.after(() => process.off('uncaughtException', onUncaught));
+
+  const d = await startTestDaemon();
+  await d.request('/api/intents/declare', {
+    method: 'POST', body: { agent_id: 't1', summary: 's', ttl_seconds: 1, claims: [] }
+  });
+  await d.close();
+
+  // 跨过清理定时器的间隔再断言：那段时间里它本该至少触发一次。
+  await new Promise((r) => setTimeout(r, 6000));
+
+  assert.deepEqual(errors.map((e) => e.message), [], '关停后不应再有异步错误');
+});
