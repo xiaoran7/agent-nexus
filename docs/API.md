@@ -2,6 +2,31 @@
 
 所有 REST 接口默认监听 `http://127.0.0.1:4100`，返回标准 JSON。
 
+## 认证
+
+`/api/*` 与 WebSocket 都需要令牌，只放行 `/health` 与面板 HTML 本身。
+
+令牌在 daemon 启动时签发、只打印一次、不落盘，重启即轮换。启动日志里那枚是 **operator 令牌**（read + write + mint），用它换绑定具体 agent 的令牌：
+
+```bash
+NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
+```
+
+两种令牌：
+
+| 令牌 | 作用域 | 能做什么 |
+| --- | --- | --- |
+| operator | `read` `write` `mint` | 读写全部接口，并签发 agent 令牌；`?to=` 可读任意收件箱 |
+| agent | `read` `write` | 只能读**自己**的收件箱；不能签发令牌 |
+
+- HTTP：`Authorization: Bearer <token>`，或查询参数 `?token=`（浏览器面板发不了自定义头，只能走后者）。
+- WebSocket：查询参数 `?token=`。令牌在 HTTP upgrade 阶段校验，不通过直接 401，**不会先握手成功再关闭**——那中间有窗口，未授权客户端可能已被算进广播接收方。
+- 对同一 agent 重复签发会**作废上一枚**。
+- 签发令牌会顺带登记该 agent，否则新令牌会撞上 `messages.from_agent` 的外键。
+- agent 令牌不能签发令牌；签发权只留在 operator 手上，否则任何 agent 都能给自己领一个新身份。
+
+**身份以令牌为准，不采信请求体里的 `from`。** 令牌绑定了 agent_id 时，`from` 与之不符直接 400；请求体里不带 `from` 也行，由令牌填。`provider` 字段只作展示，不参与任何准入判断——它是调用方可控的字符串，自称 `claude` 的陌生进程和真 Claude Code 无法区分。
+
 跨源默认不放行：`NEXUS_ALLOWED_ORIGINS` 白名单外的来源既拿不到 CORS 响应头，预检也返回 403。该变量按请求读取，改完无需重启。
 
 ## 〇、错误约定
@@ -9,7 +34,8 @@
 | 状态码 | 含义 |
 | --- | --- |
 | 400 | 请求体不是合法 JSON，或字段不满足契约。响应为 `{"error": "...", "field": "claims[].target"}` |
-| 403 | 预检来源不在 `NEXUS_ALLOWED_ORIGINS` 白名单内 |
+| 401 | 缺少令牌，或令牌无效/已被轮换作废 |
+| 403 | 令牌作用域不足（只读令牌发写请求、agent 令牌读别人收件箱、agent 令牌试图签发令牌），或预检来源不在白名单内 |
 | 404 | 资源不存在（含租约不存在或不属于该 agent） |
 | 500 | 服务端内部错误，只回 `{"error": "Internal Server Error"}`，细节写服务端日志 |
 
@@ -145,8 +171,11 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 
 | 方法 | 路径 | 参数说明 | 描述 |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/messages` | `{ "from": "a1", "to": "a2", "content": "hello", "importance": "normal" }` | 发送点对点或广播消息（to 为空为广播） |
-| `GET` | `/api/messages` | `?to=agent-id` | 查询收件箱或全局消息流水 |
+| `POST` | `/api/messages` | `{ "from": "a1", "to": "a2", "content": "hello", "importance": "normal" }` | 发送点对点或广播消息（to 为空为广播）。agent 令牌可省略 `from`，由令牌填 |
+| `GET` | `/api/messages` | `?to=agent-id` | 查询收件箱。**agent 令牌只能 `?to=` 自己的 id**，读别人的返回 403 |
+| `GET` | `/api/messages` | 无参数 | 全局消息流水。**agent 令牌调用返回 403**（否则等于绕过收件箱隔离）；operator 令牌可用 |
+
+`POST /api/tokens`：用 operator 令牌调用，`{ "agent_id": "a1" }` → 201 `{ agent_id, token }`。重复对同一 agent 签发会作废上一枚。
 
 ---
 

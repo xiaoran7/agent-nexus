@@ -752,9 +752,26 @@
       else el.textContent = 'Good night, Sensei.';
     })();
 
+    // daemon 要求令牌。浏览器端从 ?token= 读（登录链接带在地址栏上），
+    // 存进 sessionStorage 后刷新不必再带。
+    const NEXUS_TOKEN = (() => {
+      const fromQuery = new URLSearchParams(location.search).get('token');
+      if (fromQuery) {
+        sessionStorage.setItem('nexusToken', fromQuery);
+        return fromQuery;
+      }
+      return sessionStorage.getItem('nexusToken') || '';
+    })();
+
+    const authHeaders = () => (NEXUS_TOKEN ? { Authorization: `Bearer ${NEXUS_TOKEN}` } : {});
+
     async function fetchDashboard() {
       try {
-        const res = await fetch('/api/dashboard');
+        const res = await fetch('/api/dashboard', { headers: authHeaders() });
+        if (res.status === 401) {
+          document.getElementById('matrix-last-updated').textContent = 'NEEDS TOKEN';
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json();
         renderMetrics(data);
@@ -882,7 +899,12 @@
 
     // WebSocket 连接
     try {
-      const ws = new WebSocket(`ws://${location.host}`);
+      // 浏览器发不了自定义头，令牌只能走查询参数。
+      const wsUrl = NEXUS_TOKEN
+        ? `ws://${location.host}/?token=${encodeURIComponent(NEXUS_TOKEN)}`
+        : `ws://${location.host}`;
+      const ws = new WebSocket(wsUrl);
+
       ws.onmessage = (event) => {
         fetchDashboard();
       };

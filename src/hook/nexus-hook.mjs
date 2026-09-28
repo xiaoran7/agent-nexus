@@ -9,6 +9,11 @@ import { basename, isAbsolute, join, relative } from 'node:path';
 
 const PORT = parseInt(process.env.NEXUS_PORT || '4100', 10);
 const HOST = process.env.NEXUS_HOST || '127.0.0.1';
+// daemon 现在要求令牌。装到全局的 hook 不继承用户的 shell 环境，
+// NEXUS_TOKEN 得写进安装器写下的宿主配置里，或者由宿主注入。
+// 没有令牌时 checkPermission 会拿到 401，按 fail-closed 拦截——
+// 这是有意的：拿不到令牌就不能证明"协调库知道这个文件"，静默放行等于没检查。
+const TOKEN = process.env.NEXUS_TOKEN || null;
 
 function readStdinJson() {
   try {
@@ -124,6 +129,7 @@ function checkPermission(payload) {
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(data),
+        ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
       },
       timeout: 1000,
     }, (res) => {

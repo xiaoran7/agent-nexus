@@ -1,7 +1,26 @@
 import { WebSocketServer } from 'ws';
+import { extractQueryToken, verifySecret } from './auth.js';
 
-export function createWsServer(httpServer, eventBus) {
-  const wss = new WebSocketServer({ server: httpServer });
+export function createWsServer(httpServer, eventBus, tokenStore) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  // 在 HTTP upgrade 阶段就拒绝，不要先握手再关。
+  // 走到 'connection' 再 close() 的方案有一个真实的窗口：握手已经完成、
+  // 客户端拿到 open 事件，广播也可能在这段时间里把它算进接收方。
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+    const token = verifySecret(tokenStore, extractQueryToken(url));
+    if (!token) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      // 让 daemon 能按连接区分身份（比如只向相关 agent 推定向消息）。
+      ws.nexusToken = token;
+      wss.emit('connection', ws, req);
+    });
+  });
 
   // ws 订阅了 httpServer 的 'error' 并把同一个 error 转发到 WebSocketServer 上。
   // 自己的 WebSocketServer 一旦再 'error' 而没有监听者，Node 会按未捕获异常

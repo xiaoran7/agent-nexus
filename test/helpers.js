@@ -5,6 +5,7 @@ import { MessageService } from '../src/domain/messages.js';
 import { handleMcpTool } from '../src/mcp/server.js';
 import { createDatabase } from '../src/storage/database.js';
 import { startDaemon, stopDaemon } from '../src/daemon/index.js';
+import { generateToken } from '../src/transport/auth.js';
 
 // 每个用例一份内存库与事件总线，避免用例之间通过落库状态互相影响。
 export function createHarness() {
@@ -42,10 +43,19 @@ export async function startTestDaemon(options = {}) {
   const { port } = ctx.server.address();
   const base = `http://127.0.0.1:${port}`;
 
-  const request = async (path, { method = 'GET', body, headers = {} } = {}) => {
+  // daemon 现在要求令牌。测试默认用 operator 令牌跑（读写都能，除了它没被测的 mint 路径），
+  // 让既有用例的语义不变；需要验证 agent 令牌边界的用例显式传自己的。
+  const operatorToken = ctx.tokenStore.all().find((t) => !t.agent_id).secret;
+
+  const request = async (path, { method = 'GET', body, headers = {}, token = operatorToken } = {}) => {
+    const auth = token ? { Authorization: `Bearer ${token}` } : {};
     const res = await fetch(`${base}${path}`, {
       method,
-      headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
+      headers: {
+        ...auth,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...headers
+      },
       body: body === undefined ? undefined : JSON.stringify(body)
     });
 
@@ -63,6 +73,9 @@ export async function startTestDaemon(options = {}) {
     ...ctx,
     base,
     port,
+    operatorToken,
+    // 换一枚绑定某个 agent 的令牌，用于验证按令牌隔离的行为。
+    agentToken: (agentId) => ctx.tokenStore.issue(generateToken(agentId)).secret,
     request,
     close: () => stopDaemon(ctx)
   };

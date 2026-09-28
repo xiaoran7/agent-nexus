@@ -48,8 +48,9 @@
    - `messages.js`：Agent 之间的结构化协作通信管道。发件人外键靠装配时注入的 `agentResolver` 核实。
    - `errors.js`：`ValidationError`，调用方非法输入的唯一类型。放在这里而不是 `coordinator.js`，是为了让 domain 层不反向依赖 daemon；`coordinator.js` 继续转出它以保持既有 import 路径可用。
 3. **Transport Layer (`src/transport/`, `src/mcp/`)**：
-   - `rest.js`：纯标准库 HTTP 路由，零框架轻量化分发。
-   - `ws.js`：WebSocket 实时事件分发（向前端推流 Timeline、向 Agent 广播唤醒）。
+   - `rest.js`：纯标准库 HTTP 路由，零框架轻量化分发。认证在读 body 之前完成，没令牌的请求一个字节都不进。
+   - `auth.js`：令牌签发与校验。只在运行中的 daemon 内存里，不落盘。
+   - `ws.js`：WebSocket 实时事件分发（向前端推流 Timeline、向 Agent 广播唤醒）。用 `noServer` 模式在 HTTP upgrade 阶段校验令牌——先握手再关的方案有窗口，未授权客户端可能已被算进广播接收方。
    - `server.js` (`src/mcp/`)：仅提供工具集定义与处理函数，当前 daemon 尚未接入 MCP 传输。
 4. **Interception Layer (`src/hook/`, `src/installer/`)**：
    - `nexus-hook.mjs`：脱离特定 Agent 的通用拦截脚本，从环境自愈解析 Agent 身份，拦截文件写入。

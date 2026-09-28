@@ -7,6 +7,7 @@ import { StateService } from '../domain/state.js';
 import { MessageService } from '../domain/messages.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
+import { TokenStore, generateToken } from '../transport/auth.js';
 
 export function startDaemon(options = {}) {
   // 用 ?? 而不是 ||：0 是合法端口（让系统分配临时端口），|| 会把它误当成未提供
@@ -32,9 +33,15 @@ export function startDaemon(options = {}) {
   }, 5000);
   cleanupTimer.unref();
 
-  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath);
+  // 认证：没有令牌就不服务 /api/*。令牌在启动时签发、不落盘，重启即轮换。
+  // agent 的令牌按需签发——协调库里没有"有哪些 agent"的清单，
+  // 只有它们第一次来登记时才发。
+  const tokenStore = new TokenStore();
+  const operator = tokenStore.issue(generateToken(null));
+
+  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore);
   const server = createServer(handleRest);
-  const wss = createWsServer(server, eventBus);
+  const wss = createWsServer(server, eventBus, tokenStore);
 
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
@@ -50,7 +57,9 @@ export function startDaemon(options = {}) {
       const boundPort = server.address().port;
       console.log(`[Agent-Nexus] Daemon listening on http://127.0.0.1:${boundPort}`);
       console.log(`[Agent-Nexus] Real-time Dashboard: http://127.0.0.1:${boundPort}/`);
-      resolve({ server, wss, coordinator, stateService, messageService, eventBus, db, port: boundPort });
+      console.log(`[Agent-Nexus] Operator token (read + write + mint, printed once, not stored):`);
+      console.log(`  ${operator.secret}`);
+      resolve({ server, wss, coordinator, stateService, messageService, eventBus, db, tokenStore, port: boundPort });
     });
   });
 }

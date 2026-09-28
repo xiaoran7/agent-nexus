@@ -8,7 +8,18 @@ export class MessageService {
     this.eventBus = eventBus;
   }
 
-  send({ from, to = null, intentId = null, content, importance = 'normal' }) {
+  send({ from, to = null, intentId = null, content, importance = 'normal' }, token = null) {
+    // 令牌在，就以令牌为准：agent_id 早先是调用方自报的，任何进程都能自称
+    // claude。令牌是服务端签发、无法自造的那一半身份，优先于请求体。
+    if (token && token.agent_id) {
+      if (from !== undefined && from !== token.agent_id) {
+        throw new ValidationError(
+          `"from" does not match the token's agent "${token.agent_id}"`, 'from'
+        );
+      }
+      from = token.agent_id;
+    }
+
     // 从实例上读解析器，不要把它写进参数解构——解构出的形参会遮蔽同名的
     // 实例属性，守卫就会永远看到 undefined。
     const agentResolver = this.agentResolver;

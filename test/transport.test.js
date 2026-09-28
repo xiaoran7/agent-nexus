@@ -181,7 +181,7 @@ test('HTTP 层拒绝非法输入且不产生脏状态', async (t) => {
   await t.test('畸形 JSON 返回 400 且不泄露解析器细节', async () => {
     const res = await fetch(`${d.base}/api/intents/declare`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${d.operatorToken}` },
       body: '{bad json'
     });
 
@@ -284,7 +284,7 @@ test('WebSocket 广播时间线与唤醒事件', async (t) => {
   // 登记在 socket 建立之前：连接握手失败时也要保证 daemon 被关掉。
   // stopDaemon 内部会 terminate 掉所有 ws 连接，这里不用重复收尾。
   t.after(() => d.close());
-  const ws = new WebSocket(`ws://127.0.0.1:${d.port}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${d.port}/?token=${d.operatorToken}`);
 
   const messages = [];
   ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
@@ -721,3 +721,180 @@ async function startDaemonLike(port) {
   const { startDaemon } = await import('../src/daemon/index.js');
   return startDaemon({ port, dbPath: ':memory:' });
 }
+
+// 认证与身份：daemon 只监听本机挡不住本机进程。绑定 127.0.0.1 + CORS
+// 挡得住浏览器里的网页，挡不住同机的任何程序——而多 agent 并行正是本项目的
+// 场景。所以 /api/* 和 WebSocket 都要令牌，且身份以令牌为准而非自报字段。
+test('令牌缺失或无效时拒绝访问', async (t) => {
+  const d = await startTestDaemon();
+  t.after(() => d.close());
+
+  await t.test('无令牌读 /api/agents 返回 401', async () => {
+    const res = await d.request('/api/agents', { token: null });
+    assert.equal(res.status, 401);
+  });
+
+  await t.test('无令牌写 /api/intents/declare 返回 401', async () => {
+    const res = await d.request('/api/intents/declare', {
+      method: 'POST', token: null, body: { agent_id: 'x', summary: 's' }
+    });
+    assert.equal(res.status, 401, '没令牌就不该读到请求体，更不该落记录');
+  });
+
+  await t.test('伪造令牌返回 401', async () => {
+    const res = await d.request('/api/agents', { token: 'not-a-real-token' });
+    assert.equal(res.status, 401);
+  });
+
+  await t.test('查询参数里的令牌也接受', async () => {
+    const res = await d.request(`/api/agents?token=${d.operatorToken}`, { token: null });
+    assert.equal(res.status, 200, '浏览器面板只能走查询参数');
+  });
+
+  await t.test('/health 仍然公开', async () => {
+    const res = await d.request('/health', { token: null });
+    assert.equal(res.status, 200, '健康检查要能探活，不能挡在认证后面');
+  });
+
+  await t.test('面板 HTML 仍然可以打开', async () => {
+    const res = await d.request('/', { token: null });
+    assert.equal(res.status, 200, '没有令牌也要能看见登录入口');
+  });
+
+  await t.test('未授权的 WebSocket 连接握手即失败', async () => {
+    const outcome = await new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${d.port}`);
+      ws.onopen = () => resolve('opened');
+      ws.onerror = () => resolve('rejected');
+      ws.onclose = () => resolve('rejected');
+    });
+    assert.equal(outcome, 'rejected', '不该先握手成功再关——那中间有窗口');
+  });
+
+  await t.test('带令牌的 WebSocket 能连上', async () => {
+    const opened = await new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${d.port}/?token=${d.operatorToken}`);
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+    });
+    assert.equal(opened, true);
+  });
+});
+
+test('令牌绑定 agent 身份与收件箱可见性', async (t) => {
+  const d = await startTestDaemon();
+  t.after(() => d.close());
+
+  const alice = d.agentToken('alice');
+  const bob = d.agentToken('bob');
+
+  await t.test('前置：两个 agent 都已注册', async () => {
+    for (const id of ['alice', 'bob']) {
+      const res = await d.request('/api/agents/register', {
+        method: 'POST', body: { id, name: id, provider: 'claude' }
+      });
+      assert.equal(res.status, 200);
+    }
+  });
+
+  await t.test('发件人以令牌为准，伪造的 from 被拒', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', token: alice, body: { from: 'bob', content: 'spoofed' }
+    });
+    assert.equal(res.status, 400, '令牌说是 alice，就不能冒用 bob');
+    assert.equal(res.json.field, 'from');
+  });
+
+  await t.test('按令牌身份发送成功', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', token: alice, body: { content: 'from alice' }
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.from, 'alice');
+  });
+
+  await t.test('定向消息只能由目标收件人读到', async () => {
+    await d.request('/api/messages', {
+      method: 'POST', token: alice, body: { to: 'bob', content: 'for bob only' }
+    });
+    const bobInbox = await d.request('/api/messages?to=bob', { token: bob });
+    assert.ok(bobInbox.json.some((m) => m.content === 'for bob only'));
+
+    const aliceInbox = await d.request('/api/messages?to=bob', { token: alice });
+    assert.equal(aliceInbox.status, 403, 'alice 不该读 bob 的收件箱');
+  });
+
+  await t.test('agent 令牌不能靠无参列举绕过隔离', async () => {
+    const res = await d.request('/api/messages', { token: alice });
+    assert.equal(res.status, 403, '无参列举是全局流水，绑定 agent 的令牌不许用');
+  });
+
+  await t.test('agent 令牌读自己的收件箱', async () => {
+    const res = await d.request('/api/messages?to=alice', { token: alice });
+    assert.equal(res.status, 200);
+  });
+});
+
+test('令牌签发与轮换', async (t) => {
+  const d = await startTestDaemon();
+  t.after(() => d.close());
+
+  await t.test('观测令牌可以签发 agent 令牌', async () => {
+    const res = await d.request('/api/tokens', {
+      method: 'POST', body: { agent_id: 'carol' }
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.json.agent_id, 'carol');
+    assert.ok(res.json.token.length > 20, '应返回可用的令牌');
+  });
+
+  await t.test('agent 令牌不能签发新令牌', async () => {
+    const res = await d.request('/api/tokens', {
+      method: 'POST', token: d.agentToken('dave'), body: { agent_id: 'eve' }
+    });
+    assert.equal(res.status, 403, '签发权不能扩散，否则任何 agent 都能领新身份');
+  });
+
+  await t.test('缺 agent_id 返回 400', async () => {
+    const res = await d.request('/api/tokens', { method: 'POST', body: {} });
+    assert.equal(res.status, 400);
+  });
+
+  await t.test('重复签发作废上一枚', async () => {
+    const first = await d.request('/api/tokens', { method: 'POST', body: { agent_id: 'frank' } });
+    const old = first.json.token;
+    assert.equal((await d.request('/api/agents', { token: old })).status, 200);
+
+    await d.request('/api/tokens', { method: 'POST', body: { agent_id: 'frank' } });
+    assert.equal((await d.request('/api/agents', { token: old })).status, 401,
+      '重发即作废，否则上一枚还在流通');
+  });
+});
+
+test('签发令牌时顺带登记 agent', async (t) => {
+  const d = await startTestDaemon();
+  t.after(() => d.close());
+
+  await t.test('刚拿到的令牌就能发消息', async () => {
+    const minted = await d.request('/api/tokens', { method: 'POST', body: { agent_id: 'newbie' } });
+    assert.equal(minted.status, 201);
+
+    const res = await d.request('/api/messages', {
+      method: 'POST', token: minted.json.token, body: { content: 'hello' }
+    });
+    assert.equal(res.status, 200, '有令牌却发不出消息，对第一次用的人是死胡同');
+    assert.equal(res.json.from, 'newbie');
+  });
+
+  await t.test('重新签发不会重置已登记的 agent', async () => {
+    await d.request('/api/messages', {
+      method: 'POST', token: d.operatorToken, body: { from: 'newbie', content: 'first' }
+    });
+    const again = await d.request('/api/tokens', { method: 'POST', body: { agent_id: 'newbie' } });
+
+    const res = await d.request('/api/messages', {
+      method: 'POST', token: again.json.token, body: { content: 'second' }
+    });
+    assert.equal(res.status, 200, '轮换令牌不该要求重新注册');
+  });
+});
