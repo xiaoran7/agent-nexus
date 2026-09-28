@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
 
@@ -7,6 +7,15 @@ export function createDatabase(customPath = null) {
   const nexusDir = join(homedir(), '.agent-nexus');
   mkdirSync(nexusDir, { recursive: true });
   const dbPath = customPath || process.env.NEXUS_DB_PATH || join(nexusDir, 'nexus.db');
+
+  // 自定义路径的父目录不一定存在（部署时最常见的做法是直接给一个
+  // NEXUS_DB_PATH=/var/lib/agent-nexus/nexus.db）。DatabaseSync 不会建目录，
+  // 缺目录时抛的是 "unable to open database file"——既不说是哪个路径，
+  // 也让人误以为是权限或文件损坏问题。补齐目录后再报错才有可操作性。
+  if (dbPath !== ':memory:') {
+    const parent = dirname(dbPath);
+    mkdirSync(parent, { recursive: true });
+  }
 
   const db = new DatabaseSync(dbPath);
 

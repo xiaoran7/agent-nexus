@@ -22,6 +22,10 @@ export function startDaemon(options = {}) {
   const stateService = new StateService(db, eventBus);
   const messageService = new MessageService(db, eventBus);
 
+  // 消息的发件人外键由协调器保证：进程内发消息的 agent 必须先注册过。
+  // 把解析器交给 MessageService，未知发件人就能变成 400 而不是 SQLite 外键失败。
+  messageService.agentResolver = (agentId) => coordinator.getAgent(agentId);
+
   // 定期扫描清理过期租约
   const cleanupTimer = setInterval(() => {
     coordinator.expireLeases();
@@ -33,15 +37,42 @@ export function startDaemon(options = {}) {
   const wss = createWsServer(server, eventBus);
 
   return new Promise((resolve, reject) => {
-    server.once('error', reject);
+    server.once('error', (err) => {
+      // listen 失败时 db 和清理定时器都已经开着了。抛出前先回收，否则调用方
+      // 拿到的是 reject 出来的错误句柄，进程若继续跑（比如测试里换个端口重试）
+      // 就会漏掉一个打开的库和一条常驻定时器。
+      clearInterval(cleanupTimer);
+      db.close();
+      reject(describeListenError(err, port));
+    });
     server.listen(port, '127.0.0.1', () => {
-      server.removeListener('error', reject);
+      server.removeAllListeners('error');
       const boundPort = server.address().port;
       console.log(`[Agent-Nexus] Daemon listening on http://127.0.0.1:${boundPort}`);
       console.log(`[Agent-Nexus] Real-time Dashboard: http://127.0.0.1:${boundPort}/`);
       resolve({ server, wss, coordinator, stateService, messageService, eventBus, db, port: boundPort });
     });
   });
+}
+
+// 启动失败要能直接告诉用户下一步做什么。裸的 EADDRINUSE 只说明"有个东西
+// 占着这个端口"，不告诉他是自己上一个实例还是别的程序。
+function describeListenError(err, port) {
+  if (err.code === 'EADDRINUSE') {
+    return new Error(
+      `Port ${port} is already in use, so the daemon could not start.\n` +
+      `  - If an earlier Agent-Nexus is still running, stop it, or start this one on another port with NEXUS_PORT.\n` +
+      `  - Otherwise another program holds the port; pick a free one with NEXUS_PORT.\n` +
+      `  - Note: the hook reads NEXUS_PORT from its own environment, so a globally\n` +
+      `    installed hook must see the same value or it will not reach this daemon.`
+    );
+  }
+  if (err.code === 'EACCES') {
+    return new Error(
+      `Not allowed to bind port ${port}. Ports below 1024 need elevated privileges on most systems; choose one above that range with NEXUS_PORT.`
+    );
+  }
+  return err;
 }
 
 // 关停入口。顺序很关键：先断掉所有已建立的连接，再等 close() 回调。

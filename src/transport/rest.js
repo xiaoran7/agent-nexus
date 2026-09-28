@@ -131,7 +131,10 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       if (url.pathname.startsWith('/api/state')) {
         const parts = url.pathname.split('/').slice(3); // /api/state/:ns/:key
         const namespace = parts[0] || url.searchParams.get('namespace') || 'default';
-        const key = parts[1] || null;
+        // 只有第三段不是保留动作时才算键名，否则 /api/state/:ns/cas 里的 "cas"
+        // 会被当成一个真实存在的键，键名就永远从请求体里取。
+        const RESERVED = new Set(['cas']);
+        const key = parts[1] && !RESERVED.has(parts[1]) ? parts[1] : null;
 
         if (req.method === 'GET') {
           if (key) {
@@ -144,8 +147,12 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         }
         if (req.method === 'POST') {
           const body = await readJson();
-          if (parts[2] === 'cas') {
-            const result = stateService.compareAndSwap(namespace, key, body.expected, body.new_value, body.updated_by, body.ttl_seconds);
+          // CAS 有两种写法：/api/state/:ns/:key/cas（键在路径里）和
+          // /api/state/:ns/cas（键在请求体的 key 字段里）。key 已把保留段
+          // "cas" 排除在外，所以这里只要末段是 cas 就走 CAS。
+          if (parts[parts.length - 1] === 'cas') {
+            const casKey = key || body.key || null;
+            const result = stateService.compareAndSwap(namespace, casKey, body.expected, body.new_value, body.updated_by, body.ttl_seconds);
             return sendJson(200, result);
           }
           const entry = stateService.set(namespace, key, body.value, body.updated_by, body.ttl_seconds);

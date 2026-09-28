@@ -1,15 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { normalize, resolve } from 'node:path';
+import { ValidationError, requireString } from '../domain/errors.js';
 
-export class ValidationError extends Error {
-  constructor(message, field) {
-    super(message);
-    this.name = 'ValidationError';
-    this.field = field;
-    // 供 transport 层映射成 400，而不是混同于 500 的服务端内部错误。
-    this.statusCode = 400;
-  }
-}
+// 协调器此前是 ValidationError 的定义处。现在它住在 domain/errors.js（状态和
+// 消息两个入口也要用），这里继续导出是为了不打断既有 import 路径。
+export { ValidationError };
 
 const CLAIM_TYPES = new Set(['file', 'module', 'symbol']);
 
@@ -18,13 +13,6 @@ const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
 
 function toComparablePath(value) {
   return normalize(resolve(value)).replace(/\\/g, '/').toLowerCase();
-}
-
-function requireString(value, field) {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new ValidationError(`"${field}" is required and must be a non-empty string`, field);
-  }
-  return value;
 }
 
 function requireAgentId(value) {

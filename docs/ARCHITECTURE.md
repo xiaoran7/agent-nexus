@@ -45,7 +45,8 @@
 2. **Domain Core (`src/domain/`, `src/daemon/coordinator.js`)**：
    - `coordinator.js`：核心状态机与仲裁器。负责 Agent 注册、Intent 账本、Lease 租期管理、三级冲突判定（file/module/symbol）、自动补报与等待队列唤醒。
    - `state.js`：共享状态与 CAS（Compare-And-Swap）服务，专用于协调参数与锁管理。
-   - `messages.js`：Agent 之间的结构化协作通信管道。
+   - `messages.js`：Agent 之间的结构化协作通信管道。发件人外键靠装配时注入的 `agentResolver` 核实。
+   - `errors.js`：`ValidationError`，调用方非法输入的唯一类型。放在这里而不是 `coordinator.js`，是为了让 domain 层不反向依赖 daemon；`coordinator.js` 继续转出它以保持既有 import 路径可用。
 3. **Transport Layer (`src/transport/`, `src/mcp/`)**：
    - `rest.js`：纯标准库 HTTP 路由，零框架轻量化分发。
    - `ws.js`：WebSocket 实时事件分发（向前端推流 Timeline、向 Agent 广播唤醒）。

@@ -13,6 +13,8 @@ export function createHarness() {
   const coordinator = new CoordinatorEngine(db, eventBus);
   const stateService = new StateService(db, eventBus);
   const messageService = new MessageService(db, eventBus);
+  // 与 daemon 装配一致：发件人外键要靠协调器核实，否则 SQLite 会抛外键失败。
+  messageService.agentResolver = (id) => coordinator.getAgent(id);
 
   return {
     db,
@@ -35,8 +37,8 @@ export function capture(eventBus, event) {
 
 // 起一个真实的 daemon（HTTP + WebSocket + 独立数据库），走网络栈而不是直接调 domain。
 // 端口传 0 让系统分配，避开并行用例抢 4100。close() 负责关库、停 server 和 WS。
-export async function startTestDaemon() {
-  const ctx = await startDaemon({ port: 0, dbPath: ':memory:' });
+export async function startTestDaemon(options = {}) {
+  const ctx = await startDaemon({ port: 0, dbPath: ':memory:', ...options });
   const { port } = ctx.server.address();
   const base = `http://127.0.0.1:${port}`;
 

@@ -11,7 +11,10 @@ const hooks = {
 };
 
 if (cmd === 'start') {
-  startDaemon();
+  startDaemon().catch((err) => {
+    console.error(`\n[Agent-Nexus] Startup failed:\n${err.message}\n`);
+    process.exit(1);
+  });
 } else if (cmd === 'hook:install') {
   const target = process.argv[3];
   (hooks[target] || installAll)();

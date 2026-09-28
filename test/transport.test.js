@@ -577,3 +577,147 @@ test('安装器把 hook 写进宿主配置', async (t) => {
     assert.ok(existsSync(zcode.pre_edit_hook));
   });
 });
+
+// 状态与消息两个入口此前完全没有入参校验：缺字段会一路掉进 SQLite，
+// 变成 TypeError（绑定不了 null）或 FOREIGN KEY constraint failed。
+// 两者都映射成 500，还会把底层 schema 的错误码打进日志。
+test('状态与消息的非法输入返回 400 而非 500', async (t) => {
+  const d = await startTestDaemon();
+  t.after(() => d.close());
+
+  await t.test('前置：注册一个已知 agent', async () => {
+    const res = await d.request('/api/agents/register', {
+      method: 'POST', body: { id: 'state-1', name: 'State 1', provider: 'claude' }
+    });
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('state set 缺 value 返回 400', async () => {
+    const res = await d.request('/api/state/default/k', {
+      method: 'POST', body: { updated_by: 'state-1' }
+    });
+    assert.equal(res.status, 400, '缺失 value 应报 400');
+    assert.equal(res.json.field, 'value');
+  });
+
+  await t.test('state set 缺 updated_by 返回 400', async () => {
+    const res = await d.request('/api/state/default/k', {
+      method: 'POST', body: { value: 'v' }
+    });
+    assert.equal(res.status, 400, '缺失 updated_by 应报 400');
+    assert.equal(res.json.field, 'updated_by');
+  });
+
+  await t.test('非法 ttl_seconds 返回 400', async () => {
+    const res = await d.request('/api/state/default/k', {
+      method: 'POST', body: { value: 'v', updated_by: 'state-1', ttl_seconds: -5 }
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.field, 'ttl_seconds');
+  });
+
+  await t.test('CAS 的 new_value 必须是字符串或 null', async () => {
+    const res = await d.request('/api/state/default/cas', {
+      method: 'POST', body: { key: 'k', expected: null, new_value: 42, updated_by: 'state-1' }
+    });
+    assert.equal(res.status, 400, '数字不能绑定到 TEXT 列，应报 400');
+    assert.equal(res.json.field, 'new_value');
+  });
+
+  await t.test('CAS 的 expected 允许 null（键不存在）', async () => {
+    const res = await d.request('/api/state/default/cas', {
+      method: 'POST', body: { key: 'fresh', expected: null, new_value: 'ok', updated_by: 'state-1' }
+    });
+    assert.equal(res.status, 200, '键不存在时 expected=null 是合法用法');
+    assert.equal(res.json.swapped, true);
+  });
+
+  await t.test('非法请求不留下脏状态', async () => {
+    const res = await d.request('/api/state/default', {});
+    const keys = res.json.map((e) => e.key);
+    assert.deepEqual(keys, ['fresh'], '只有校验通过的那次写入');
+  });
+
+  await t.test('消息发件人未注册返回 400', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', body: { from: 'ghost-agent', content: 'hi' }
+    });
+    assert.equal(res.status, 400, '未知发件人应报 400 而不是外键失败');
+    assert.equal(res.json.field, 'from');
+  });
+
+  await t.test('消息收件人未注册返回 400', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', body: { from: 'state-1', to: 'nobody', content: 'hi' }
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.field, 'to');
+  });
+
+  await t.test('消息缺 content 返回 400', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', body: { from: 'state-1' }
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.field, 'content');
+  });
+
+  await t.test('消息 importance 非法值返回 400', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', body: { from: 'state-1', content: 'hi', importance: 'ASAP' }
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.field, 'importance');
+  });
+
+  await t.test('合法消息仍能发出', async () => {
+    const res = await d.request('/api/messages', {
+      method: 'POST', body: { from: 'state-1', content: 'hello' }
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.from, 'state-1');
+  });
+
+  await t.test('daemon 仍健康', async () => {
+    const res = await d.request('/health');
+    assert.equal(res.status, 200);
+  });
+});
+
+// 端口冲突与数据库路径都属于"用户配置错了"，不该以未捕获异常的形式崩溃。
+// ws 会把 http server 的 error 转发到 WebSocketServer，自己再抛出，
+// 于是 startDaemon 里的 reject 是死代码，进程带一屏原始堆栈退出。
+test('启动失败给出可操作提示而不是崩溃', async (t) => {
+  await t.test('端口被占用时报出 NEXUS_PORT 提示', async () => {
+    const first = await startTestDaemon();
+    t.after(() => first.close());
+
+    await assert.rejects(
+      () => startDaemonLike(first.port),
+      (err) => {
+        assert.match(err.message, /already in use/);
+        assert.match(err.message, /NEXUS_PORT/, '必须告诉用户下一步怎么做');
+        return true;
+      }
+    );
+  });
+
+  await t.test('数据库父目录不存在时自动创建', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nexus-db-'));
+    const nested = join(dir, 'deep', 'nested', 'nexus.db');
+    assert.equal(existsSync(join(dir, 'deep')), false, '前置：目录尚不存在');
+
+    const d = await startTestDaemon({ dbPath: nested });
+    t.after(() => d.close());
+
+    assert.ok(existsSync(nested), '自定义路径的父目录应被补齐');
+    const res = await d.request('/health');
+    assert.equal(res.status, 200);
+  });
+});
+
+// 用一个已被占用的端口再起一次 daemon，复现真实的端口冲突。
+async function startDaemonLike(port) {
+  const { startDaemon } = await import('../src/daemon/index.js');
+  return startDaemon({ port, dbPath: ':memory:' });
+}

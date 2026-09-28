@@ -23,6 +23,18 @@
   - `symbol`——非空且不以空白或路径分隔符开头。
 - hook 通道的 `file_path` 必填，与 `claims[].target` 同规则。
 
+状态与消息通道的硬性要求（同样返回 400 且不写入）：
+
+- 状态的 `value`、`updated_by`、`namespace`、`key`：非空字符串。`value` 必须是字符串——复杂载荷由调用方自己序列化，和 `messages.content` 一致。传数字、对象或 `null` 一律拒绝。
+- 状态的 `ttl_seconds`：正数或不给。给 `0`、负数或非数字都拒绝。
+- CAS 的 `expected`：字符串或 `null`（键不存在时就是 `null`）。
+- CAS 的 `new_value`：字符串或 `null`，`''` 和 `null` 表示删除该键。这两个字段语义不同，必须分开校验。
+- 消息的 `from` / `content`：非空字符串。`from` 必须指向已注册的 agent。
+- 消息的 `to` / `intent_id`：给了就必须指向真实存在的 agent / intent，不存在返回 400。
+- 消息的 `importance`：`normal` | `urgent`。
+
+字段名按请求体原样回报：CAS 的字段叫 `new_value`，错误里的 `field` 也是 `new_value`。
+
 ---
 
 ## 一、协调核心接口 (Coordinator Endpoints)
@@ -122,7 +134,10 @@
 | `GET` | `/api/state/:ns/:key` | - | 获取特定 Key 的状态内容 |
 | `POST` | `/api/state/:ns/:key` | `{ "value": "...", "updated_by": "a1", "ttl_seconds": 60 }` | 写入或更新状态 |
 | `POST` | `/api/state/:ns/:key/cas` | `{ "expected": "...", "new_value": "...", "updated_by": "a1" }` | **原子 Compare-And-Swap** |
+| `POST` | `/api/state/:ns/cas` | `{ "key": "...", "expected": "...", "new_value": "...", "updated_by": "a1" }` | 同上，键名放在请求体的 `key` 里 |
 | `DELETE` | `/api/state/:ns/:key` | - | 删除状态键 |
+
+CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成键名，所以键名要么来自它前面那一段，要么来自请求体的 `key`。两者都缺返回 400。
 
 ---
 
