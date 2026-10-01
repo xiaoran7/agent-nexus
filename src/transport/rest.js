@@ -254,7 +254,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           agentId: data.agent_id,
           provider: data.provider || 'unknown',
           sessionId: data.session_id || 'default',
-          filePath: data.file_path,
+          filePath: data.file_path || (data.tool_input && data.tool_input.file_path),
           promptHint: data.prompt_hint,
           projectId: data.project_id || 'default',
           workspaceDir: data.workspace_dir || ''

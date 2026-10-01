@@ -1,15 +1,20 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 
 const PROJECT_MARKERS = ['.nexus', '.git', 'package.json', 'CLAUDE.md'];
 
 /**
- * 规范化文件系统路径：统一转为小写、正斜杠，并处理 Windows 盘符
+ * 规范化文件系统路径：统一转为物理路径（解析软链接）、小写、正斜杠，并处理 Windows 盘符
  */
 export function canonicalizePath(p) {
   if (!p || typeof p !== 'string') return '';
-  const resolved = resolve(p);
+  let resolved = resolve(p);
+  try {
+    if (existsSync(resolved)) {
+      resolved = realpathSync(resolved);
+    }
+  } catch {}
   let normalized = resolved.replace(/\\/g, '/');
   // 统一 Windows 盘符为小写 (如 C:/ -> c:/)
   if (/^[A-Za-z]:\//.test(normalized)) {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { normalize, resolve } from 'node:path';
+import { normalize, resolve, isAbsolute } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import { ValidationError, requireString } from '../domain/errors.js';
 
 export { ValidationError };
@@ -8,15 +9,21 @@ const CLAIM_TYPES = new Set(['file', 'module', 'symbol']);
 
 const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
 
-function toComparablePath(value) {
-  return normalize(resolve(value)).replace(/\\/g, '/').toLowerCase();
+function toComparablePath(value, baseDir) {
+  let resolved = baseDir && !isAbsolute(value) ? resolve(baseDir, value) : resolve(value);
+  try {
+    if (existsSync(resolved)) {
+      resolved = realpathSync(resolved);
+    }
+  } catch {}
+  return normalize(resolved).replace(/\\/g, '/').toLowerCase();
 }
 
 function requireAgentId(value) {
   return requireString(value, 'agent_id');
 }
 
-function assertClaimTarget(raw, claimType) {
+function assertClaimTarget(raw, claimType, baseDir) {
   const target = requireString(raw, 'claims[].target');
 
   if (!CLAIM_TYPES.has(claimType)) {
@@ -33,8 +40,8 @@ function assertClaimTarget(raw, claimType) {
     return { type: claimType, target: target.toLowerCase() };
   }
 
-  const normalized = toComparablePath(target);
-  if (normalized === toComparablePath('.') || normalized === toComparablePath('/')) {
+  const normalized = toComparablePath(target, baseDir);
+  if (normalized === toComparablePath('.', baseDir) || normalized === toComparablePath('/', baseDir)) {
     throw new ValidationError(
       `Claim target "${target}" resolves to a directory root or the working directory, not a specific resource`,
       'claims[].target'
@@ -49,9 +56,15 @@ export class CoordinatorEngine {
     this.eventBus = eventBus;
   }
 
-  normalizePath(filePath) {
+  normalizePath(filePath, baseDir) {
     if (!filePath) return '';
-    return normalize(resolve(filePath)).replace(/\\/g, '/').toLowerCase();
+    let resolved = baseDir && !isAbsolute(filePath) ? resolve(baseDir, filePath) : resolve(filePath);
+    try {
+      if (existsSync(resolved)) {
+        resolved = realpathSync(resolved);
+      }
+    } catch {}
+    return normalize(resolved).replace(/\\/g, '/').toLowerCase();
   }
 
   pathsOverlap(a, b) {
@@ -134,6 +147,19 @@ export class CoordinatorEngine {
     `);
     stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now);
 
+    if (workspaceDir && finalProjectId) {
+      try {
+        const canonicalRoot = toComparablePath(workspaceDir);
+        this.db.prepare(`
+          INSERT INTO projects (id, root_path, display_name, created_at, last_activity)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
+            last_activity = excluded.last_activity
+        `).run(finalProjectId, canonicalRoot, `Project ${finalProjectId}`, now, now);
+      } catch {}
+    }
+
     this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${finalProvider}) registered/heartbeat`, finalProjectId);
     return this.getAgent(id);
   }
@@ -167,18 +193,20 @@ export class CoordinatorEngine {
       throw new ValidationError('"claims" must be an array', 'claims');
     }
 
+    const agent = this.getAgent(agentId);
+    const baseDir = agent?.workspace_dir || '';
+
     const normalizedClaims = claims.map((c) => {
       if (!c || typeof c !== 'object') {
         throw new ValidationError('"claims" entries must be objects', 'claims');
       }
-      return assertClaimTarget(c.target, c.type);
+      return assertClaimTarget(c.target, c.type, baseDir);
     });
 
     this.expireLeases();
     const now = Date.now();
     const intentId = `intent_${randomUUID().slice(0, 8)}`;
 
-    const agent = this.getAgent(agentId);
     if (!agent) {
       const parts = agentId.split('-');
       const provider = parts[0] || 'agent';
@@ -374,10 +402,10 @@ export class CoordinatorEngine {
   // 5. 极速权限检查与自动补报 (针对通用 Hook)
   fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, promptHint, projectId = 'default', workspaceDir = '' }) {
     requireAgentId(agentId);
-    assertClaimTarget(filePath, 'file');
+    assertClaimTarget(filePath, 'file', workspaceDir);
 
     const finalProjectId = projectId || 'default';
-    const normalizedFile = this.normalizePath(filePath);
+    const normalizedFile = this.normalizePath(filePath, workspaceDir);
     const now = Date.now();
 
     this.registerAgent({

@@ -87,19 +87,36 @@ const WRITE_COMMAND_RE =
 const COPY_COMMAND_RE = /(?:\bcp\b|\bmv\b|\binstall\b)\s/;
 
 function extractBashTarget(payload, workspaceDir) {
-  const command = (payload.tool_input || payload.input || {}).command;
-  if (typeof command !== 'string' || !command) return null;
-  if (!WRITE_COMMAND_RE.test(command)) return null;
+  const rawCommand = (payload.tool_input || payload.input || {}).command;
+  if (typeof rawCommand !== 'string' || !rawCommand) return null;
 
-  // 先按出现顺序取出全部路径 token，再决定取哪个。
-  // 不能先按"在工作目录内"过滤：cp 的源和目的分处两侧时，过滤会把源留下，
-  // 于是 `cp a.js /tmp/b.js` 反倒判成"要写 a.js"，把一次无关的拷贝拦下来。
+  // 1. 先剥离丢弃输出的 /dev/null 重定向与描述符重定向 (如 2>/dev/null, 2>&1)
+  const cleanCmd = rawCommand
+    .replace(/(?:[0-9]|&)?>>?\s*\/dev\/null/g, ' ')
+    .replace(/[0-9]?&>[0-9]/g, ' ')
+    .trim();
+
+  if (!cleanCmd || !WRITE_COMMAND_RE.test(cleanCmd)) return null;
+
+  // 2. 如果包含重定向写入 (> 或 >>)
+  const redirectMatch = cleanCmd.match(/(?:^|[^>&0-9])>>?\s*([^\s;&|]+)/);
+  if (redirectMatch) {
+    const target = redirectMatch[1].replace(/^["']|["']$/g, '');
+    if (target && !/[`$()]/.test(target)) {
+      const abs = isAbsolute(target) ? target : join(workspaceDir, target);
+      const rel = relative(workspaceDir, abs);
+      if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+        return target;
+      }
+    }
+    return null;
+  }
+
+  // 3. 针对 cp/mv/install/tee/truncate/sed -i 等命令
   const paths = [];
-  for (const token of command.match(/"[^"]*"|'[^']*'|[^\s;&|]+/g) || []) {
+  for (const token of cleanCmd.match(/"[^"]*"|'[^']*'|[^\s;&|]+/g) || []) {
     const candidate = token.replace(/^["']|["']$/g, '');
-    // 反引号与 $() 里的内容无法静态还原，跳过而不是猜。
     if (/[`$()]/.test(candidate)) continue;
-    // 纯命令行开关（-rf、--config）不含路径分隔符，排除。
     if (!candidate.includes('/') && !candidate.includes(String.fromCharCode(92))) continue;
     paths.push(candidate);
   }
@@ -107,10 +124,8 @@ function extractBashTarget(payload, workspaceDir) {
   if (paths.length === 0) return null;
 
   // cp/mv/install 改写的是目的端（最后一个路径），其余写入命令取第一个。
-  const target = COPY_COMMAND_RE.test(command) ? paths[paths.length - 1] : paths[0];
+  const target = COPY_COMMAND_RE.test(cleanCmd) ? paths[paths.length - 1] : paths[0];
 
-  // 工作目录之外的文件不参与判冲：hook 装到全局后，会收到别处项目的调用，
-  // 拿那些路径去判冲只会平白阻断。
   const abs = isAbsolute(target) ? target : join(workspaceDir, target);
   const rel = relative(workspaceDir, abs);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;

@@ -12,8 +12,14 @@ export class ProjectLead {
   getProjectContext() {
     const snapshot = this.coordinator.getDashboardSnapshot(this.projectId);
     const waitQueue = this.coordinator.getWaitQueue(this.projectId);
+    let rootPath = '';
+    try {
+      const row = this.coordinator.db.prepare('SELECT root_path FROM projects WHERE id = ?').get(this.projectId);
+      if (row && row.root_path) rootPath = row.root_path;
+    } catch {}
     return {
       projectId: this.projectId,
+      rootPath,
       agents: snapshot.agents,
       activeClaims: snapshot.activeClaims,
       waitQueue,
@@ -29,9 +35,10 @@ export class ProjectLead {
     const conflicts = [];
     const safeToStart = [];
     const now = Date.now();
+    const rootPath = context.rootPath || '';
 
     for (const item of plannedWork) {
-      const normalizedTarget = this.coordinator.normalizePath(item.target);
+      const normalizedTarget = this.coordinator.normalizePath(item.target, rootPath);
       const fakeClaim = {
         type: item.type || 'file',
         target: item.type === 'symbol' ? item.target.toLowerCase() : normalizedTarget

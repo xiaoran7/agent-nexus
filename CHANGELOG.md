@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-10-01 实测验证与物理符号链接/Hook 提取/连接池稳定性加固
+
+### 改了什么
+
+- **`src/domain/project.js` & `src/daemon/coordinator.js`**
+  - 在 `canonicalizePath`、`toComparablePath` 与 `normalizePath` 中全面引入 `realpathSync` 物理软链接解析，消除 Linux 符号链接路径（如 `/home/tanner/workspace` -> `/www/workspace`）与真实物理路径导致的 Project ID 和资源锁定哈希分叉。
+  - 在 `coordinator.registerAgent` 中引入工作区根路径的自动物理规范化与项目 `root_path` 注册更新，确保架构师判冲时相对路径补全基准 100% 精确。
+- **`src/hook/nexus-hook.mjs`**
+  - 重构 Bash 工具写入目标提取引擎：彻底剥离 `/dev/null` 重定向（如 `2>/dev/null`、`2>&1`），修复 Agent 常规只读检查被误判为写操作导致意外锁定整个目录的缺陷；精确提取 `>` 与 `>>` 后紧随的真实目标文件。
+- **`src/daemon/index.js`**
+  - 配置 HTTP 服务器 `keepAliveTimeout = 65000` 与 `headersTimeout = 66000`，彻底解决客户端长连接套接字复用导致的 `UND_ERR_SOCKET / other side closed` 异常。
+- **生产级端到端实测验证（`us-zenix`）**
+  - 在美西生产机配置 Claude Code CLI + CPA 动态 SSE 转换垫片（`cpa-shim.mjs`），成功打通与 `cpa.tannerlab.xyz`（`claude-sonnet-4-6`）的稳定直连。
+  - 编写并执行全链路端到端自动化压测 `test/test-parallel-live.mjs`：
+    1. Session Alpha 声明并获得核心文件锁定；
+    2. Session Beta 真实调用 Claude Code 全速并发完成独立文件，零阻塞零干扰；
+    3. Session Beta 尝试并发写入锁中文件，PreToolUse Hook 毫秒级物理拦截（Fail-Closed，退出码 2），消除代码踩踏；
+    4. Session Beta 咨询 Project Lead 架构师调度，实时获得避障重排建议（safeToStart 走廊与 mustWait 倒计时）；
+    5. Session Beta 采纳架构师避障建议，优先并发施工空闲模块，平滑绕开锁中文件并成功产出代码；
+    6. Session Alpha 完工释放租约，等待队列自动触发唤醒并平滑接力；
+    7. Nexus Dashboard 实时面板时间线与指标记录完整闭环。
+
+---
+
 ## 2026-10-01 项目级常驻架构师调度与 Session 自动识别
 
 ### 改了什么
