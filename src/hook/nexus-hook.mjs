@@ -6,6 +6,7 @@
 import { request } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative } from 'node:path';
+import { resolveProject } from '../domain/project.js';
 
 const PORT = parseInt(process.env.NEXUS_PORT || '4100', 10);
 const HOST = process.env.NEXUS_HOST || '127.0.0.1';
@@ -184,13 +185,17 @@ async function main() {
   }
 
   const identity = resolveAgentIdentity(payload);
+  const projectInfo = resolveProject(workspaceDir);
 
   const res = await checkPermission({
     agent_id: identity.agentId,
     provider: identity.provider,
     session_id: identity.sessionId,
     prompt_hint: identity.promptHint,
-    file_path: targetFile
+    file_path: targetFile,
+    project_id: projectInfo.projectId,
+    project_root: projectInfo.projectRoot,
+    workspace_dir: workspaceDir
   });
 
   if (res.allow === false) {

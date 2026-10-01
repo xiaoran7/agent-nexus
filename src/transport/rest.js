@@ -2,21 +2,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { ValidationError } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken } from './auth.js';
 
-// 不需要令牌的路径：健康检查与面板 HTML 本身。
-// 面板的静态页面必须能打开，否则没有 token 的用户连登录入口都看不到；
-// 它随后要读的 /api/dashboard 仍然要令牌。
 const PUBLIC_PATHS = new Set(['/health', '/', '/index.html']);
 
-// daemon 只监听 127.0.0.1，但浏览器不理会目标地址是不是本机：
-// 页面里的 fetch 照样能打到 127.0.0.1:4100。原来这里无条件回 '*'，
-// 等于任何网站都能注册 agent、读全部协调状态、往库里写消息。
-// 改为只放行 NEXUS_ALLOWED_ORIGINS 显式列出的来源（逗号分隔）；
-// 无 Origin 的直连（hook 脚本、MCP 客户端）不受白名单影响。
-//
-// 允许的跨源列表按请求读取，而非在模块加载时求值一次。
-// 模块加载时机早于任何配置注入，缓存下来会让 NEXUS_ALLOWED_ORIGINS 在
-// 长驻进程里永远读到空值——白名单配了也不生效。按环境变量原文做记忆化，
-// 配置没变时不会重复解析。
 let allowedOriginsCache = { raw: null, list: [] };
 
 function allowedOrigins() {
@@ -43,16 +30,13 @@ function applyCors(req, res) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Agent-ID');
     return true;
   }
-  // 非放行来源：浏览器自会拦截响应，这里不必再回 CORS 头
   return false;
 }
 
-export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore) {
+export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null) {
   return async function handleRest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // 真正响应上也必须回 CORS 头。浏览器只在实际响应里看到
-    // Access-Control-Allow-Origin 才放行响应体；只在预检里回，等于白名单没生效。
     applyCors(req, res);
 
     if (req.method === 'OPTIONS') {
@@ -67,7 +51,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       return;
     }
 
-    // 认证放在读 body 之前：没令牌的请求一个字节都不该被读进来。
     const isPublic = PUBLIC_PATHS.has(url.pathname);
     const token = verifySecret(tokenStore, extractBearer(req) ?? extractQueryToken(url));
     if (!isPublic && !token) {
@@ -77,8 +60,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       }));
       return;
     }
-    // 作用域不足的令牌不该能改协调状态。operator 与 agent 令牌都带 write，
-    // 这条是为将来可能的只读观测令牌留的口子。
+
     if (token && !token.scopes.includes('write') && req.method !== 'GET') {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'This token is read-only' }));
@@ -105,12 +87,110 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
     try {
       // 1. Health
       if (url.pathname === '/health') {
-        return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: '0.1.0' });
+        return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: '0.2.0' });
+      }
+
+      // 1.1 SSE 实时通知流 (GET /api/events)
+      if (url.pathname === '/api/events' && req.method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive'
+        });
+        res.write(': connected\n\n');
+
+        const filterProject = url.searchParams.get('project_id');
+        const listener = (event, payload) => {
+          if (filterProject && payload && payload.project_id && payload.project_id !== filterProject) {
+            return;
+          }
+          res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+        };
+
+        const events = ['timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent', 'project:onboarded', 'milestone:reached'];
+        for (const ev of events) {
+          coordinator.eventBus.on(ev, (p) => listener(ev, p));
+        }
+
+        const heartbeat = setInterval(() => {
+          res.write(': ping\n\n');
+        }, 15000);
+
+        req.on('close', () => {
+          clearInterval(heartbeat);
+          for (const ev of events) {
+            coordinator.eventBus.removeAllListeners(ev);
+          }
+        });
+        return;
+      }
+
+      // 1.2 Projects 路由 (GET /api/projects, POST /api/projects/:id/onboard, etc.)
+      if (url.pathname === '/api/projects' && req.method === 'GET') {
+        if (!projectRegistry) return sendJson(200, []);
+        return sendJson(200, projectRegistry.listProjects());
+      }
+
+      if (url.pathname.startsWith('/api/projects/')) {
+        const parts = url.pathname.split('/').slice(3); // /api/projects/:id/:action
+        const projectId = parts[0];
+        const action = parts[1];
+
+        if (projectRegistry && projectId) {
+          const lead = projectRegistry.getOrCreateLead(projectId);
+
+          if (!action && req.method === 'GET') {
+            const project = projectRegistry.getProject(projectId);
+            const context = lead.getProjectContext();
+            return sendJson(200, { ...project, context });
+          }
+
+          if (action === 'onboard' && req.method === 'POST') {
+            const data = await readJson();
+            const result = await lead.onboard({
+              agentId: data.agent_id,
+              plannedWork: data.planned_work || [],
+              capabilities: data.capabilities || []
+            });
+            return sendJson(200, result);
+          }
+
+          if (action === 'advise' && req.method === 'POST') {
+            const data = await readJson();
+            const result = await lead.advisePlan({
+              agentId: data.agent_id,
+              plannedWork: data.planned_work || []
+            });
+            return sendJson(200, result);
+          }
+
+          if (action === 'depart' && req.method === 'POST') {
+            const data = await readJson();
+            const result = lead.depart(data.agent_id);
+            return sendJson(200, result);
+          }
+
+          if (action === 'milestone' && req.method === 'POST') {
+            const data = await readJson();
+            let releaseResult = null;
+            if (data.lease_id_to_release) {
+              releaseResult = coordinator.releaseLease(data.lease_id_to_release, data.agent_id);
+            }
+            coordinator.logActivity(data.agent_id, 'milestone:reached', null, data.description || 'Milestone completed', projectId);
+            coordinator.eventBus.emit('milestone:reached', {
+              project_id: projectId,
+              agent_id: data.agent_id,
+              description: data.description
+            });
+            return sendJson(200, { success: true, released: releaseResult });
+          }
+        }
       }
 
       // 2. Agents
       if (url.pathname === '/api/agents' && req.method === 'GET') {
-        return sendJson(200, coordinator.listAgents());
+        const pid = url.searchParams.get('project_id');
+        return sendJson(200, coordinator.listAgents(pid));
       }
       if (url.pathname === '/api/agents/register' && req.method === 'POST') {
         const data = await readJson();
@@ -118,7 +198,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, { success: true, agent });
       }
 
-      // 3. Token minting (签发绑定某个 agent 的令牌)
+      // 3. Token minting
       if (url.pathname === '/api/tokens' && req.method === 'POST') {
         if (!token.scopes.includes('mint')) {
           return sendJson(403, { error: 'This token cannot mint agent tokens' });
@@ -128,19 +208,16 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         if (typeof agentId !== 'string' || agentId.trim() === '') {
           return sendJson(400, { error: '"agent_id" is required and must be a non-empty string', field: 'agent_id' });
         }
-        // 同一 agent 重复签发时轮换旧令牌：多 agent 场景下更安全的是
-        // "重发即作废"，否则上一枚还在某处流通。
         const previous = tokenStore.secretFor(agentId);
         if (previous) tokenStore.revoke(previous);
 
-        // 顺带登记：messages.from_agent 带外键，先有令牌却发不出消息
-        // （"unknown agent; register it first"）对第一次用的人是死胡同。
         if (!coordinator.getAgent(agentId)) {
           coordinator.registerAgent({
             id: agentId,
             name: agentId,
             provider: 'unknown',
-            sessionId: agentId
+            sessionId: agentId,
+            projectId: body.project_id || 'default'
           });
         }
 
@@ -155,7 +232,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           agentId: data.agent_id,
           intentSummary: data.summary,
           claims: data.claims || [],
-          ttlSeconds: data.ttl_seconds || 300
+          ttlSeconds: data.ttl_seconds || 300,
+          projectId: data.project_id || 'default'
         });
         return sendJson(200, result);
       }
@@ -177,65 +255,62 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           provider: data.provider || 'unknown',
           sessionId: data.session_id || 'default',
           filePath: data.file_path,
-          promptHint: data.prompt_hint
+          promptHint: data.prompt_hint,
+          projectId: data.project_id || 'default',
+          workspaceDir: data.workspace_dir || ''
         });
         return sendJson(200, checkResult);
       }
 
-      // 7. State & CAS (对齐 agent-comm)
+      // 7. State & CAS
       if (url.pathname.startsWith('/api/state')) {
         const parts = url.pathname.split('/').slice(3); // /api/state/:ns/:key
         const namespace = parts[0] || url.searchParams.get('namespace') || 'default';
-        // 只有第三段不是保留动作时才算键名，否则 /api/state/:ns/cas 里的 "cas"
-        // 会被当成一个真实存在的键，键名就永远从请求体里取。
+        const projectId = url.searchParams.get('project_id') || 'default';
         const RESERVED = new Set(['cas']);
         const key = parts[1] && !RESERVED.has(parts[1]) ? parts[1] : null;
 
         if (req.method === 'GET') {
           if (key) {
-            const entry = stateService.get(namespace, key);
+            const entry = stateService.get(namespace, key, projectId);
             return entry ? sendJson(200, entry) : sendJson(404, { error: 'Not Found' });
           } else {
             const prefix = url.searchParams.get('prefix') || '';
-            return sendJson(200, stateService.list(namespace, prefix));
+            return sendJson(200, stateService.list(namespace, prefix, projectId));
           }
         }
         if (req.method === 'POST') {
           const body = await readJson();
-          // CAS 有两种写法：/api/state/:ns/:key/cas（键在路径里）和
-          // /api/state/:ns/cas（键在请求体的 key 字段里）。key 已把保留段
-          // "cas" 排除在外，所以这里只要末段是 cas 就走 CAS。
+          const targetPid = body.project_id || projectId;
           if (parts[parts.length - 1] === 'cas') {
             const casKey = key || body.key || null;
-            const result = stateService.compareAndSwap(namespace, casKey, body.expected, body.new_value, body.updated_by, body.ttl_seconds);
+            const result = stateService.compareAndSwap(namespace, casKey, body.expected, body.new_value, body.updated_by, body.ttl_seconds, targetPid);
             return sendJson(200, result);
           }
-          const entry = stateService.set(namespace, key, body.value, body.updated_by, body.ttl_seconds);
+          const entry = stateService.set(namespace, key, body.value, body.updated_by, body.ttl_seconds, targetPid);
           return sendJson(200, entry);
         }
         if (req.method === 'DELETE' && key) {
-          const ok = stateService.delete(namespace, key);
+          const ok = stateService.delete(namespace, key, projectId);
           return sendJson(200, { success: ok });
         }
       }
 
-      // 8. Messages (Agent 协调沟通总线)
+      // 8. Messages
       if (url.pathname === '/api/messages') {
+        const pid = url.searchParams.get('project_id');
         if (req.method === 'GET') {
           const toAgent = url.searchParams.get('to');
           if (toAgent) {
-            // 收件箱按令牌绑定的 agent 隔离：令牌说是 A，就只能读 A 的。
-            // operator 令牌不绑定 agent，放行读取（面板要看全局时间线）。
             if (token && token.agent_id && token.agent_id !== toAgent) {
               return sendJson(403, { error: 'This token cannot read another agent\'s inbox' });
             }
-            return sendJson(200, messageService.inbox(toAgent));
+            return sendJson(200, messageService.inbox(toAgent, 50, pid || 'default'));
           }
-          // 无参列举是全局流水。绑定 agent 的令牌不该靠它绕过隔离。
           if (token && token.agent_id) {
             return sendJson(403, { error: 'Use ?to=<your agent id> to read your inbox' });
           }
-          return sendJson(200, messageService.list());
+          return sendJson(200, messageService.list(50, pid));
         }
         if (req.method === 'POST') {
           const body = await readJson();
@@ -246,7 +321,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       // 9. Dashboard Snapshot & UI
       if (url.pathname === '/api/dashboard' && req.method === 'GET') {
-        return sendJson(200, coordinator.getDashboardSnapshot());
+        const pid = url.searchParams.get('project_id');
+        return sendJson(200, coordinator.getDashboardSnapshot(pid));
       }
       if (url.pathname === '/' || url.pathname === '/index.html') {
         if (existsSync(uiPath)) {
@@ -258,8 +334,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       sendJson(404, { error: 'Not Found' });
     } catch (err) {
-      // 调用方给了非法输入是 400，不是 500。原始错误串（尤其是 SQLite 绑定报错）
-      // 不能直接透出去，它会暴露底层 schema 且对调用方毫无可操作性。
       if (err instanceof ValidationError) {
         return sendJson(err.statusCode || 400, { error: err.message, field: err.field });
       }

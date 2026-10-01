@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-10-01 项目级常驻架构师调度与 Session 自动识别
+
+### 改了什么
+
+- **`src/domain/project.js`** (新增)
+  - 实现 `resolveProject(startDir)`：从调用目录向上递归探测项目标志（`.nexus` > `.git` > `package.json` > `CLAUDE.md`）。
+  - 实现路径归一化 `canonicalizePath` 与确定性 Project ID 散列 `hashProjectId`，确保不同操作系统、盘符大小写或子目录下同一个项目的识别一致性。
+- **`src/hook/nexus-hook.mjs`**
+  - Hook 启动时自动解析项目归属，在向 daemon 请求 `/api/hook/check` 时透传 `project_id`、`project_root` 和 `workspace_dir`。
+- **`src/storage/database.js`**
+  - 新增 `projects` 基础登记表，并写入默认项目 `default`。
+  - 所有协调表（`agents`、`intents`、`claims`、`leases`、`wait_queue`、`activity_log`、`state`、`messages`）新增 `project_id` 列与针对性复合索引，提供旧库幂等平滑升级。
+- **`src/daemon/coordinator.js`**
+  - 三级判冲（文件、模块路径重叠、符号）、意图申报与等待唤醒全面加入 `projectId` 作用域隔离，不同项目同名文件/符号互不干扰。
+  - 租约释放时除唤醒等待者外，主动向总线派发带详细资源列表的 `resource:freed` 事件。
+- **`src/domain/state.js` & `src/domain/messages.js`**
+  - 共享状态树（CAS）与消息总线收件箱均按 `project_id` 实现严格隔离。
+- **`src/domain/project-lead.js` & `src/domain/project-registry.js`** (新增)
+  - 实现常驻项目的主架构师调度中枢（Project Lead）与实例池管理器。
+  - 核心功能：进场申报（`onboard`）与计划咨询（`advisePlan`），自动提取冲突资源并生成无冲突的“安全施工走廊”与“任务避障重排建议”，免除被动拦截时模型的盲目重试。
+  - 架构师计算设计为微秒级同步执行，同时预留通过 `llm-adapter.js` 接入长驻大模型增强建议的能力。
+- **`src/mcp/server.js`**
+  - 保持基础 5 个 MCP 工具（100% 同步执行与向后兼容），新增项目级调度工具：`nexus_onboard`、`nexus_advise_plan` 与 `nexus_report_milestone`。
+- **`src/transport/rest.js` & `src/daemon/index.js`**
+  - 增加 `/api/projects` 与 `/api/projects/:id/*` 路由组。
+  - 增加 `/api/events`（Server-Sent Events 实时事件流通道），支持客户端按 `project_id` 进行订阅监听。
+- **`src/cli.js`**
+  - 新增 `nexus projects` 与 `nexus project [dir]` 命令，方便快速自检当前目录项目识别情况。
+- **测试**
+  - 新增 `test/project.test.js`（8 用例）、`test/project-scope.test.js`（7 用例）、`test/project-lead.test.js`（5 用例）、`test/notification.test.js`（3 用例）。测试用例总数扩充至 **158**，全部通过。
+
+### 为什么
+
+单项目多 Agent 并发的核心痛点是：纯串行等待极其低效，而并发写同一个文件又会撞车踩踏。如果仅在写文件的一瞬间粗暴报错阻断，Agent 会在缺少全局视野的情况下陷入盲目重试或任务中断。
+本轮改造从第一性原理出发，确立了**“以项目为物理边界、在规划阶段由常驻 Lead 提前重排避障”**的最优解：让后进场的 Session 明确知晓“别人在写什么、自己先做哪些空闲模块”，实现全速并行。
+
+### 验证
+
+`npm test` → 158 tests / 158 pass / 0 fail。
+
+---
+
 ## 2026-10-01 唤醒队列按可用性复核，不再是纯 FIFO
 
 ### 改了什么

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { startDaemon } from './daemon/index.js';
 import { installAll, installClaudeHook, installCodexHook, installZCodeHook } from './installer/index.js';
+import { resolveProject } from './domain/project.js';
 
 const cmd = process.argv[2];
 
@@ -17,6 +18,10 @@ if (cmd === 'start') {
   });
 } else if (cmd === 'token') {
   issueToken();
+} else if (cmd === 'projects') {
+  listProjects();
+} else if (cmd === 'project') {
+  showProjectInfo(process.argv[3]);
 } else if (cmd === 'hook:install') {
   const target = process.argv[3];
   (hooks[target] || installAll)();
@@ -28,8 +33,6 @@ if (cmd === 'start') {
   process.exit(1);
 }
 
-// 令牌存在运行中的 daemon 内存里，只能由 daemon 签发——所以这条命令
-// 走 HTTP 找运行中的实例要一枚，不是本地生成一枚新的。
 async function issueToken() {
   const agentId = process.argv[3];
   if (!agentId) {
@@ -60,11 +63,41 @@ async function issueToken() {
   console.log(token);
 }
 
+async function listProjects() {
+  const port = process.env.NEXUS_PORT || '4100';
+  const token = process.env.NEXUS_ADMIN_TOKEN || process.env.NEXUS_TOKEN;
+  const res = await fetch(`http://127.0.0.1:${port}/api/projects`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+
+  if (!res.ok) {
+    console.error(`Failed to list projects (HTTP ${res.status})`);
+    process.exit(1);
+  }
+
+  const projects = await res.json();
+  console.log('\n[Agent-Nexus] Known Projects:');
+  for (const p of projects) {
+    console.log(`  • ID: ${p.id.padEnd(18)} Root: ${p.root_path || '(default)'}`);
+  }
+  console.log();
+}
+
+function showProjectInfo(targetDir) {
+  const info = resolveProject(targetDir || process.cwd());
+  console.log('\n[Agent-Nexus] Project Resolution:');
+  console.log(`  Project ID:   ${info.projectId}`);
+  console.log(`  Project Root: ${info.projectRoot}`);
+  console.log(`  Marker:       ${info.marker || '(none, using startDir)'}\n`);
+}
+
 function printHelp() {
   console.log(`
 Agent-Nexus CLI:
   nexus start                    启动 daemon 与实时面板
   nexus token <agent-id>         向运行中的 daemon 签发该 agent 的令牌
+  nexus projects                 查看当前 daemon 登记的所有项目列表
+  nexus project [dir]            解析指定目录所属的项目根与 Project ID
   nexus hook:install [--all]     安装全部 Hook
   nexus hook:install --claude    仅安装 Claude Code Hook
   nexus hook:install --codex     仅配置 Codex / AgentHub

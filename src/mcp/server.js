@@ -1,12 +1,5 @@
 // =============================================================================
 // Agent-Nexus MCP Server Transport
-//
-// 提供给 Claude Desktop / Cursor / ZCode 等标准 MCP Client 连接:
-// 1. nexus_declare_intent: 声明意图与资源 claims (file/module/symbol)
-// 2. nexus_release_lease: 释放租约并唤醒排队等待者
-// 3. nexus_state: 共享命名空间 KV 与 CAS (Compare-And-Swap)
-// 4. nexus_message: 向其他 Agent 发送定向或广播消息
-// 5. nexus_status: 查询当前全局协调总览与冲突队列
 // =============================================================================
 
 export const NEXUS_TOOLS = [
@@ -17,6 +10,7 @@ export const NEXUS_TOOLS = [
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent ID (provider-session)' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
         summary: { type: 'string', description: 'Brief human-readable summary of what you are about to do' },
         claims: {
           type: 'array',
@@ -42,7 +36,8 @@ export const NEXUS_TOOLS = [
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent ID' },
-        lease_id: { type: 'string', description: 'Lease ID or Intent ID to release' }
+        lease_id: { type: 'string', description: 'Lease ID or Intent ID to release' },
+        project_id: { type: 'string', description: 'Project ID' }
       },
       required: ['agent_id', 'lease_id']
     }
@@ -55,6 +50,7 @@ export const NEXUS_TOOLS = [
       properties: {
         action: { type: 'string', enum: ['get', 'set', 'delete', 'list', 'cas'] },
         namespace: { type: 'string', description: 'Namespace (default "default")' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
         key: { type: 'string' },
         value: { type: 'string' },
         expected: { type: ['string', 'null'], description: 'Expected current value for CAS' },
@@ -73,7 +69,8 @@ export const NEXUS_TOOLS = [
         from: { type: 'string', description: 'Your agent ID' },
         to: { type: 'string', description: 'Target agent ID (omit for broadcast)' },
         content: { type: 'string', description: 'Message body' },
-        importance: { type: 'string', enum: ['normal', 'urgent'], default: 'normal' }
+        importance: { type: 'string', enum: ['normal', 'urgent'], default: 'normal' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' }
       },
       required: ['from', 'content']
     }
@@ -83,18 +80,126 @@ export const NEXUS_TOOLS = [
     description: 'Query current coordinator snapshot: active agents, claims, locks, and timeline.',
     inputSchema: {
       type: 'object',
-      properties: {}
+      properties: {
+        project_id: { type: 'string', description: 'Project ID (optional)' }
+      }
     }
   }
 ];
 
-export function handleMcpTool(toolName, args, { coordinator, stateService, messageService }) {
+export const NEXUS_PROJECT_TOOLS = [
+  {
+    name: 'nexus_onboard',
+    description: 'Onboard with the Project Lead before planning code edits. Register your planned work to receive conflict-free sequencing advice, safe construction corridors, and estimated wait times.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID (provider-session)' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
+        planned_work: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['file', 'module', 'symbol'] },
+              target: { type: 'string', description: 'Planned target path or symbol' }
+            },
+            required: ['target']
+          },
+          description: 'List of files/modules you intend to modify in this session'
+        },
+        capabilities: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional capability tags'
+        }
+      },
+      required: ['agent_id', 'planned_work']
+    }
+  },
+  {
+    name: 'nexus_advise_plan',
+    description: 'Re-evaluate your work plan against current project locks and get updated sequencing advice.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
+        planned_work: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['file', 'module', 'symbol'] },
+              target: { type: 'string' }
+            },
+            required: ['target']
+          }
+        }
+      },
+      required: ['agent_id', 'planned_work']
+    }
+  },
+  {
+    name: 'nexus_report_milestone',
+    description: 'Report a completed milestone or phase. Optionally release held leases and notify waiting sibling agents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
+        description: { type: 'string', description: 'Milestone summary' },
+        lease_id_to_release: { type: 'string', description: 'Optional lease ID to release upon milestone' }
+      },
+      required: ['agent_id', 'description']
+    }
+  }
+];
+
+export const ALL_NEXUS_TOOLS = [...NEXUS_TOOLS, ...NEXUS_PROJECT_TOOLS];
+
+export function handleMcpTool(toolName, args, { coordinator, stateService, messageService, projectRegistry = null }) {
+  const pid = args?.project_id || 'default';
+
+  if (toolName === 'nexus_onboard') {
+    if (!projectRegistry) throw new Error('ProjectRegistry not initialized');
+    const lead = projectRegistry.getOrCreateLead(pid);
+    return lead.onboard({
+      agentId: args.agent_id,
+      plannedWork: args.planned_work || [],
+      capabilities: args.capabilities || []
+    });
+  }
+
+  if (toolName === 'nexus_advise_plan') {
+    if (!projectRegistry) throw new Error('ProjectRegistry not initialized');
+    const lead = projectRegistry.getOrCreateLead(pid);
+    return lead.advisePlan({
+      agentId: args.agent_id,
+      plannedWork: args.planned_work || []
+    });
+  }
+
+  if (toolName === 'nexus_report_milestone') {
+    let releaseResult = null;
+    if (args.lease_id_to_release) {
+      releaseResult = coordinator.releaseLease(args.lease_id_to_release, args.agent_id);
+    }
+    coordinator.logActivity(args.agent_id, 'milestone:reported', null, `Milestone reached: ${args.description}`, pid);
+    return {
+      success: true,
+      milestone: args.description,
+      released: releaseResult
+    };
+  }
+
   if (toolName === 'nexus_declare_intent') {
     return coordinator.declareIntent({
       agentId: args.agent_id,
       intentSummary: args.summary,
       claims: args.claims,
-      ttlSeconds: args.ttl_seconds || 300
+      ttlSeconds: args.ttl_seconds || 300,
+      projectId: pid
     });
   }
 
@@ -104,11 +209,11 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
 
   if (toolName === 'nexus_state') {
     const ns = args.namespace || 'default';
-    if (args.action === 'get') return stateService.get(ns, args.key);
-    if (args.action === 'set') return stateService.set(ns, args.key, args.value, args.updated_by || 'agent', args.ttl_seconds);
-    if (args.action === 'delete') return { success: stateService.delete(ns, args.key) };
-    if (args.action === 'list') return stateService.list(ns, args.prefix || '');
-    if (args.action === 'cas') return stateService.compareAndSwap(ns, args.key, args.expected, args.new_value, args.updated_by || 'agent', args.ttl_seconds);
+    if (args.action === 'get') return stateService.get(ns, args.key, pid);
+    if (args.action === 'set') return stateService.set(ns, args.key, args.value, args.updated_by || 'agent', args.ttl_seconds, pid);
+    if (args.action === 'delete') return { success: stateService.delete(ns, args.key, pid) };
+    if (args.action === 'list') return stateService.list(ns, args.prefix || '', pid);
+    if (args.action === 'cas') return stateService.compareAndSwap(ns, args.key, args.expected, args.new_value, args.updated_by || 'agent', args.ttl_seconds, pid);
   }
 
   if (toolName === 'nexus_message') {
@@ -116,12 +221,13 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
       from: args.from,
       to: args.to || null,
       content: args.content,
-      importance: args.importance || 'normal'
+      importance: args.importance || 'normal',
+      projectId: pid
     });
   }
 
   if (toolName === 'nexus_status') {
-    return coordinator.getDashboardSnapshot();
+    return coordinator.getDashboardSnapshot(args.project_id || null);
   }
 
   throw new Error(`Unknown Nexus MCP tool: ${toolName}`);
