@@ -313,3 +313,107 @@ test('模块判冲的路径边界', async (t) => {
     assert.equal(pathsOverlap('', 'a/b'), false, '空路径不匹配任何东西');
   });
 });
+
+// 唤醒队列过去是纯 FIFO（ORDER BY w.id）：不管队首此刻是否真能拿到资源，
+// 一律唤醒它。等待期间资源可能已被别人抢走或继续被锁着，于是白唤醒一轮，
+// 而后面那个其实已经能拿到的等待者被饿着。
+test('唤醒队列按可用性复核并按 claim 宽窄重排', async (t) => {
+  const h = createHarness();
+  t.after(() => h.close());
+  const { coordinator } = h;
+
+  await t.test('跳过仍冲突的等待者，唤醒已经能拿到的那个', () => {
+    // A 锁住 src/network，B 也要它 → 排队（队首）
+    const a = coordinator.declareIntent({
+      agentId: 'A', intentSummary: 'A', claims: [{ type: 'module', target: 'src/network' }]
+    });
+    const b = coordinator.declareIntent({
+      agentId: 'B', intentSummary: 'B', claims: [{ type: 'module', target: 'src/network' }]
+    });
+    assert.equal(a.status, 'GRANTED');
+    assert.equal(b.status, 'WAITING');
+
+    // C 占住 pkg/other，D 也要它 → 后排队
+    const c = coordinator.declareIntent({
+      agentId: 'C', intentSummary: 'C', claims: [{ type: 'module', target: 'pkg/other' }]
+    });
+    const d = coordinator.declareIntent({
+      agentId: 'D', intentSummary: 'D', claims: [{ type: 'module', target: 'pkg/other' }]
+    });
+    assert.equal(c.status, 'GRANTED');
+    assert.equal(d.status, 'WAITING');
+
+    // 释放 C：此时 B 仍被 A 挡着，D 已经能拿到 src 之外的那块
+    const res = coordinator.releaseLease(c.leaseId, 'C');
+
+    assert.equal(res.notifiedWaiter.agent_id, 'D',
+      'B 仍被 A 挡着，应跳过它唤醒已可用的 D');
+    assert.equal(res.stillBlocked, 1, 'B 应被记为仍在冲突');
+    assert.equal(res.notifiedWaiter.intent_id, d.intentId);
+
+    // B 确实还留在队列里，且仍标着被 A 阻塞
+    const stillQueued = h.db.prepare('SELECT agent_id FROM wait_queue').all().map((r) => r.agent_id);
+    assert.deepEqual(stillQueued, ['B']);
+  });
+
+  await t.test('宽声明排在窄声明之后', () => {
+    const h2 = createHarness();
+    t.after(() => h2.close());
+    const co = h2.coordinator;
+
+    // holder 占住 src，让下面两个（都在 src 之下）都进队列。
+    // 不能用 '.'：claim 目标解析到工作目录会被 assertClaimTarget 拒掉。
+    const holder = co.declareIntent({
+      agentId: 'H', intentSummary: 'H', claims: [{ type: 'module', target: 'src' }]
+    });
+    assert.equal(holder.status, 'GRANTED');
+
+    // 两条路径让"字符长度"与"路径段数"给出相反的顺序：
+    //   src/a/b   → 42 字符， 7 段（深 = 范围窄）
+    //   src/zzz…  → 69 字符， 6 段（浅 = 几乎和 src 一样宽）
+    // 浅的那条字符更长、段数却更少，所以按长度升序会选错，按段数降序才对。
+    // deep 先入队，shallow 后入队，只有排序真的生效才会选对。
+    const deep = co.declareIntent({
+      agentId: 'D', intentSummary: 'D', claims: [{ type: 'module', target: 'src/a/b' }]
+    });
+    const shallow = co.declareIntent({
+      agentId: 'S', intentSummary: 'S',
+      claims: [{ type: 'module', target: 'src/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' }]
+    });
+    assert.equal(deep.status, 'WAITING');
+    assert.equal(shallow.status, 'WAITING');
+
+    // 断言可观察行为而不是重述排序 SQL：释放后谁被唤醒，就是排在前面的那个。
+    // 宽度按路径段数降序算：段数多 = 钻得深 = 要的范围小，窄的先过。
+    // claim 存的是归一化后的绝对路径，长度被工作目录前缀和目录名长度主导，
+    // 与"要的范围有多大"无关——src/zzz… 只是个名字很长的浅目录。
+    const res = co.releaseLease(holder.leaseId, 'H');
+    assert.equal(res.notifiedWaiter.agent_id, 'D',
+      'src/a/b 只占两个叶子目录，应先于那条名字更长却同样宽的浅目录被唤醒');
+
+    // 宽的仍在队列里，等待下一轮（被唤醒者只是出队，并没有真的拿到租约）
+    const stillQueued = h2.db.prepare('SELECT agent_id FROM wait_queue').all().map((r) => r.agent_id);
+    assert.deepEqual(stillQueued, ['S']);
+  });
+
+  await t.test('唤醒事件带上已复核标记', () => {
+    const h3 = createHarness();
+    t.after(() => h3.close());
+    const co = h3.coordinator;
+
+    const a = co.declareIntent({
+      agentId: 'A', intentSummary: 'A', claims: [{ type: 'module', target: 'src/x' }]
+    });
+    const b = co.declareIntent({
+      agentId: 'B', intentSummary: 'B', claims: [{ type: 'module', target: 'src/x' }]
+    });
+    assert.equal(b.status, 'WAITING');
+
+    const events = capture(h3.eventBus, 'agent:woken');
+    co.releaseLease(a.leaseId, 'A');
+
+    assert.equal(events.events.length, 1);
+    assert.equal(events.events[0].verified, true, '选中时已复核过，应告知 agent');
+    events.stop();
+  });
+});

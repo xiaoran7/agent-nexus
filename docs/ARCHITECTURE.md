@@ -101,7 +101,18 @@ for (const claim of normalizedClaims) {
    - 入队 `wait_queue`，写入 Activity Log。
 5. **RELEASE / WAKE-UP**：
    - 前序 Agent 调用 `/api/leases/:id/release` 释放资源；
-   - 从 `wait_queue` 捞出最优先的等待者，把该意图置为 `released` 并清除判冲留痕
+   - 选出下一个该唤醒的等待者，**不是纯 FIFO**（见下）；
+   - 把该意图置为 `released` 并清除判冲留痕
      （否则陈旧的 `waiting` 记录会在面板快照里盖过重新声明后的 `granted` 意图）；
-   - 通过 EventBus / WebSocket 发出 `agent:woken`；
+   - 通过 EventBus / WebSocket 发出 `agent:woken`，带 `verified: true`；
    - 被唤醒的 Agent 收到信号后重新读取工作区代码，重新提交 Intent。
+
+### 唤醒队列的选取
+
+等待期间资源可能被别人抢走或继续被锁着，所以"唤醒队首"经常是白唤醒一轮——它重新声明后仍然 WAITING，而后面那个其实已经能拿到的等待者被饿着。等待者的 claim 在入队时留在 `claims` 表里（只有租约过期或释放才删），因此释放时可以**直接复核**：
+
+1. 候选取 `wait_queue` 全量，按 **claim 段数降序**重排——段数多 = 钻得深 = 要的范围小，窄的先过，减少反复惊群。段数不能用 `LENGTH(claim_target)`：claim 存的是归一化后的绝对路径，长度被工作目录前缀和目录名长度主导，与范围无关（`src/zzz…` 字符很长却只是个浅目录）。
+2. 逐个复核该等待者此刻是否真的无冲突（走 `findConflict`，与 `declareIntent` 同一份实现）。仍在冲突的**留在队列里**，计入 `stillBlocked`，不唤醒。
+3. 第一个无冲突的出队并唤醒。
+
+`releaseLease` 的返回里带 `notifiedWaiter` 与 `stillBlocked`，便于调用方知道是"没人可唤醒"还是"有人仍在等"。

@@ -115,12 +115,14 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
     "success": true,
     "releasedLeaseId": "lease_8a49f3a3",
     "notifiedWaiter": {
-      "intent_id": "intent_2a7fc900",
       "agent_id": "claude-sess_02",
-      "agent_name": "视觉点击兜底"
-    }
+      "intent_id": "intent_2a7fc900"
+    },
+    "stillBlocked": 1
   }
   ```
+
+  唤醒谁不是纯 FIFO：候选项按 claim 段数降序（范围窄的先过）排列，再逐个复核此刻是否真的无冲突——仍在冲突的留在队列里计入 `stillBlocked`，不唤醒。选中的那枚 `agent:woken` 事件带 `verified: true`，表示它的 claim 在唤醒瞬间已确认无冲突。`notifiedWaiter` 为 `null` 表示当前无人可唤醒。
 
 ### 3. 通用 Hook 毫秒级极速校验与自动补报
 - **路径**：`POST /api/hook/check`
@@ -223,7 +225,7 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 连接地址：`ws://127.0.0.1:4100`
 
 - `timeline`：时间线新增事件（Intent 声明、放行、冲突阻断、释放租约等）。
-- `agent:woken`：资源被释放后的主动唤醒信号（携带目标 `agent_id` 与 `intent_id`）。
+- `agent:woken`：资源被释放后的主动唤醒信号（携带目标 `agent_id`、`intent_id` 与 `verified: true`）。`verified` 表示该等待者的 claim 在唤醒瞬间已复核无冲突，收到即可刷新工作区开工，不必再问一次。
 - `state:changed`：共享状态键值发生变动。
 - `message:sent`：接收到新的协调消息。
 

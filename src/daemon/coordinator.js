@@ -72,6 +72,63 @@ export class CoordinatorEngine {
     return a.startsWith(b + '/') || b.startsWith(a + '/');
   }
 
+  // 三级冲突判定的唯一实现。declareIntent 与唤醒时的复核都走这里，
+  // 免得两条路径的判冲规则哪天长歪。
+  // claims 必须是已归一化的形状（{type, target}）。
+  findConflict(normalizedClaims, agentId, now) {
+    // 只看当前 ACTIVE leases 对应的 claims
+    const activeClaims = this.db.prepare(`
+      SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, a.name as agent_name
+      FROM claims c
+      JOIN leases l ON c.intent_id = l.intent_id
+      JOIN agents a ON c.agent_id = a.id
+      WHERE l.expires_at > ?
+    `).all(now);
+
+    for (const claim of normalizedClaims) {
+      for (const active of activeClaims) {
+        if (active.agent_id === agentId) {
+          // 同一 Agent 允许重入/扩展
+          continue;
+        }
+
+        // Rule 1: 文件精确重合
+        if (claim.type === 'file' && active.claim_type === 'file') {
+          if (claim.target === active.claim_target) {
+            return {
+              blockedByAgentId: active.agent_id,
+              blockedByAgentName: active.agent_name,
+              reason: `File conflict: '${claim.target}' is currently locked by ${active.agent_name}`
+            };
+          }
+        }
+
+        // Rule 2: 模块 / 目录包含关系 (按路径分段比较，避免 src/network 误伤 src/network-legacy)
+        if (claim.type === 'module' || active.claim_type === 'module') {
+          if (this.pathsOverlap(claim.target, active.claim_target)) {
+            return {
+              blockedByAgentId: active.agent_id,
+              blockedByAgentName: active.agent_name,
+              reason: `Module conflict between '${claim.target}' and '${active.claim_target}' held by ${active.agent_name}`
+            };
+          }
+        }
+
+        // Rule 3: 符号精确重合
+        if (claim.type === 'symbol' && active.claim_type === 'symbol') {
+          if (claim.target === active.claim_target) {
+            return {
+              blockedByAgentId: active.agent_id,
+              blockedByAgentName: active.agent_name,
+              reason: `Symbol conflict: '${claim.target}' is being modified by ${active.agent_name}`
+            };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   // 1. Agent 注册或心跳续期
   registerAgent({ id, name, provider, sessionId, workspaceDir }) {
     requireAgentId(id);
@@ -144,61 +201,7 @@ export class CoordinatorEngine {
       });
     }
 
-    // 检查冲突: 查找当前所有 ACTIVE leases 对应的 claims
-    const activeClaims = this.db.prepare(`
-      SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, a.name as agent_name
-      FROM claims c
-      JOIN leases l ON c.intent_id = l.intent_id
-      JOIN agents a ON c.agent_id = a.id
-      WHERE l.expires_at > ?
-    `).all(now);
-
-    let conflict = null;
-    for (const claim of normalizedClaims) {
-      for (const active of activeClaims) {
-        if (active.agent_id === agentId) {
-          // 同一 Agent 允许重入/扩展
-          continue;
-        }
-
-        // Rule 1: 文件精确重合
-        if (claim.type === 'file' && active.claim_type === 'file') {
-          if (claim.target === active.claim_target) {
-            conflict = {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
-              reason: `File conflict: '${claim.target}' is currently locked by ${active.agent_name}`
-            };
-            break;
-          }
-        }
-
-        // Rule 2: 模块 / 目录包含关系 (按路径分段比较，避免 src/network 误伤 src/network-legacy)
-        if (claim.type === 'module' || active.claim_type === 'module') {
-          if (this.pathsOverlap(claim.target, active.claim_target)) {
-            conflict = {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
-              reason: `Module conflict between '${claim.target}' and '${active.claim_target}' held by ${active.agent_name}`
-            };
-            break;
-          }
-        }
-
-        // Rule 3: 符号精确重合
-        if (claim.type === 'symbol' && active.claim_type === 'symbol') {
-          if (claim.target === active.claim_target) {
-            conflict = {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
-              reason: `Symbol conflict: '${claim.target}' is being modified by ${active.agent_name}`
-            };
-            break;
-          }
-        }
-      }
-      if (conflict) break;
-    }
+    let conflict = this.findConflict(normalizedClaims, agentId, now);
 
     if (!conflict) {
       // GRANTED: 记录意图，保存 claims，颁发 Lease
@@ -291,14 +294,62 @@ export class CoordinatorEngine {
     this.updateAgentStatus(agentId, 'idle');
     this.logActivity(agentId, 'lease:released', lease.id, `Agent released lease for intent ${lease.intent_id}`);
 
-    // 检查并主动唤醒等待者
-    const nextWaiter = this.db.prepare(`
+    // 选下一个唤醒谁：不是纯 FIFO。
+    //
+    // 纯 FIFO（ORDER BY w.id）有两个问题。等待期间资源可能被别人抢走或继续
+    // 被锁着，此时唤醒队首就是白唤醒一轮：它重新声明后仍然 WAITING。
+    // 排在后面、但此刻其实已经能拿到的等待者反而被饿着。
+    //
+    // 等待者的 claim 在入队时是留在 claims 表里的（只有租约过期或释放才删），
+    // 所以这里能直接复核它现在是否真的无冲突，不必等它自己再声明一次。
+    // 队列按 claim 宽窄重排：要得最窄的先过。
+    //
+    // 宽声明（整个 src/）既容易和所有人冲突，等待时间又长。窄声明先拿，
+    // 剩下的大块更容易被切成互不相干的部分，减少反复惊群——即一批等待者
+    // 同时被唤醒、又同时抢同一块、然后又一起回去等下一轮。
+    //
+    // 宽度必须按语义算，不能用 LENGTH(claim_target)。claim 存的是归一化后的
+    // 绝对路径，长度被工作目录前缀和盘符主导：pkg/other 反而比 src/network
+    // 短，于是排序完全错位。
+    //
+    // 段数代表的是"往下钻了几层"，层数越多、要的范围越小，所以降序排。
+    // 这一点很容易写反：升序会把 src/ab（几乎和 src 一样宽）排在
+    // src/a/b/c/d（只占一个叶子目录）前面，正好是最不该先放的那个。
+    // file claim 恒为 1 段，永远排在 module 之后。
+    const breadthOf = (intentId) => this.db.prepare(`
+      SELECT COALESCE(SUM(
+        CASE WHEN claim_type = 'file' THEN 1
+             ELSE LENGTH(claim_target) - LENGTH(REPLACE(claim_target, '/', '')) + 1
+        END
+      ), 0) AS segments, COUNT(*) AS n
+      FROM claims WHERE intent_id = ?
+    `).get(intentId);
+
+    const candidates = this.db.prepare(`
       SELECT w.intent_id, w.agent_id, i.summary, a.name as agent_name
       FROM wait_queue w
       JOIN intents i ON w.intent_id = i.id
       JOIN agents a ON w.agent_id = a.id
-      ORDER BY w.id ASC LIMIT 1
-    `).get();
+      ORDER BY w.id ASC
+    `).all().map((c) => ({ ...c, breadth: breadthOf(c.intent_id) }))
+      // 降序：段数多 = 钻得深 = 范围窄，窄的先过。多的排在后面。
+      .sort((a, b) => (b.breadth.segments - a.breadth.segments) || (b.breadth.n - a.breadth.n));
+
+    let nextWaiter = null;
+    let skipped = 0;
+    for (const cand of candidates) {
+      const claims = this.db.prepare(`
+        SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
+      `).all(cand.intent_id).map((c) => ({ type: c.claim_type, target: c.claim_target }));
+
+      if (claims.length === 0 || this.findConflict(claims, cand.agent_id, now)) {
+        // 仍在冲突中：留在队列里等下一次释放，别白唤醒。
+        skipped++;
+        continue;
+      }
+      nextWaiter = cand;
+      break;
+    }
 
     if (nextWaiter) {
       // 从等待队列中移除
@@ -317,11 +368,23 @@ export class CoordinatorEngine {
       this.eventBus.emit('agent:woken', {
         agent_id: nextWaiter.agent_id,
         intent_id: nextWaiter.intent_id,
-        message: 'Resource released. Please refresh workspace and re-evaluate intent.'
+        // 选中它时已经复核过冲突：此刻它声明的资源确实没有别人持锁。
+        // 告诉 agent 这一点，它就知道不必再问一遍就能开始干活。
+        verified: true,
+        message: 'Resource released and your claims are now conflict-free. Refresh workspace and proceed.'
       });
     }
 
-    return { success: true, releasedLeaseId: lease.id, notifiedWaiter: nextWaiter || null };
+    return {
+      success: true,
+      releasedLeaseId: lease.id,
+      notifiedWaiter: nextWaiter ? {
+        agent_id: nextWaiter.agent_id,
+        intent_id: nextWaiter.intent_id
+      } : null,
+      // 仍在冲突中、被跳过的等待者数。它们留在队列里等下一次释放。
+      stillBlocked: skipped
+    };
   }
 
   // 4. 过期租约定时清理
