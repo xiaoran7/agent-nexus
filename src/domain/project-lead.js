@@ -266,6 +266,59 @@ ${deterministicAdvice}
     };
   }
 
+  broadcast({ from = 'sensei', content, importance = 'normal', messageService = null, token = null }) {
+    if (!content || typeof content !== 'string' || !content.trim()) {
+      throw new Error('"content" is required and must be a non-empty string');
+    }
+
+    const trimmed = content.trim();
+    const finalImportance = importance === 'urgent' ? 'urgent' : 'normal';
+
+    if (!this.coordinator.getAgent(from)) {
+      this.coordinator.registerAgent({
+        id: from,
+        name: from === 'sensei' ? 'Sensei (Human Operator)' : (from === 'lead' ? 'Tech Lead' : 'Master Orchestrator'),
+        provider: 'system',
+        sessionId: 'broadcast',
+        projectId: this.projectId
+      });
+    }
+
+    let msg = null;
+    if (messageService) {
+      msg = messageService.send({
+        from,
+        to: null,
+        content: trimmed,
+        importance: finalImportance,
+        projectId: this.projectId
+      }, token);
+    }
+
+    const activeAgents = this.coordinator.listAgents(this.projectId)
+      .filter(a => a.status !== 'departed' && a.id !== from);
+
+    this.eventBus.emit('lead:broadcast', {
+      project_id: this.projectId,
+      from,
+      content: trimmed,
+      importance: finalImportance,
+      message_id: msg ? msg.id : null,
+      created_at: msg ? msg.created_at : Date.now(),
+      active_agents_count: activeAgents.length,
+      recipients: activeAgents.map(a => a.id)
+    });
+
+    this.coordinator.logActivity(from, 'lead:broadcast', null, trimmed, this.projectId);
+
+    return {
+      success: true,
+      message: msg,
+      broadcast_to: activeAgents.map(a => a.id),
+      agents_count: activeAgents.length
+    };
+  }
+
   depart(agentId) {
     const existed = this.sessionPlans.delete(agentId);
     if (existed) {

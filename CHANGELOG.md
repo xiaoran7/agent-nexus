@@ -20,13 +20,16 @@
   - 里程碑持久化沉淀：`reportMilestone` 支持将完工成果自动固化至项目的长期记忆库中。
 - **`src/transport/rest.js` & `src/transport/ws.js`**
   - 新增 REST 路由：`GET/POST/DELETE /api/projects/:id/memories`，支持分类过滤与模糊搜索。
-  - 新增 Master Broadcast 路由：`POST /api/projects/:id/broadcast`，支持人类指挥官（Sensei）或主调度一键向项目所有活跃会话的收件箱推送优先级指令，自动补齐系统发件人注册以遵守外键约束，同步触发 `lead:broadcast` 总线事件。
+  - 新增 Master Broadcast 路由：`POST /api/projects/:id/broadcast`，支持人类指挥官（Sensei）或主调度一键向项目所有活跃会话的收件箱推送优先级指令。
+  - **业务逻辑下沉与传输层解耦**：将广播编排（发件人登记、信箱投递、日志归档与总线事件）从 `rest.js` 中彻底抽离下沉到 `ProjectLead.broadcast` 领域方法中，传输层仅负责参数校验、鉴权与状态回传。
+  - **静态资源分发解耦**：升级静态文件分发器，基于 `dirname(uiPath)` 和 MIME 表动态解析 `index.html`、`style.css` 与 `app.js`，避免把前端单页硬编码绑死在单一 HTML 文件。
   - SSE 与 WebSocket 全量转发 `lead:broadcast`、`memory:saved`、`memory:deleted` 事件。
-- **`src/ui/index.html`（War Room 作战大屏）**
-  - **顶部 Tech Lead 态势区**：在席模型状态指示、项目切换选择器、最新架构调度建议实时流。
-  - **施工泳道与交接矩阵（Construction Lanes & Live Handoffs）**：按活跃锁与排队等待者聚合，展示独占锁持有者、排队接棒者及动态剩余秒数（TTL）进度倒计时条。
-  - **项目长期记忆抽屉（Project Memory Drawer）**：侧滑式设计，支持按分类检索、模糊搜索与手动录入架构规约。
-  - **底部总指挥广播台（Master Command Bar）**：常驻吸底输入框，支持 Normal/Urgent 模式，一键向全项目下发优先级指令。
+- **前端架构分层与工程解耦 (`src/ui/`)**
+  - 彻底拆分巨型 HTML，实现**视觉表现、交互控制与 DOM 骨架三权分立**：
+    - `src/ui/style.css`：专注于 Aozora UI 视觉变量、卡片、泳道与动效；
+    - `src/ui/app.js`：专注于 UI 状态驱动（API Fetch、WebSocket 事件消费、DOM 渲染与事件委托）；
+    - `src/ui/index.html`：仅保留语义清晰的骨架标签。
+  - 提升了组件可维护性，彻底杜绝前端逻辑修改引发的样式回退。
 - **自动化测试**
   - 新增 `test/memory.test.js`（6 项单测）：覆盖记忆 CRUD、原子 Upsert、模糊搜索、项目隔离与删除。
   - 新增 `test/broadcast.test.js`：覆盖全项目活跃 Agent 广播、收件箱接收、多项目隔离与总线事件。

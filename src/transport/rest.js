@@ -1,8 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { ValidationError } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken } from './auth.js';
 
-const PUBLIC_PATHS = new Set(['/health', '/', '/index.html']);
+const PUBLIC_PATHS = new Set(['/health', '/', '/index.html', '/style.css', '/app.js']);
 
 let allowedOriginsCache = { raw: null, list: [] };
 
@@ -229,46 +230,15 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
             }
 
             const senderId = body.from || token?.agent_id || 'sensei';
-            if (!coordinator.getAgent(senderId)) {
-              coordinator.registerAgent({
-                id: senderId,
-                name: senderId === 'sensei' ? 'Sensei (Human Operator)' : (senderId === 'lead' ? 'Tech Lead' : 'Master Orchestrator'),
-                provider: 'system',
-                sessionId: 'broadcast',
-                projectId
-              });
-            }
-
-            const msg = messageService.send({
+            const result = lead.broadcast({
               from: senderId,
-              to: null,
-              content: body.content.trim(),
-              importance: body.importance === 'urgent' ? 'urgent' : 'normal',
-              projectId
-            }, token);
-
-            const activeAgents = coordinator.listAgents(projectId)
-              .filter(a => a.status !== 'departed' && a.id !== senderId);
-
-            coordinator.eventBus.emit('lead:broadcast', {
-              project_id: projectId,
-              from: senderId,
-              content: body.content.trim(),
-              importance: body.importance === 'urgent' ? 'urgent' : 'normal',
-              message_id: msg.id,
-              created_at: msg.created_at,
-              active_agents_count: activeAgents.length,
-              recipients: activeAgents.map(a => a.id)
+              content: body.content,
+              importance: body.importance,
+              messageService,
+              token
             });
 
-            coordinator.logActivity(senderId, 'lead:broadcast', null, body.content.trim(), projectId);
-
-            return sendJson(200, {
-              success: true,
-              message: msg,
-              broadcast_to: activeAgents.map(a => a.id),
-              agents_count: activeAgents.length
-            });
+            return sendJson(200, result);
           }
         }
       }
@@ -405,15 +375,26 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         }
       }
 
-      // 9. Dashboard Snapshot & UI
+      // 9. Dashboard Snapshot & 静态前端资产服务
       if (url.pathname === '/api/dashboard' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
         return sendJson(200, coordinator.getDashboardSnapshot(pid));
       }
-      if (url.pathname === '/' || url.pathname === '/index.html') {
-        if (existsSync(uiPath)) {
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(readFileSync(uiPath, 'utf8'));
+
+      const staticFiles = {
+        '/': { name: 'index.html', mime: 'text/html; charset=utf-8' },
+        '/index.html': { name: 'index.html', mime: 'text/html; charset=utf-8' },
+        '/style.css': { name: 'style.css', mime: 'text/css; charset=utf-8' },
+        '/app.js': { name: 'app.js', mime: 'application/javascript; charset=utf-8' }
+      };
+
+      if (staticFiles[url.pathname]) {
+        const target = staticFiles[url.pathname];
+        const uiDir = dirname(uiPath);
+        const filePath = join(uiDir, target.name);
+        if (existsSync(filePath)) {
+          res.writeHead(200, { 'Content-Type': target.mime });
+          res.end(readFileSync(filePath));
           return;
         }
       }
