@@ -67,7 +67,6 @@ export function createDatabase(customPath = null) {
       claim_target TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_claims_project_type_target ON claims(project_id, claim_type, claim_target);
 
     -- 4. 租约表 (Leases)
     CREATE TABLE IF NOT EXISTS leases (
@@ -79,7 +78,6 @@ export function createDatabase(customPath = null) {
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_leases_project_expires ON leases(project_id, expires_at);
 
     -- 5. 等待队列 (Wait Queue)
     CREATE TABLE IF NOT EXISTS wait_queue (
@@ -100,7 +98,6 @@ export function createDatabase(customPath = null) {
       description TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
 
     -- 7. 共享状态表与 CAS (以 project_id, namespace, key 为复合主键)
     CREATE TABLE IF NOT EXISTS state (
@@ -113,7 +110,6 @@ export function createDatabase(customPath = null) {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (project_id, namespace, key)
     );
-    CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
 
     -- 8. 协调点对点/广播消息流
     CREATE TABLE IF NOT EXISTS messages (
@@ -126,7 +122,6 @@ export function createDatabase(customPath = null) {
       importance TEXT DEFAULT 'normal',
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
 
     -- 9. 项目长期工程记忆库 (Project Long-term Memories)
     CREATE TABLE IF NOT EXISTS project_memories (
@@ -139,6 +134,18 @@ export function createDatabase(customPath = null) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+  `);
+
+  // 针对已存在的旧版本表结构进行平滑补列迁移
+  migrateOldSchemaIfNeeded(db);
+
+  // 补列完成后，统一创建索引
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_claims_project_type_target ON claims(project_id, claim_type, claim_target);
+    CREATE INDEX IF NOT EXISTS idx_leases_project_expires ON leases(project_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_cat ON project_memories(project_id, category);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_updated ON project_memories(project_id, updated_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_proj_cat_key ON project_memories(project_id, category, key);
