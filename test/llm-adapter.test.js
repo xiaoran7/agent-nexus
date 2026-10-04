@@ -29,7 +29,7 @@ test('parseLlmConfig: 环境变量解析逻辑', () => {
   assert.equal(withKey.enabled, true);
   assert.equal(withKey.apiKey, 'test-key');
   assert.equal(withKey.model, 'claude-3-5-sonnet-latest');
-  assert.equal(withKey.timeoutMs, 3000);
+  assert.equal(withKey.timeoutMs, 8000);
 
   // 显式禁用
   const disabled = parseLlmConfig({

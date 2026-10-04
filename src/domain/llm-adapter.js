@@ -47,7 +47,7 @@ export function parseLlmConfig(env = process.env) {
   const authToken = env.ANTHROPIC_AUTH_TOKEN || null;
   const baseUrl = env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
   const model = env.NEXUS_LLM_MODEL || 'claude-3-5-sonnet-latest';
-  const timeoutMs = parseInt(env.NEXUS_LLM_TIMEOUT_MS || '3000', 10);
+  const timeoutMs = parseInt(env.NEXUS_LLM_TIMEOUT_MS || '8000', 10);
 
   // 显式配置优先；未显式配置时，只要有任一 Token/Key 即默认激活
   let enabled = false;
@@ -66,7 +66,7 @@ export function parseLlmConfig(env = process.env) {
     authToken,
     baseUrl,
     model,
-    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 3000
+    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 8000
   };
 }
 
@@ -80,7 +80,7 @@ const MAX_RESPONSE_BYTES = 512 * 1024; // 512 KB 响应体积防守上限
  * - 任意错误一律静默返回 null，坚决执行降级兜底。
  */
 export class AnthropicAdapter extends LlmAdapter {
-  constructor({ apiKey = null, authToken = null, baseUrl = 'https://api.anthropic.com/v1', model = 'claude-3-5-sonnet-latest', timeoutMs = 3000 } = {}) {
+  constructor({ apiKey = null, authToken = null, baseUrl = 'https://api.anthropic.com/v1', model = 'claude-3-5-sonnet-latest', timeoutMs = 8000 } = {}) {
     super();
     this.apiKey = apiKey;
     this.authToken = authToken;
@@ -118,7 +118,7 @@ export class AnthropicAdapter extends LlmAdapter {
 
       const payload = JSON.stringify({
         model: this.model,
-        max_tokens: 1024,
+        max_tokens: 384,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }]
       });
