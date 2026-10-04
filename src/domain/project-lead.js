@@ -88,7 +88,69 @@ export class ProjectLead {
     return advice;
   }
 
-  onboard({ agentId, plannedWork = [], capabilities = [] }) {
+  _buildLlmPrompt(agentId, plannedWork, safeToStart, conflicts, context, deterministicAdvice) {
+    const systemPrompt = `你作为 Agent-Nexus 的项目常驻技术主管兼系统架构师（AI Tech Lead）。
+你的职责是在多智能体并发开发环境下，为新进场的编码 Agent 提供高维度的工程协同与任务编排指引，最大化并发吞吐，彻底杜绝代码写踩踏。
+
+【核心不可变铁律】：
+1. 冲突判定矩阵是绝对事实（Ground Truth）。你绝对不能告诉 Agent 去直接修改正处于锁定状态（mustWait）的文件。
+2. 调度建议结构：
+   - 优先施工通道：引导 Agent 立即全速实现空闲（safeToStart）的模块；
+   - 依赖解耦策略：对于暂时被锁的模块，建议 Agent 抽离 Mock 数据、定义接口契约、编写独立单元测试或编写周边逻辑，而不是原地干等；
+   - 倒计时与交接：告知锁持有者和预计释放倒计时，强调完工后系统会自动触发唤醒通知。
+3. 风格要求：中文输出、通俗接地气、专业高效、篇幅精炼（200 字以内），直接给出可执行的施工路线，不要废话套话。`;
+
+    const safeDesc = safeToStart.length > 0
+      ? safeToStart.map(s => `  - [${s.type || 'file'}] ${s.target}`).join('\n')
+      : '  (无，全部计划均受阻)';
+
+    const conflictDesc = conflicts.length > 0
+      ? conflicts.map(c => `  - [${c.type}] ${c.target} -> 被 [${c.blockedByName}] 锁定，预计剩余约 ${c.estimatedRemainingSec} 秒`).join('\n')
+      : '  (无冲突)';
+
+    const userMessage = `项目 ID: ${this.projectId}
+申报 Agent ID: ${agentId}
+
+【已核验冲突矩阵】：
+1. 安全可立即施工资源 (${safeToStart.length} 项):
+${safeDesc}
+
+2. 冲突锁定中资源 (${conflicts.length} 项):
+${conflictDesc}
+
+【当前规则引擎计算的基线建议】：
+${deterministicAdvice}
+
+请基于上述实际工程事实，作为技术主管向此 Agent 给出具体的施工编排与避障解耦建议。`;
+
+    return { systemPrompt, userMessage };
+  }
+
+  async _getEnhancedAdvice(agentId, plannedWork, safeToStart, conflicts, context, deterministicAdvice) {
+    if (!this.llmAdapter || (this.llmAdapter instanceof NullAdapter)) {
+      return { advice: deterministicAdvice, adviceSource: 'deterministic' };
+    }
+
+    try {
+      const { systemPrompt, userMessage } = this._buildLlmPrompt(
+        agentId,
+        plannedWork,
+        safeToStart,
+        conflicts,
+        context,
+        deterministicAdvice
+      );
+
+      const resp = await this.llmAdapter.chat(systemPrompt, userMessage);
+      if (resp && typeof resp.content === 'string' && resp.content.trim().length > 0) {
+        return { advice: resp.content.trim(), adviceSource: 'llm' };
+      }
+    } catch {}
+
+    return { advice: deterministicAdvice, adviceSource: 'deterministic' };
+  }
+
+  async onboard({ agentId, plannedWork = [], capabilities = [] }) {
     const context = this.getProjectContext();
     const { conflicts, safeToStart } = this._findPlanConflicts(plannedWork, context, agentId);
 
@@ -99,13 +161,22 @@ export class ProjectLead {
       registeredAt: Date.now()
     });
 
-    const advice = this._generateDeterministicAdvice(safeToStart, conflicts);
+    const deterministicAdvice = this._generateDeterministicAdvice(safeToStart, conflicts);
+    const { advice, adviceSource } = await this._getEnhancedAdvice(
+      agentId,
+      plannedWork,
+      safeToStart,
+      conflicts,
+      context,
+      deterministicAdvice
+    );
 
     this.eventBus.emit('project:onboarded', {
       project_id: this.projectId,
       agent_id: agentId,
       planned_count: plannedWork.length,
-      conflicts_count: conflicts.length
+      conflicts_count: conflicts.length,
+      advice_source: adviceSource
     });
 
     return {
@@ -113,21 +184,33 @@ export class ProjectLead {
       agentId,
       safeToStart,
       mustWait: conflicts,
-      advice
+      advice,
+      adviceSource,
+      deterministicAdvice
     };
   }
 
-  advisePlan({ agentId, plannedWork = [] }) {
+  async advisePlan({ agentId, plannedWork = [] }) {
     const context = this.getProjectContext();
     const { conflicts, safeToStart } = this._findPlanConflicts(plannedWork, context, agentId);
-    const advice = this._generateDeterministicAdvice(safeToStart, conflicts);
+    const deterministicAdvice = this._generateDeterministicAdvice(safeToStart, conflicts);
+    const { advice, adviceSource } = await this._getEnhancedAdvice(
+      agentId,
+      plannedWork,
+      safeToStart,
+      conflicts,
+      context,
+      deterministicAdvice
+    );
 
     return {
       projectId: this.projectId,
       agentId,
       safeToStart,
       mustWait: conflicts,
-      advice
+      advice,
+      adviceSource,
+      deterministicAdvice
     };
   }
 

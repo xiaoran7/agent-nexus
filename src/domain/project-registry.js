@@ -1,15 +1,22 @@
 import { ProjectLead } from './project-lead.js';
-import { NullAdapter, AnthropicAdapter } from './llm-adapter.js';
+import { NullAdapter, AnthropicAdapter, parseLlmConfig } from './llm-adapter.js';
 
 export class ProjectRegistry {
   constructor(db, coordinator, eventBus, llmAdapterFactory = null) {
     this.db = db;
     this.coordinator = coordinator;
     this.eventBus = eventBus;
+    this.llmConfig = parseLlmConfig();
+
     this.llmAdapterFactory = llmAdapterFactory || (() => {
-      const apiKey = process.env.NEXUS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || null;
-      if (apiKey) {
-        return new AnthropicAdapter({ apiKey, baseUrl: process.env.ANTHROPIC_BASE_URL });
+      if (this.llmConfig.enabled) {
+        return new AnthropicAdapter({
+          apiKey: this.llmConfig.apiKey,
+          authToken: this.llmConfig.authToken,
+          baseUrl: this.llmConfig.baseUrl,
+          model: this.llmConfig.model,
+          timeoutMs: this.llmConfig.timeoutMs
+        });
       }
       return new NullAdapter();
     });

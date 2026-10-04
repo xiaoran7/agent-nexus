@@ -50,6 +50,11 @@ export function startDaemon(options = {}) {
       const boundPort = server.address().port;
       console.log(`[Agent-Nexus] Daemon listening on http://127.0.0.1:${boundPort}`);
       console.log(`[Agent-Nexus] Real-time Dashboard: http://127.0.0.1:${boundPort}/`);
+      if (projectRegistry.llmConfig?.enabled) {
+        console.log(`[Agent-Nexus] AI Project Lead: ENABLED (provider=${projectRegistry.llmConfig.provider}, model=${projectRegistry.llmConfig.model}, endpoint=${projectRegistry.llmConfig.baseUrl})`);
+      } else {
+        console.log(`[Agent-Nexus] AI Project Lead: DISABLED (deterministic scheduler only)`);
+      }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, printed once, not stored):`);
       console.log(`  ${operator.secret}`);
       resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, eventBus, db, tokenStore, cleanupTimer, port: boundPort });
