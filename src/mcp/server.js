@@ -2,6 +2,8 @@
 // Agent-Nexus MCP Server Transport
 // =============================================================================
 
+import { ValidationError } from '../domain/errors.js';
+
 export const NEXUS_TOOLS = [
   {
     name: 'nexus_declare_intent',
@@ -214,6 +216,7 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
     if (args.action === 'delete') return { success: stateService.delete(ns, args.key, pid) };
     if (args.action === 'list') return stateService.list(ns, args.prefix || '', pid);
     if (args.action === 'cas') return stateService.compareAndSwap(ns, args.key, args.expected, args.new_value, args.updated_by || 'agent', args.ttl_seconds, pid);
+    throw new ValidationError(`Unsupported action "${args.action}" for nexus_state`, 'action');
   }
 
   if (toolName === 'nexus_message') {

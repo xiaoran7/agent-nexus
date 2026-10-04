@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-04 核心状态机闭环、模块锁门禁穿透修复与 CLI 优雅停机
+
+### 改了什么
+
+- **`src/daemon/coordinator.js`**
+  - **修复致命级门禁穿透缺陷**：在 `fastCheckAndAutoClaim` 中增加对 `intentRes.status === 'WAITING'` 的严格拦截，杜绝其他 Agent 持有父模块锁（如 `src/daemon`）时下游文件写操作被误放行的严重安全隐患，贯彻 fail-closed 门禁原则。
+  - **超时租约释放联动排队唤醒（Anti-Starvation）**：抽离通用唤醒方法 `_wakeNextEligibleWaiter(projectId, now)`，并在 `expireLeases()` 租约自然超时路径中补齐 `resource:freed` 事件派发与等待队列唤醒，根除超时失效导致的排队 Agent 死锁与永久饿死问题。
+  - **多租约并发状态机准确性**：实现 `_syncAgentRunningStatus(agentId, projectId, now)`，按剩余活跃有效租约数量流转 Agent 状态；避免某一租约释放时粗暴将仍有活跃意图的 Agent 误置为 `idle`。
+  - **热点查询索引命中优化**：在 `findConflict` 的查询语句中补全 `l.project_id = ?`，精准命中 `(project_id, expires_at)` 复合索引。
+- **`src/cli.js`**
+  - **CLI 优雅停机（Graceful Shutdown）**：为 `nexus start` 监听 `SIGINT` 与 `SIGTERM` 操作系统信号，安全调用 `stopDaemon(daemon)` 释放 HTTP/WebSocket 连接并确保 SQLite WAL 完整刷盘关闭，消除非正常退出造成的文件锁与数据库异常。
+- **`src/mcp/server.js`**
+  - **MCP 路由参数边界校验**：在 `nexus_state` 处理分支中对未知 `action` 主动抛出 `ValidationError`，替代隐式返回 `undefined`。
+- **`src/installer/index.js`**
+  - **Hook 匹配器范围对齐**：在 `makeHookGroup` 的正则 matcher 中补齐 `Update` 与 `apply_patch`，确保与底层通用拦截脚本支持的写工具范围保持一致。
+- **测试套件扩充与全量验证**
+  - 在 `test/comprehensive.test.js` 中新增核心状态机闭环与门禁防御增强专项测试：
+    1. 模块锁下通过 Hook 写入子文件严格拦截；
+    2. 租约 TTL 超时自动派发事件并唤醒后排等待者；
+    3. 多租约并发释放时的状态流转准确性；
+    4. MCP `nexus_state` 遇到未知动作时的校验异常断言。
+  - 全套单元测试由 179 项扩充至 **184 项全部通过**，0 失败，0 跳过。
+
+---
+
 ## 2026-10-04 全面代码审查修复、传输安全加固与 60 FPS 性能优化
 
 ### 改了什么

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { startDaemon } from './daemon/index.js';
+import { startDaemon, stopDaemon } from './daemon/index.js';
 import { installAll, installClaudeHook, installCodexHook, installZCodeHook } from './installer/index.js';
 import { resolveProject } from './domain/project.js';
 
@@ -12,10 +12,27 @@ const hooks = {
 };
 
 if (cmd === 'start') {
-  startDaemon().catch((err) => {
-    console.error(`\n[Agent-Nexus] Startup failed:\n${err.message}\n`);
-    process.exit(1);
-  });
+  startDaemon()
+    .then((daemon) => {
+      const shutdown = async () => {
+        console.log('\n[Agent-Nexus] Gracefully shutting down daemon...');
+        try {
+          await stopDaemon(daemon);
+          console.log('[Agent-Nexus] Daemon stopped cleanly.');
+          process.exit(0);
+        } catch (err) {
+          console.error('[Agent-Nexus] Error during shutdown:', err);
+          process.exit(1);
+        }
+      };
+
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+    })
+    .catch((err) => {
+      console.error(`\n[Agent-Nexus] Startup failed:\n${err.message}\n`);
+      process.exit(1);
+    });
 } else if (cmd === 'token') {
   issueToken();
 } else if (cmd === 'projects') {

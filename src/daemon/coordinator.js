@@ -80,8 +80,8 @@ export class CoordinatorEngine {
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
-      WHERE l.expires_at > ? AND c.project_id = ?
-    `).all(now, projectId);
+      WHERE l.project_id = ? AND l.expires_at > ? AND c.project_id = ?
+    `).all(projectId, now, projectId);
 
     for (const claim of normalizedClaims) {
       for (const active of activeClaims) {
@@ -313,7 +313,7 @@ export class CoordinatorEngine {
     this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
     this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(lease.intent_id);
 
-    this.updateAgentStatus(agentId, 'idle');
+    this._syncAgentRunningStatus(agentId, projectId, now);
     this.logActivity(agentId, 'lease:released', lease.id, `Agent released lease for intent ${lease.intent_id}`, projectId);
 
     this.eventBus.emit('resource:freed', {
@@ -322,6 +322,33 @@ export class CoordinatorEngine {
       released_by: agentId
     });
 
+    const { nextWaiter, skipped } = this._wakeNextEligibleWaiter(projectId, now);
+
+    return {
+      success: true,
+      releasedLeaseId: lease.id,
+      notifiedWaiter: nextWaiter ? {
+        agent_id: nextWaiter.agent_id,
+        intent_id: nextWaiter.intent_id
+      } : null,
+      stillBlocked: skipped
+    };
+  }
+
+  // 内部辅助方法：依据剩余活跃租约准确同步 Agent 运行状态
+  _syncAgentRunningStatus(agentId, projectId, now) {
+    const active = this.db.prepare(`
+      SELECT count(*) as count FROM leases WHERE agent_id = ? AND project_id = ? AND expires_at > ?
+    `).get(agentId, projectId, now);
+    if ((active?.count || 0) === 0) {
+      this.updateAgentStatus(agentId, 'idle');
+    } else {
+      this.updateAgentStatus(agentId, 'running');
+    }
+  }
+
+  // 内部辅助方法：复核并唤醒等待队列中首个满足条件的 Agent
+  _wakeNextEligibleWaiter(projectId, now) {
     const breadthOf = (intentId) => this.db.prepare(`
       SELECT COALESCE(SUM(
         CASE WHEN claim_type = 'file' THEN 1
@@ -375,27 +402,50 @@ export class CoordinatorEngine {
       });
     }
 
-    return {
-      success: true,
-      releasedLeaseId: lease.id,
-      notifiedWaiter: nextWaiter ? {
-        agent_id: nextWaiter.agent_id,
-        intent_id: nextWaiter.intent_id
-      } : null,
-      stillBlocked: skipped
-    };
+    return { nextWaiter, skipped };
   }
 
-  // 4. 过期租约定时清理
+  // 4. 过期租约定时清理（联动释放事件与排队唤醒）
   expireLeases() {
     const now = Date.now();
     const expired = this.db.prepare('SELECT * FROM leases WHERE expires_at <= ?').all(now);
+    if (expired.length === 0) return;
+
+    const affectedProjects = new Set();
+    const affectedAgents = new Set();
+
     for (const l of expired) {
       const pid = l.project_id || 'default';
+      affectedProjects.add(pid);
+      affectedAgents.add({ agentId: l.agent_id, projectId: pid });
+
+      // 提取释放的 claims
+      const releasedClaims = this.db.prepare(`
+        SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
+      `).all(l.intent_id).map(c => ({ type: c.claim_type, target: c.claim_target }));
+
       this.db.prepare(`UPDATE intents SET status = 'aborted', updated_at = ? WHERE id = ?`).run(now, l.intent_id);
       this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(l.id);
       this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(l.intent_id);
       this.logActivity(l.agent_id, 'lease:expired', l.id, `Lease ${l.id} expired due to TTL timeout`, pid);
+
+      if (releasedClaims.length > 0) {
+        this.eventBus.emit('resource:freed', {
+          project_id: pid,
+          resources: releasedClaims,
+          released_by: l.agent_id
+        });
+      }
+    }
+
+    // 同步涉及到的 Agent 状态
+    for (const { agentId, projectId } of affectedAgents) {
+      this._syncAgentRunningStatus(agentId, projectId, now);
+    }
+
+    // 释放资源后，复核并唤醒等待者
+    for (const pid of affectedProjects) {
+      this._wakeNextEligibleWaiter(pid, now);
     }
   }
 
@@ -448,6 +498,16 @@ export class CoordinatorEngine {
       ttlSeconds: 180,
       projectId: finalProjectId
     });
+
+    // 关键防御：如果意图被判定为冲突等待（例如命中模块锁或符号锁），坚决实施拦截
+    if (intentRes.status === 'WAITING') {
+      this.logActivity(agentId, 'hook:blocked', normalizedFile, `Blocked write to ${normalizedFile} (${intentRes.reason})`, finalProjectId);
+      return {
+        allow: false,
+        holder: intentRes.blockedByName,
+        reason: `BLOCKED: File '${filePath}' is blocked by [${intentRes.blockedByName}] (${intentRes.reason}). Please wait or choose another task.`
+      };
+    }
 
     return {
       allow: true,

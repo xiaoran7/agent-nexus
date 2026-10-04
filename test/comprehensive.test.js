@@ -417,3 +417,99 @@ test('唤醒队列按可用性复核并按 claim 宽窄重排', async (t) => {
     events.stop();
   });
 });
+
+test('核心状态机闭环与门禁防御增强', async (t) => {
+  const h = createHarness();
+  t.after(() => h.close());
+  const { coordinator, mcp, eventBus } = h;
+
+  await t.test('fastCheckAndAutoClaim 遇到模块锁时严格拦截而非放行', () => {
+    coordinator.registerAgent({ id: 'mod-holder', name: 'Module Holder', provider: 'test', sessionId: 's1' });
+    const dec = coordinator.declareIntent({
+      agentId: 'mod-holder',
+      intentSummary: 'Hold src/daemon module',
+      claims: [{ type: 'module', target: 'src/daemon' }]
+    });
+    assert.equal(dec.status, 'GRANTED');
+
+    // 另一个 Agent 尝试通过 Hook 门禁写入该模块下的文件
+    const check = coordinator.fastCheckAndAutoClaim({
+      agentId: 'file-writer',
+      provider: 'test',
+      sessionId: 's2',
+      filePath: 'src/daemon/coordinator.js'
+    });
+
+    assert.equal(check.allow, false, '被模块锁包含的文件必须被拦截');
+    assert.match(check.reason, /BLOCKED/, '拦截原因中应包含明确的 BLOCKED 提示');
+    assert.equal(check.holder, 'Module Holder', '应准确回显持有者名称');
+  });
+
+  await t.test('expireLeases 超时后自动派发 resource:freed 并唤醒排队等待者', () => {
+    coordinator.registerAgent({ id: 'agent-exp', name: 'Expiring Agent', provider: 'test', sessionId: 's1' });
+    coordinator.registerAgent({ id: 'agent-wait', name: 'Waiting Agent', provider: 'test', sessionId: 's2' });
+
+    const dec1 = coordinator.declareIntent({
+      agentId: 'agent-exp',
+      intentSummary: 'Hold file',
+      claims: [{ type: 'file', target: 'src/timeout.js' }],
+      ttlSeconds: 1 // 1 秒过期
+    });
+    assert.equal(dec1.status, 'GRANTED');
+
+    const dec2 = coordinator.declareIntent({
+      agentId: 'agent-wait',
+      intentSummary: 'Wait for file',
+      claims: [{ type: 'file', target: 'src/timeout.js' }]
+    });
+    assert.equal(dec2.status, 'WAITING');
+
+    let freedFired = false;
+    let wokenFired = false;
+    eventBus.once('resource:freed', () => { freedFired = true; });
+    eventBus.once('agent:woken', () => { wokenFired = true; });
+
+    // 推进数据库时间使租约过期
+    h.db.prepare("UPDATE leases SET expires_at = ? WHERE id = ?").run(Date.now() - 1000, dec1.leaseId);
+
+    coordinator.expireLeases();
+
+    assert.equal(freedFired, true, '租约自然过期必须派发 resource:freed 事件');
+    assert.equal(wokenFired, true, '租约自然过期必须唤醒队列里的合法等待者');
+
+    // 等待者的 intent 状态应变为 released
+    const updatedIntent = h.db.prepare("SELECT status FROM intents WHERE id = ?").get(dec2.intentId);
+    assert.equal(updatedIntent.status, 'released');
+  });
+
+  await t.test('多租约 Agent 在部分租约释放后保持 running 状态，全部释放后才转 idle', () => {
+    coordinator.registerAgent({ id: 'multi-agent', name: 'Multi Agent', provider: 'test', sessionId: 's1' });
+
+    const decA = coordinator.declareIntent({
+      agentId: 'multi-agent',
+      intentSummary: 'Hold A',
+      claims: [{ type: 'file', target: 'src/part_a.js' }]
+    });
+    const decB = coordinator.declareIntent({
+      agentId: 'multi-agent',
+      intentSummary: 'Hold B',
+      claims: [{ type: 'file', target: 'src/part_b.js' }]
+    });
+
+    assert.equal(coordinator.getAgent('multi-agent').status, 'running');
+
+    // 释放租约 A，租约 B 依然有效
+    coordinator.releaseLease(decA.leaseId, 'multi-agent');
+    assert.equal(coordinator.getAgent('multi-agent').status, 'running', '仍有其他租约时状态应维持 running');
+
+    // 释放租约 B
+    coordinator.releaseLease(decB.leaseId, 'multi-agent');
+    assert.equal(coordinator.getAgent('multi-agent').status, 'idle', '所有租约释放后状态应转为 idle');
+  });
+
+  await t.test('MCP nexus_state 传入未知 action 时抛出 ValidationError', () => {
+    assert.throws(() => {
+      mcp('nexus_state', { action: 'invalid_action' });
+    }, /Unsupported action/);
+  });
+});

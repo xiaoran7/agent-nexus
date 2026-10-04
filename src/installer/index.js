@@ -23,7 +23,7 @@ function makeHookGroup(hookCommand) {
   return {
     // 命中可能写文件的命令。刻意不写 "*"：每条命令都会起一次 node 进程，
     // 而这个 hook 的单次预算是 1000ms。
-    matcher: `Bash|Write|Edit|MultiEdit|NotebookEdit`,
+    matcher: `Bash|Write|Edit|MultiEdit|NotebookEdit|Update|apply_patch`,
     hooks: [{ type: 'command', command: hookCommand, timeout: 5 }]
   };
 }
