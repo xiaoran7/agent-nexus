@@ -19,10 +19,16 @@ export class StateService {
   constructor(db, eventBus) {
     this.db = db;
     this.eventBus = eventBus;
+    this._lastSweepAt = 0;
   }
 
-  expireSweep() {
+  expireSweep(force = false) {
     const now = Date.now();
+    // 节流机制：非强制调用时，至少间隔 3000ms 执行一次全表清理，大幅减轻高频事务开销
+    if (!force && now - this._lastSweepAt < 3000) {
+      return;
+    }
+    this._lastSweepAt = now;
     this.db.prepare('DELETE FROM state WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
   }
 
@@ -30,9 +36,14 @@ export class StateService {
     requireString(namespace, 'namespace');
     requireString(key, 'key');
     this.expireSweep();
-    return this.db.prepare(`
+    const row = this.db.prepare(`
       SELECT * FROM state WHERE project_id = ? AND namespace = ? AND key = ?
-    `).get(projectId, namespace, key) || null;
+    `).get(projectId, namespace, key);
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= Date.now()) {
+      return null;
+    }
+    return row;
   }
 
   set(namespace = 'default', key, value, updatedBy, ttlSeconds = null, projectId = 'default') {
@@ -75,14 +86,19 @@ export class StateService {
 
   list(namespace = 'default', prefix = '', projectId = 'default') {
     this.expireSweep();
+    const now = Date.now();
     if (prefix) {
       return this.db.prepare(`
-        SELECT * FROM state WHERE project_id = ? AND namespace = ? AND key LIKE ? ORDER BY key
-      `).all(projectId, namespace, `${prefix}%`);
+        SELECT * FROM state
+        WHERE project_id = ? AND namespace = ? AND (expires_at IS NULL OR expires_at > ?) AND key LIKE ?
+        ORDER BY key
+      `).all(projectId, namespace, now, `${prefix}%`);
     }
     return this.db.prepare(`
-      SELECT * FROM state WHERE project_id = ? AND namespace = ? ORDER BY key
-    `).all(projectId, namespace);
+      SELECT * FROM state
+      WHERE project_id = ? AND namespace = ? AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY key
+    `).all(projectId, namespace, now);
   }
 
   // CAS (Compare-And-Swap) 原子操作

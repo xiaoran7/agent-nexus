@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-10-04 全面代码审查修复、传输安全加固与 60 FPS 性能优化
+
+### 改了什么
+
+- **`src/transport/rest.js` & `src/transport/ws.js`**
+  - **修复致命级 SSE 监听器误删缺陷**：将 `/api/events` 断开时的全局 `removeAllListeners` 替换为独立函数引用的精确解绑（`removeListener`），彻底解决单客户端断开时抹除系统所有并发客户端与 WebSocket 事件流的严重隐患。
+  - **静态前端资源内存缓存**：引入 `staticCache` 内存级驻留缓存机制，消除高频同步磁盘 I/O（`readFileSync`），大幅降低首屏资产分发延迟。
+  - **WebSocket 连接稳健性加固**：在 `broadcast` 中为 `client.send` 增加异常处理回调；增加 30 秒心跳保活检测（Ping/Pong），自动清理僵死 socket 释放句柄。
+- **`src/storage/database.js`**
+  - **热点复合索引补齐**：新增 `idx_intents_proj_status`、`idx_intents_agent_status`、`idx_agents_proj_heartbeat` 与 `idx_claims_intent_id`，优化状态机、Dashboard 快照及冲突关联删除的高频查询效率。
+  - **消除冗余迁移**：剔除初始化时重复调用的 `migrateOldSchemaIfNeeded(db)`。
+- **`src/domain/state.js` & `src/domain/memory.js`**
+  - **State 过期清理节流优化**：为 `expireSweep()` 添加 3000ms 时间窗口节流，消除业务写入和查询路径上重复执行全表 `DELETE` 的数据库事务开销；结合惰性过期判定保证数据严密性。
+  - **Daemon 定时器协同清理**：在 `daemon/index.js` 的 5 秒定时器中主动调用 `stateService.expireSweep(true)`。
+  - **SQL LIKE 通配符安全转义**：在 `ProjectMemoryService.search` 中对 `%`、`_` 及 `\` 进行精确转义，防止非预期的模糊匹配放大。
+- **`src/ui/app.js` & `src/ui/style.css`**
+  - **XSS 安全防御**：实现 `escapeHtml` 机制，对动态上报的 Agent 名称、意图描述、冲突原因、时间线流水与记忆内容进行严密转义，杜绝跨会话存储型 XSS。
+  - **防抖与事件风暴规避**：对 WebSocket 触发的刷新引入 100ms 防抖，对搜索框引入 250ms 防抖；并依据消息类型（`memory:*` 与通用态势）实现选择性精准刷新。
+  - **WebSocket 协议自适应与自动重连**：根据当前协议自适应 `wss://` / `ws://`，并在断线时实施自动退避重连。
+  - **60 FPS 性能铁律保障**：为动画与动态光效节点补充 `will-change: transform; transform: translateZ(0);` 启用独立 GPU 渲染合成层。
+- **测试套件扩充**
+  - 在 `test/notification.test.js` 增加“单客户端断开不破坏多客户端事件分发”与“静态资源内存缓存”测试；
+  - 在 `test/memory.test.js` 增加特殊字符通配符搜索单测；
+  - 单元测试由 176 项扩充至 **179 项**，全部无警告高标准通过。
+
+---
+
 ## 2026-10-04 项目长期工程记忆引擎、总调度广播与指挥作战大屏（War Room）升级
 
 ### 改了什么

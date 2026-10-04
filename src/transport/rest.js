@@ -35,6 +35,8 @@ function applyCors(req, res) {
 }
 
 export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null) {
+  const staticCache = new Map();
+
   return async function handleRest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -109,19 +111,25 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         };
 
         const events = ['timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent', 'project:onboarded', 'milestone:reached', 'lead:broadcast', 'memory:saved', 'memory:deleted'];
+        const handlers = new Map();
         for (const ev of events) {
-          coordinator.eventBus.on(ev, (p) => listener(ev, p));
+          const handler = (p) => listener(ev, p);
+          handlers.set(ev, handler);
+          coordinator.eventBus.on(ev, handler);
         }
 
         const heartbeat = setInterval(() => {
-          res.write(': ping\n\n');
+          try {
+            res.write(': ping\n\n');
+          } catch {}
         }, 15000);
 
         req.on('close', () => {
           clearInterval(heartbeat);
-          for (const ev of events) {
-            coordinator.eventBus.removeAllListeners(ev);
+          for (const [ev, handler] of handlers.entries()) {
+            coordinator.eventBus.removeListener(ev, handler);
           }
+          handlers.clear();
         });
         return;
       }
@@ -390,11 +398,21 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       if (staticFiles[url.pathname]) {
         const target = staticFiles[url.pathname];
-        const uiDir = dirname(uiPath);
-        const filePath = join(uiDir, target.name);
-        if (existsSync(filePath)) {
-          res.writeHead(200, { 'Content-Type': target.mime });
-          res.end(readFileSync(filePath));
+        let cached = staticCache.get(target.name);
+        if (!cached) {
+          const uiDir = dirname(uiPath);
+          const filePath = join(uiDir, target.name);
+          if (existsSync(filePath)) {
+            cached = {
+              buffer: readFileSync(filePath),
+              mime: target.mime
+            };
+            staticCache.set(target.name, cached);
+          }
+        }
+        if (cached) {
+          res.writeHead(200, { 'Content-Type': cached.mime });
+          res.end(cached.buffer);
           return;
         }
       }

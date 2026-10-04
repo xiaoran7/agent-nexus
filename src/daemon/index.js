@@ -29,6 +29,7 @@ export function startDaemon(options = {}) {
 
   const cleanupTimer = setInterval(() => {
     coordinator.expireLeases();
+    stateService.expireSweep(true);
   }, 5000);
   cleanupTimer.unref();
 

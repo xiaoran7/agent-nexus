@@ -29,6 +29,30 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
   // 监听器（server.once('error', ...)）转成可读的启动提示。
   wss.on('error', () => {});
 
+  wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+  });
+
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      try {
+        ws.ping();
+      } catch {}
+    });
+  }, 30000);
+  heartbeatInterval.unref?.();
+
+  wss.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
+
   eventBus.on('timeline:event', (event) => {
     broadcast(wss, { type: 'timeline', data: event });
   });
@@ -64,7 +88,7 @@ function broadcast(wss, payload) {
   const message = JSON.stringify(payload);
   wss.clients.forEach((client) => {
     if (client.readyState === 1) {
-      client.send(message);
+      client.send(message, () => {});
     }
   });
 }

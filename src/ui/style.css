@@ -86,6 +86,8 @@ header {
   border: 2px solid #bae6fd;
   background: #0284c7;
   box-shadow: 0 0 8px #38bdf8;
+  will-change: transform;
+  transform: translateZ(0);
   animation: pulse-halo 2.4s ease-in-out infinite;
 }
 
@@ -184,6 +186,8 @@ header {
   border-radius: 50%;
   background: var(--status-running);
   box-shadow: 0 0 8px var(--status-running);
+  will-change: transform;
+  transform: translateZ(0);
   animation: pulse-dot 2s infinite;
 }
 

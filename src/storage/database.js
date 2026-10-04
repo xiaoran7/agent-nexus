@@ -139,10 +139,14 @@ export function createDatabase(customPath = null) {
   // 针对已存在的旧版本表结构进行平滑补列迁移
   migrateOldSchemaIfNeeded(db);
 
-  // 补列完成后，统一创建索引
+  // 补列完成后，统一创建索引与热点查询加速索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_claims_project_type_target ON claims(project_id, claim_type, claim_target);
+    CREATE INDEX IF NOT EXISTS idx_claims_intent_id ON claims(intent_id);
     CREATE INDEX IF NOT EXISTS idx_leases_project_expires ON leases(project_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_intents_proj_status ON intents(project_id, status);
+    CREATE INDEX IF NOT EXISTS idx_intents_agent_status ON intents(agent_id, status);
+    CREATE INDEX IF NOT EXISTS idx_agents_proj_heartbeat ON agents(project_id, last_heartbeat);
     CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
@@ -150,9 +154,6 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_updated ON project_memories(project_id, updated_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_proj_cat_key ON project_memories(project_id, category, key);
   `);
-
-  // 针对已存在的旧版本表结构进行平滑迁移
-  migrateOldSchemaIfNeeded(db);
 
   return db;
 }

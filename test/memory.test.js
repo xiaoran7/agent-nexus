@@ -97,6 +97,29 @@ test('ProjectMemoryService: 核心功能与项目隔离', async (t) => {
     assert.equal(byCat[0].key, 'git_commit');
   });
 
+  await t.test('模糊搜索安全转义通配符 (% 与 _)', () => {
+    memoryService.set('proj-1', {
+      category: 'gotcha',
+      key: 'rate_100%',
+      content: 'CPU 负载达到 100% 报警'
+    });
+    memoryService.set('proj-1', {
+      category: 'gotcha',
+      key: 'rate_50_percent',
+      content: 'CPU 负载达到 50 percent'
+    });
+
+    // 搜索 100% 应该只匹配 100%，不应将 % 当成通配符匹配其他
+    const foundPercent = memoryService.search('proj-1', '100%');
+    assert.equal(foundPercent.length, 1);
+    assert.equal(foundPercent[0].key, 'rate_100%');
+
+    // 搜索 rate_100 精确命中下划线
+    const foundUnderscore = memoryService.search('proj-1', 'rate_100%');
+    assert.equal(foundUnderscore.length, 1);
+    assert.equal(foundUnderscore[0].key, 'rate_100%');
+  });
+
   await t.test('删除记忆支持按 ID 或按 Key', () => {
     const mem = memoryService.set('proj-1', {
       category: 'milestone',

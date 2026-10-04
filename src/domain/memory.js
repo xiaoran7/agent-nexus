@@ -2,6 +2,10 @@ import { requireString, ValidationError } from './errors.js';
 
 export const VALID_CATEGORIES = new Set(['architecture', 'rule', 'gotcha', 'milestone', 'general']);
 
+function escapeSqlLike(str) {
+  return str.replace(/([%_\\])/g, '\\$1');
+}
+
 export class ProjectMemoryService {
   constructor(db, eventBus = null) {
     this.db = db;
@@ -94,13 +98,13 @@ export class ProjectMemoryService {
     const q = (query || '').trim();
     if (!q) return this.list(projectId, { category, limit });
 
-    const pattern = `%${q}%`;
+    const pattern = `%${escapeSqlLike(q)}%`;
     const lim = Math.max(1, Math.min(limit || 20, 100));
 
     if (category) {
       return this.db.prepare(`
         SELECT * FROM project_memories
-        WHERE project_id = ? AND category = ? AND (key LIKE ? OR content LIKE ?)
+        WHERE project_id = ? AND category = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
         ORDER BY updated_at DESC
         LIMIT ?
       `).all(pid, category, pattern, pattern, lim);
@@ -108,7 +112,7 @@ export class ProjectMemoryService {
 
     return this.db.prepare(`
       SELECT * FROM project_memories
-      WHERE project_id = ? AND (key LIKE ? OR content LIKE ?)
+      WHERE project_id = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
       ORDER BY updated_at DESC
       LIMIT ?
     `).all(pid, pattern, pattern, lim);
