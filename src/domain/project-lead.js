@@ -1,11 +1,12 @@
 import { NullAdapter } from './llm-adapter.js';
 
 export class ProjectLead {
-  constructor(projectId, coordinator, eventBus, llmAdapter = new NullAdapter()) {
+  constructor(projectId, coordinator, eventBus, llmAdapter = new NullAdapter(), memoryService = null) {
     this.projectId = projectId;
     this.coordinator = coordinator;
     this.eventBus = eventBus;
     this.llmAdapter = llmAdapter;
+    this.memoryService = memoryService;
     this.sessionPlans = new Map(); // agentId -> { plannedWork, registeredAt }
   }
 
@@ -89,16 +90,25 @@ export class ProjectLead {
   }
 
   _buildLlmPrompt(agentId, plannedWork, safeToStart, conflicts, context, deterministicAdvice) {
+    const memories = this.memoryService
+      ? this.memoryService.list(this.projectId, { limit: 12 })
+      : [];
+
+    const memoryPromptSection = memories.length > 0
+      ? memories.map(m => `  • [${m.category.toUpperCase()}] ${m.key}: ${m.content}`).join('\n')
+      : '  (暂无先验工程记忆，此为初始阶段)';
+
     const systemPrompt = `你作为 Agent-Nexus 的项目常驻技术主管兼系统架构师（AI Tech Lead）。
 你的职责是在多智能体并发开发环境下，为新进场的编码 Agent 提供高维度的工程协同与任务编排指引，最大化并发吞吐，彻底杜绝代码写踩踏。
 
 【核心不可变铁律】：
 1. 冲突判定矩阵是绝对事实（Ground Truth）。你绝对不能告诉 Agent 去直接修改正处于锁定状态（mustWait）的文件。
-2. 调度建议结构：
+2. 严格遵守【项目长期工程记忆与先验契约】中固化的架构约束（architecture）、代码规约（rule）与历史避坑经验（gotchas）。在提供解耦或编码建议时，不得违背既有架构规约。
+3. 调度建议结构：
    - 优先施工通道：引导 Agent 立即全速实现空闲（safeToStart）的模块；
    - 依赖解耦策略：对于暂时被锁的模块，建议 Agent 抽离 Mock 数据、定义接口契约、编写独立单元测试或编写周边逻辑，而不是原地干等；
    - 倒计时与交接：告知锁持有者和预计释放倒计时，强调完工后系统会自动触发唤醒通知。
-3. 风格要求：中文输出、通俗接地气、专业高效、篇幅精炼（200 字以内），直接给出可执行的施工路线，不要废话套话。`;
+4. 风格要求：中文输出、通俗接地气、专业高效、篇幅精炼（250 字以内），直接给出可执行的施工路线，不要废话套话。`;
 
     const safeDesc = safeToStart.length > 0
       ? safeToStart.map(s => `  - [${s.type || 'file'}] ${s.target}`).join('\n')
@@ -111,7 +121,10 @@ export class ProjectLead {
     const userMessage = `项目 ID: ${this.projectId}
 申报 Agent ID: ${agentId}
 
-【已核验冲突矩阵】：
+【项目长期工程记忆与先验契约 (Project Long-term Memories)】:
+${memoryPromptSection}
+
+【已核验冲突矩阵 (Ground Truth)】:
 1. 安全可立即施工资源 (${safeToStart.length} 项):
 ${safeDesc}
 
@@ -121,7 +134,7 @@ ${conflictDesc}
 【当前规则引擎计算的基线建议】：
 ${deterministicAdvice}
 
-请基于上述实际工程事实，作为技术主管向此 Agent 给出具体的施工编排与避障解耦建议。`;
+请基于上述实际工程事实与先验契约，作为技术主管向此 Agent 给出具体的施工编排与避障解耦建议。`;
 
     return { systemPrompt, userMessage };
   }
@@ -211,6 +224,45 @@ ${deterministicAdvice}
       advice,
       adviceSource,
       deterministicAdvice
+    };
+  }
+
+  reportMilestone({ agentId, description, leaseIdToRelease = null, memory = null }) {
+    let releaseResult = null;
+    if (leaseIdToRelease) {
+      releaseResult = this.coordinator.releaseLease(leaseIdToRelease, agentId);
+    }
+
+    if (this.memoryService) {
+      if (memory && typeof memory === 'object' && memory.key && memory.content) {
+        this.memoryService.set(this.projectId, {
+          category: memory.category || 'milestone',
+          key: memory.key,
+          content: memory.content,
+          sourceAgentId: agentId
+        });
+      } else if (description) {
+        this.memoryService.set(this.projectId, {
+          category: 'milestone',
+          key: `milestone_${Date.now()}`,
+          content: description,
+          sourceAgentId: agentId
+        });
+      }
+    }
+
+    this.coordinator.logActivity(agentId, 'milestone:reached', null, description || 'Milestone completed', this.projectId);
+    this.eventBus.emit('milestone:reached', {
+      project_id: this.projectId,
+      agent_id: agentId,
+      description,
+      released: releaseResult
+    });
+
+    return {
+      success: true,
+      milestone: description,
+      released: releaseResult
     };
   }
 

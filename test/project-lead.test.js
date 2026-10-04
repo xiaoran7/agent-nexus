@@ -7,6 +7,7 @@ import { ProjectLead } from '../src/domain/project-lead.js';
 import { handleMcpTool, ALL_NEXUS_TOOLS } from '../src/mcp/server.js';
 import { StateService } from '../src/domain/state.js';
 import { MessageService } from '../src/domain/messages.js';
+import { ProjectMemoryService } from '../src/domain/memory.js';
 import { EventEmitter } from 'node:events';
 
 class MockLlmAdapter {
@@ -196,5 +197,51 @@ test('Project Lead 架构师调度与避障建议', async (t) => {
 
     assert.equal(mcpRes.success, true);
     assert.equal(mcpRes.released.success, true);
+  });
+
+  await t.test('项目长期记忆自动注入 AI Tech Lead Prompt 并支持里程碑沉淀', async () => {
+    const memoryService = new ProjectMemoryService(db, bus);
+    memoryService.set('proj-mem-test', {
+      category: 'architecture',
+      key: 'auth_standard',
+      content: '必须遵循 OAuth 2.1 PKCE 规范'
+    });
+    memoryService.set('proj-mem-test', {
+      category: 'gotcha',
+      key: 'db_deadlock',
+      content: '避免跨事务嵌套加锁'
+    });
+
+    let capturedUserMessage = null;
+    const mockAdapter = new MockLlmAdapter((systemPrompt, userMessage) => {
+      capturedUserMessage = userMessage;
+      return { content: '【架构师建议】请按 OAuth 2.1 规范编写客户端。' };
+    });
+
+    const lead = new ProjectLead('proj-mem-test', coordinator, bus, mockAdapter, memoryService);
+    const result = await lead.onboard({
+      agentId: 'worker-mem',
+      plannedWork: [{ type: 'file', target: 'src/auth.js' }]
+    });
+
+    assert.equal(result.adviceSource, 'llm');
+    assert.ok(capturedUserMessage);
+    assert.match(capturedUserMessage, /auth_standard: 必须遵循 OAuth 2\.1 PKCE 规范/);
+    assert.match(capturedUserMessage, /db_deadlock: 避免跨事务嵌套加锁/);
+
+    // 汇报里程碑，沉淀到长期记忆库
+    lead.reportMilestone({
+      agentId: 'worker-mem',
+      description: '完成了 OAuth2 PKCE 客户端重构',
+      memory: {
+        category: 'milestone',
+        key: 'oauth2_done',
+        content: 'OAuth2 PKCE 客户端测试全绿'
+      }
+    });
+
+    const savedMem = memoryService.get('proj-mem-test', 'oauth2_done', 'milestone');
+    assert.ok(savedMem);
+    assert.equal(savedMem.content, 'OAuth2 PKCE 客户端测试全绿');
   });
 });

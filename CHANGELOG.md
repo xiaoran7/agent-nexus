@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-10-04 项目长期工程记忆引擎、总调度广播与指挥作战大屏（War Room）升级
+
+### 改了什么
+
+- **`src/storage/database.js`**
+  - 新增持久化表 `project_memories`：支持 `id`, `project_id`, `category` (`architecture`/`rule`/`gotcha`/`milestone`/`general`), `key`, `content`, `source_agent_id`, `created_at`, `updated_at`。
+  - 创建联合唯一索引 `idx_project_memories_proj_cat_key (project_id, category, key)`，支持原子 Upsert（`INSERT ... ON CONFLICT DO UPDATE`）无锁幂等更新。
+- **`src/domain/memory.js`**
+  - 新建 `ProjectMemoryService`：提供 `set`, `get`, `getById`, `list`, `search`, `delete` 完备生命周期管理与严格输入校验。
+  - 项目作用域隔离：不同项目记忆彼此独立，互不污染。
+  - 总线事件挂载：记忆保存与删除时派发 `memory:saved` 与 `memory:deleted`。
+- **`src/domain/project-lead.js` & `src/domain/project-registry.js`**
+  - AI Tech Lead 深度结合长期记忆：在 `_buildLlmPrompt` 中自动检索并注入项目的核心架构决策（architecture）、代码规约（rule）与历史避坑经验（gotchas），指导新进场 Agent 时严格遵照既定契约。
+  - 里程碑持久化沉淀：`reportMilestone` 支持将完工成果自动固化至项目的长期记忆库中。
+- **`src/transport/rest.js` & `src/transport/ws.js`**
+  - 新增 REST 路由：`GET/POST/DELETE /api/projects/:id/memories`，支持分类过滤与模糊搜索。
+  - 新增 Master Broadcast 路由：`POST /api/projects/:id/broadcast`，支持人类指挥官（Sensei）或主调度一键向项目所有活跃会话的收件箱推送优先级指令，自动补齐系统发件人注册以遵守外键约束，同步触发 `lead:broadcast` 总线事件。
+  - SSE 与 WebSocket 全量转发 `lead:broadcast`、`memory:saved`、`memory:deleted` 事件。
+- **`src/ui/index.html`（War Room 作战大屏）**
+  - **顶部 Tech Lead 态势区**：在席模型状态指示、项目切换选择器、最新架构调度建议实时流。
+  - **施工泳道与交接矩阵（Construction Lanes & Live Handoffs）**：按活跃锁与排队等待者聚合，展示独占锁持有者、排队接棒者及动态剩余秒数（TTL）进度倒计时条。
+  - **项目长期记忆抽屉（Project Memory Drawer）**：侧滑式设计，支持按分类检索、模糊搜索与手动录入架构规约。
+  - **底部总指挥广播台（Master Command Bar）**：常驻吸底输入框，支持 Normal/Urgent 模式，一键向全项目下发优先级指令。
+- **自动化测试**
+  - 新增 `test/memory.test.js`（6 项单测）：覆盖记忆 CRUD、原子 Upsert、模糊搜索、项目隔离与删除。
+  - 新增 `test/broadcast.test.js`：覆盖全项目活跃 Agent 广播、收件箱接收、多项目隔离与总线事件。
+  - 扩充 `test/project-lead.test.js`：覆盖记忆注入 AI Prompt 与里程碑自动持久化。
+  - 全套单元测试总数扩充至 **176** 项，全部通过。
+
+---
+
 ## 2026-10-04 AI 常驻架构师调度（AI Project Lead）接通与确定性安全降级闭环
 
 ### 改了什么

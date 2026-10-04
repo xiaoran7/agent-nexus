@@ -45,6 +45,18 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
     broadcast(wss, { type: 'message:sent', data });
   });
 
+  eventBus.on('lead:broadcast', (data) => {
+    broadcast(wss, { type: 'lead:broadcast', data });
+  });
+
+  eventBus.on('memory:saved', (data) => {
+    broadcast(wss, { type: 'memory:saved', data });
+  });
+
+  eventBus.on('memory:deleted', (data) => {
+    broadcast(wss, { type: 'memory:deleted', data });
+  });
+
   return wss;
 }
 

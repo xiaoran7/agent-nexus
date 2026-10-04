@@ -6,6 +6,7 @@ import { CoordinatorEngine } from './coordinator.js';
 import { StateService } from '../domain/state.js';
 import { MessageService } from '../domain/messages.js';
 import { ProjectRegistry } from '../domain/project-registry.js';
+import { ProjectMemoryService } from '../domain/memory.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
 import { TokenStore, generateToken } from '../transport/auth.js';
@@ -21,7 +22,8 @@ export function startDaemon(options = {}) {
   const coordinator = new CoordinatorEngine(db, eventBus);
   const stateService = new StateService(db, eventBus);
   const messageService = new MessageService(db, eventBus);
-  const projectRegistry = new ProjectRegistry(db, coordinator, eventBus);
+  const memoryService = new ProjectMemoryService(db, eventBus);
+  const projectRegistry = new ProjectRegistry(db, coordinator, eventBus, null, memoryService);
 
   messageService.agentResolver = (agentId) => coordinator.getAgent(agentId);
 
@@ -33,7 +35,7 @@ export function startDaemon(options = {}) {
   const tokenStore = new TokenStore();
   const operator = tokenStore.issue(generateToken(null));
 
-  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry);
+  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService);
   const server = createServer(handleRest);
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;

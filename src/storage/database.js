@@ -127,6 +127,21 @@ export function createDatabase(customPath = null) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
+
+    -- 9. 项目长期工程记忆库 (Project Long-term Memories)
+    CREATE TABLE IF NOT EXISTS project_memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL DEFAULT 'default',
+      category TEXT NOT NULL DEFAULT 'general',
+      key TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_agent_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_memories_proj_cat ON project_memories(project_id, category);
+    CREATE INDEX IF NOT EXISTS idx_project_memories_proj_updated ON project_memories(project_id, updated_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_proj_cat_key ON project_memories(project_id, category, key);
   `);
 
   // 针对已存在的旧版本表结构进行平滑迁移

@@ -2,10 +2,11 @@ import { ProjectLead } from './project-lead.js';
 import { NullAdapter, AnthropicAdapter, parseLlmConfig } from './llm-adapter.js';
 
 export class ProjectRegistry {
-  constructor(db, coordinator, eventBus, llmAdapterFactory = null) {
+  constructor(db, coordinator, eventBus, llmAdapterFactory = null, memoryService = null) {
     this.db = db;
     this.coordinator = coordinator;
     this.eventBus = eventBus;
+    this.memoryService = memoryService;
     this.llmConfig = parseLlmConfig();
 
     this.llmAdapterFactory = llmAdapterFactory || (() => {
@@ -49,7 +50,7 @@ export class ProjectRegistry {
     if (!this.leads.has(finalId)) {
       this.ensureProject(finalId);
       const adapter = this.llmAdapterFactory(finalId);
-      const lead = new ProjectLead(finalId, this.coordinator, this.eventBus, adapter);
+      const lead = new ProjectLead(finalId, this.coordinator, this.eventBus, adapter, this.memoryService);
       this.leads.set(finalId, lead);
     }
     return this.leads.get(finalId);

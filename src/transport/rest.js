@@ -33,7 +33,7 @@ function applyCors(req, res) {
   return false;
 }
 
-export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null) {
+export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null) {
   return async function handleRest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -107,7 +107,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
         };
 
-        const events = ['timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent', 'project:onboarded', 'milestone:reached'];
+        const events = ['timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent', 'project:onboarded', 'milestone:reached', 'lead:broadcast', 'memory:saved', 'memory:deleted'];
         for (const ev of events) {
           coordinator.eventBus.on(ev, (p) => listener(ev, p));
         }
@@ -172,17 +172,103 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
           if (action === 'milestone' && req.method === 'POST') {
             const data = await readJson();
-            let releaseResult = null;
-            if (data.lease_id_to_release) {
-              releaseResult = coordinator.releaseLease(data.lease_id_to_release, data.agent_id);
-            }
-            coordinator.logActivity(data.agent_id, 'milestone:reached', null, data.description || 'Milestone completed', projectId);
-            coordinator.eventBus.emit('milestone:reached', {
-              project_id: projectId,
-              agent_id: data.agent_id,
-              description: data.description
+            const result = lead.reportMilestone({
+              agentId: data.agent_id,
+              description: data.description,
+              leaseIdToRelease: data.lease_id_to_release,
+              memory: data.memory
             });
-            return sendJson(200, { success: true, released: releaseResult });
+            return sendJson(200, result);
+          }
+
+          if (action === 'memories') {
+            const memSvc = memoryService || lead.memoryService;
+            if (!memSvc) return sendJson(200, []);
+
+            if (req.method === 'GET') {
+              const query = url.searchParams.get('q') || url.searchParams.get('query');
+              const category = url.searchParams.get('category') || null;
+              const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+              if (query) {
+                return sendJson(200, memSvc.search(projectId, query, { category, limit }));
+              }
+              return sendJson(200, memSvc.list(projectId, { category, limit }));
+            }
+
+            if (req.method === 'POST') {
+              const body = await readJson();
+              const saved = memSvc.set(projectId, {
+                category: body.category,
+                key: body.key,
+                content: body.content,
+                sourceAgentId: body.source_agent_id || token?.agent_id || null
+              });
+              return sendJson(201, saved);
+            }
+
+            if (req.method === 'DELETE') {
+              const id = url.searchParams.get('id');
+              const key = url.searchParams.get('key');
+              const category = url.searchParams.get('category');
+              let body = {};
+              try { body = await readJson(); } catch {}
+
+              const identifier = id || body.id || (key ? { key, category } : body.key ? { key: body.key, category: body.category } : null);
+              if (!identifier) {
+                return sendJson(400, { error: 'Missing memory identifier (id or key)', field: 'id' });
+              }
+              const res = memSvc.delete(projectId, identifier);
+              return sendJson(200, res);
+            }
+          }
+
+          if (action === 'broadcast' && req.method === 'POST') {
+            const body = await readJson();
+            if (!body.content || typeof body.content !== 'string' || !body.content.trim()) {
+              return sendJson(400, { error: '"content" is required and must be a non-empty string', field: 'content' });
+            }
+
+            const senderId = body.from || token?.agent_id || 'sensei';
+            if (!coordinator.getAgent(senderId)) {
+              coordinator.registerAgent({
+                id: senderId,
+                name: senderId === 'sensei' ? 'Sensei (Human Operator)' : (senderId === 'lead' ? 'Tech Lead' : 'Master Orchestrator'),
+                provider: 'system',
+                sessionId: 'broadcast',
+                projectId
+              });
+            }
+
+            const msg = messageService.send({
+              from: senderId,
+              to: null,
+              content: body.content.trim(),
+              importance: body.importance === 'urgent' ? 'urgent' : 'normal',
+              projectId
+            }, token);
+
+            const activeAgents = coordinator.listAgents(projectId)
+              .filter(a => a.status !== 'departed' && a.id !== senderId);
+
+            coordinator.eventBus.emit('lead:broadcast', {
+              project_id: projectId,
+              from: senderId,
+              content: body.content.trim(),
+              importance: body.importance === 'urgent' ? 'urgent' : 'normal',
+              message_id: msg.id,
+              created_at: msg.created_at,
+              active_agents_count: activeAgents.length,
+              recipients: activeAgents.map(a => a.id)
+            });
+
+            coordinator.logActivity(senderId, 'lead:broadcast', null, body.content.trim(), projectId);
+
+            return sendJson(200, {
+              success: true,
+              message: msg,
+              broadcast_to: activeAgents.map(a => a.id),
+              agents_count: activeAgents.length
+            });
           }
         }
       }
