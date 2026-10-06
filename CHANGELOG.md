@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-10-06 AOCI-CODE 全局认知架构与 MCP 治理接入
+
+### 改了什么
+
+- **AOCI-CODE 项目初始化与基线建立**
+  - 执行 `aoci init` 标准工程流水线（`--locale zh-CN --agent claude --hooks`），生成认知架构骨架资产 `aoci.txt`、`aoci.meta.txt` 与 `aoci.code.txt`。
+  - 自动生成 `.gitattributes`（规范跨平台检出 LF 行尾）与 `.aoci/` 认知治理配置基线（`config.json`、`baseline.json`）。
+  - 在 `AGENTS.md` 中追加 AOCI 规范区块，声明模型认知闭环与维护纪律。
+  - 安装 PreToolUse 守卫脚本至 `.aoci/hooks/claude-pretool.sh`，并在 `.claude/settings.json` 中注册对 `Edit|Write|MultiEdit` 的前置拦截保护。
+  - 在 `.gitignore` 中完善对 `.mcp.json` 与 `.claude/settings.json` 等宿主机环境绝对路径配置的隔离忽略。
+  - 运行 `aoci scan` 建立项目全量 52 个文件基线，完成 `aoci verify` 结构合法性校验。
+
+---
+
 ## 2026-10-04 核心状态机闭环、模块锁门禁穿透修复与 CLI 优雅停机
 
 ### 改了什么
