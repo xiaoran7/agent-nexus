@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-10-12 AOCI 本地认知资产 Git 边界治理与解挂清洗
+
+### 改了什么
+
+- **Git 仓库零污染与 AOCI 纯本地化隐形隔离**
+  - **规范 `.gitignore` 规则**：根据 `aoci-setup` 铁律，全面补齐 AOCI 全量本地认知资产与索引忽略规则（`aoci.*`、`.aoci/`、`.mcp.json`、`AGENTS.md.backup.*`）、本地 Agent 垫片与私有配置（`AGENT.md`、`agent.md`、`*.local.md`、`CLAUDE.local.md`、`AGENTS.local.md`）及 Claude 本地运行态（`.claude/worktrees/`、`.claude/settings.local.json`、`.claude/scheduled_tasks.json`）。
+  - **历史追踪无损清洗**：使用 `git rm --cached -r` 从 Git 索引中解挂误追踪的 AOCI 本地认知资产（`.aoci/`、`aoci.*`）与 Agent 垫片（`AGENT.md`），确保本地物理文件完好无损，远端 Git 仓库零污染。
+  - **开源零泄密审查**：验证项目无私有敏感 IP、内部域名或凭据泄露，满足开源纯净交付标准。
+
+---
+
 ## 2026-10-06 AOCI-CODE 全局认知架构与 MCP 治理接入
 
 ### 改了什么
