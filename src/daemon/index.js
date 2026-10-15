@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
+import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { createDatabase } from '../storage/database.js';
 import { CoordinatorEngine } from './coordinator.js';
 import { StateService } from '../domain/state.js';
@@ -9,7 +10,7 @@ import { ProjectRegistry } from '../domain/project-registry.js';
 import { ProjectMemoryService } from '../domain/memory.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
-import { TokenStore, generateToken } from '../transport/auth.js';
+import { TokenStore, generateToken, getSessionTokenPath } from '../transport/auth.js';
 
 export function startDaemon(options = {}) {
   const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4100', 10);
@@ -58,7 +59,12 @@ export function startDaemon(options = {}) {
       } else {
         console.log(`[Agent-Nexus] AI Project Lead: DISABLED (deterministic scheduler only)`);
       }
-      console.log(`[Agent-Nexus] Operator token (read + write + mint, printed once, not stored):`);
+      if (dbPath !== ':memory:') {
+        try {
+          writeFileSync(getSessionTokenPath(), operator.secret, { encoding: 'utf8', mode: 0o600 });
+        } catch {}
+      }
+      console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
       resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, eventBus, db, tokenStore, cleanupTimer, port: boundPort });
     });
@@ -85,6 +91,10 @@ function describeListenError(err, port) {
 
 export async function stopDaemon({ server, wss, db, cleanupTimer }) {
   if (cleanupTimer) clearInterval(cleanupTimer);
+  try {
+    const tokenPath = getSessionTokenPath();
+    if (existsSync(tokenPath)) unlinkSync(tokenPath);
+  } catch {}
   for (const client of wss.clients) client.terminate();
   await new Promise((resolve) => wss.close(resolve));
   for (const socket of server.closeAllConnections?.() || []) socket.destroy();

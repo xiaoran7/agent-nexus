@@ -144,23 +144,74 @@ export const NEXUS_PROJECT_TOOLS = [
   },
   {
     name: 'nexus_report_milestone',
-    description: 'Report a completed milestone or phase. Optionally release held leases and notify waiting sibling agents.',
+    description: 'Report a completed milestone or phase. Optionally release held leases, notify waiting sibling agents, and persist achievements to project long-term memory.',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: { type: 'string', description: 'Your agent ID' },
         project_id: { type: 'string', description: 'Project ID (default "default")' },
         description: { type: 'string', description: 'Milestone summary' },
-        lease_id_to_release: { type: 'string', description: 'Optional lease ID to release upon milestone' }
+        lease_id_to_release: { type: 'string', description: 'Optional lease ID to release upon milestone' },
+        memory: {
+          type: 'object',
+          description: 'Optional memory to record into project long-term memory',
+          properties: {
+            key: { type: 'string', description: 'Memory key' },
+            category: { type: 'string', enum: ['milestone', 'architecture', 'rule', 'gotcha', 'general'], default: 'milestone' },
+            content: { type: 'string', description: 'Memory content details' }
+          }
+        }
       },
       required: ['agent_id', 'description']
+    }
+  },
+  {
+    name: 'nexus_search_memory',
+    description: 'Search long-term project memories (architecture decisions, rules, gotchas, milestones).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
+        query: { type: 'string', description: 'Search keywords. Leave empty or omit to list latest memories.' },
+        category: { type: 'string', enum: ['architecture', 'rule', 'gotcha', 'milestone', 'general'], description: 'Optional category filter' },
+        limit: { type: 'number', description: 'Maximum results to return (default 20)' }
+      }
+    }
+  },
+  {
+    name: 'nexus_save_memory',
+    description: 'Save or update a piece of long-term project memory (e.g. an architectural decision, rule, or gotcha).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
+        category: { type: 'string', enum: ['architecture', 'rule', 'gotcha', 'milestone', 'general'], description: 'Memory category' },
+        key: { type: 'string', description: 'Unique slug/key (e.g. auth_protocol, oauth_callback)' },
+        content: { type: 'string', description: 'The knowledge, rule, or decision details' },
+        agent_id: { type: 'string', description: 'Agent ID or author' }
+      },
+      required: ['category', 'key', 'content']
+    }
+  },
+  {
+    name: 'nexus_broadcast',
+    description: 'Broadcast a high-priority dispatch or warning to all active agent sessions in the project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'Project ID (default "default")' },
+        from: { type: 'string', description: 'Sender ID (default "sensei")' },
+        content: { type: 'string', description: 'Directive or warning message content' },
+        importance: { type: 'string', enum: ['normal', 'urgent'], default: 'normal' }
+      },
+      required: ['content']
     }
   }
 ];
 
 export const ALL_NEXUS_TOOLS = [...NEXUS_TOOLS, ...NEXUS_PROJECT_TOOLS];
 
-export function handleMcpTool(toolName, args, { coordinator, stateService, messageService, projectRegistry = null }) {
+export function handleMcpTool(toolName, args, { coordinator, stateService, messageService, projectRegistry = null, memoryService = null }) {
   const pid = args?.project_id || 'default';
 
   if (toolName === 'nexus_onboard') {
@@ -183,6 +234,16 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
   }
 
   if (toolName === 'nexus_report_milestone') {
+    if (projectRegistry) {
+      const lead = projectRegistry.getOrCreateLead(pid);
+      return lead.reportMilestone({
+        agentId: args.agent_id,
+        description: args.description,
+        leaseIdToRelease: args.lease_id_to_release,
+        memory: args.memory
+      });
+    }
+
     let releaseResult = null;
     if (args.lease_id_to_release) {
       releaseResult = coordinator.releaseLease(args.lease_id_to_release, args.agent_id);
@@ -193,6 +254,37 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
       milestone: args.description,
       released: releaseResult
     };
+  }
+
+  if (toolName === 'nexus_search_memory') {
+    const memSvc = memoryService || (projectRegistry ? projectRegistry.getOrCreateLead(pid).memoryService : null);
+    if (!memSvc) return [];
+    if (args.query) {
+      return memSvc.search(pid, args.query, { category: args.category, limit: args.limit || 20 });
+    }
+    return memSvc.list(pid, { category: args.category, limit: args.limit || 20 });
+  }
+
+  if (toolName === 'nexus_save_memory') {
+    const memSvc = memoryService || (projectRegistry ? projectRegistry.getOrCreateLead(pid).memoryService : null);
+    if (!memSvc) throw new Error('MemoryService not initialized');
+    return memSvc.set(pid, {
+      category: args.category,
+      key: args.key,
+      content: args.content,
+      sourceAgentId: args.agent_id || 'agent'
+    });
+  }
+
+  if (toolName === 'nexus_broadcast') {
+    if (!projectRegistry) throw new Error('ProjectRegistry not initialized');
+    const lead = projectRegistry.getOrCreateLead(pid);
+    return lead.broadcast({
+      from: args.from || 'sensei',
+      content: args.content,
+      importance: args.importance,
+      messageService
+    });
   }
 
   if (toolName === 'nexus_declare_intent') {

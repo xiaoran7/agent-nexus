@@ -1,4 +1,22 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+export function getSessionTokenPath() {
+  return join(homedir(), '.agent-nexus', 'session.token');
+}
+
+export function readSessionToken() {
+  try {
+    const tokenPath = getSessionTokenPath();
+    if (existsSync(tokenPath)) {
+      const token = readFileSync(tokenPath, 'utf8').trim();
+      return token || null;
+    }
+  } catch {}
+  return null;
+}
 
 // 令牌分两种：
 //   agent  token —— 绑定一个 agent_id，只能读自己的收件箱，不能签发。

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { resolveProject } from '../domain/project.js';
 
 // Hook 脚本按脚本自身位置定位，不能用 process.cwd()：
 // `nexus hook:install` 从任意目录执行都是合法用法，写进用户配置的是一条
@@ -163,4 +164,39 @@ export function installAll() {
   installCodexHook();
   installZCodeHook();
   console.log('=== Universal Hook Installation Complete ===');
+}
+
+// 4. 注入项目级 MCP 服务器配置 (.mcp.json)
+export function installProjectMcp(targetProjectDir = process.cwd()) {
+  const info = resolveProject(targetProjectDir);
+  const projectRoot = info.projectRoot;
+  const mcpConfigPath = join(projectRoot, '.mcp.json');
+
+  let config = { mcpServers: {} };
+  if (existsSync(mcpConfigPath)) {
+    try {
+      config = JSON.parse(readFileSync(mcpConfigPath, 'utf8'));
+    } catch {
+      throw new Error(`Cannot parse ${mcpConfigPath}. Please fix or backup this file; left untouched.`);
+    }
+  }
+
+  if (!config.mcpServers || typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers)) {
+    config.mcpServers = {};
+  }
+
+  const cliPath = join(import.meta.dirname, '../cli.js');
+  const normalizedCliPath = (isAbsolute(cliPath) ? cliPath : resolve(cliPath)).replace(/\\/g, '/');
+  const normalizedProjectRoot = projectRoot.replace(/\\/g, '/');
+
+  config.mcpServers.nexus = {
+    command: 'node',
+    args: [normalizedCliPath, 'mcp', '--project', normalizedProjectRoot]
+  };
+
+  writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  console.log(`[Agent-Nexus] Successfully configured Nexus MCP server in ${mcpConfigPath}`);
+  console.log(`  Project ID:   ${info.projectId}`);
+  console.log(`  Project Root: ${normalizedProjectRoot}`);
+  return { mcpConfigPath, projectRoot: normalizedProjectRoot, projectId: info.projectId };
 }

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { startDaemon, stopDaemon } from './daemon/index.js';
-import { installAll, installClaudeHook, installCodexHook, installZCodeHook } from './installer/index.js';
+import { installAll, installClaudeHook, installCodexHook, installZCodeHook, installProjectMcp } from './installer/index.js';
 import { resolveProject } from './domain/project.js';
+import { startMcpStdio } from './mcp/stdio.js';
+import { readSessionToken } from './transport/auth.js';
 
 const cmd = process.argv[2];
 
@@ -42,12 +44,43 @@ if (cmd === 'start') {
 } else if (cmd === 'hook:install') {
   const target = process.argv[3];
   (hooks[target] || installAll)();
+} else if (cmd === 'mcp') {
+  runMcpStdio();
+} else if (cmd === 'mcp:install') {
+  const targetDir = process.argv[3] || process.cwd();
+  installProjectMcp(targetDir);
 } else if (cmd === 'help' || cmd === '--help' || cmd === '-h' || !cmd) {
   printHelp();
 } else {
   console.error(`Unknown command: ${cmd}\n`);
   printHelp();
   process.exit(1);
+}
+
+function parseMcpArgs() {
+  const args = process.argv.slice(3);
+  let projectRoot = null;
+  let port = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--project' && args[i + 1]) {
+      projectRoot = args[i + 1];
+      i++;
+    } else if (args[i] === '--port' && args[i + 1]) {
+      port = parseInt(args[i + 1], 10);
+      i++;
+    }
+  }
+
+  return { projectRoot: projectRoot || process.cwd(), port };
+}
+
+function runMcpStdio() {
+  const { projectRoot, port } = parseMcpArgs();
+  startMcpStdio({
+    projectRoot,
+    port
+  });
 }
 
 async function issueToken() {
@@ -57,10 +90,10 @@ async function issueToken() {
     process.exit(1);
   }
   const port = process.env.NEXUS_PORT || '4100';
-  const adminToken = process.env.NEXUS_ADMIN_TOKEN;
+  const adminToken = process.env.NEXUS_ADMIN_TOKEN || process.env.NEXUS_TOKEN || readSessionToken();
   if (!adminToken) {
     console.error(
-      'NEXUS_ADMIN_TOKEN is required: paste the observer token printed when the daemon started.\n'
+      'NEXUS_ADMIN_TOKEN is required: paste the observer token printed when the daemon started, or start the daemon locally.\n'
     );
     process.exit(1);
   }
@@ -82,7 +115,7 @@ async function issueToken() {
 
 async function listProjects() {
   const port = process.env.NEXUS_PORT || '4100';
-  const token = process.env.NEXUS_ADMIN_TOKEN || process.env.NEXUS_TOKEN;
+  const token = process.env.NEXUS_ADMIN_TOKEN || process.env.NEXUS_TOKEN || readSessionToken();
   const res = await fetch(`http://127.0.0.1:${port}/api/projects`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
@@ -115,12 +148,14 @@ Agent-Nexus CLI:
   nexus token <agent-id>         向运行中的 daemon 签发该 agent 的令牌
   nexus projects                 查看当前 daemon 登记的所有项目列表
   nexus project [dir]            解析指定目录所属的项目根与 Project ID
-  nexus hook:install [--all]     安装全部 Hook
+  nexus mcp [--project <path>]   以 stdio JSON-RPC 模式运行项目级 MCP 服务
+  nexus mcp:install [dir]        为指定项目注入/合并 .mcp.json 配置（对齐 AOCI 模式）
+  nexus hook:install [--all]     安装全部物理拦截 Hook (Fail-Closed)
   nexus hook:install --claude    仅安装 Claude Code Hook
   nexus hook:install --codex     仅配置 Codex / AgentHub
   nexus hook:install --zcode     仅配置 ZCode
 
-认证：/api/* 与 WebSocket 都需要令牌。daemon 启动时打印一枚 operator 令牌；
-用它执行 nexus token <agent-id> 换取绑定某个 agent 的令牌。重复签发会作废上一枚。
+认证：/api/* 与 WebSocket 需要令牌。daemon 启动时自动将当前活动令牌写入
+~/.agent-nexus/session.token，本地 CLI、Hook 与 MCP 客户端均可无感通信。
   `);
 }

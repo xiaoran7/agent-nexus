@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-15 项目级 MCP 注入架构实现、stdio JSON-RPC 传输与试点项目落地
+
+### 改了什么
+
+- **对齐 AOCI 架构的项目级 MCP 自动化注入 (`src/installer/index.js`)**
+  - **`installProjectMcp(targetProjectDir)`**：实现无损智能合并算法，读取目标工程根目录的 `.mcp.json`；若已有 `aoci` 等其他服务配置，完整保留既有节点，精准注入 `mcpServers.nexus` 节点；支持完全幂等重复安装。
+  - **CLI 子命令扩展 (`src/cli.js`)**：
+    - 新增 `nexus mcp:install [dir]`：为指定项目一键配置 `.mcp.json`；
+    - 新增 `nexus mcp [--project <path>]`：以标准 stdio JSON-RPC 模式运行项目级 MCP 协调服务。
+- **MCP Stdio JSON-RPC 2.0 传输协议栈 (`src/mcp/stdio.js`)**
+  - **协议握手闭环**：完整实现 `initialize`（规范版本 `2024-11-05`）、`notifications/initialized`、`ping`、`tools/list` 与 `tools/call`。
+  - **全量工具暴露与路由映射**：对外提供 11 项核心协调与记忆工具，包括 `nexus_onboard`、`nexus_advise_plan`、`nexus_declare_intent`、`nexus_release_lease`、`nexus_report_milestone`、`nexus_search_memory`、`nexus_save_memory`、`nexus_broadcast`、`nexus_status`、`nexus_state`、`nexus_message`。
+  - **免配置上下文智能推断**：自动识别绑定当前工程根目录与 Project ID，推导当前会话 Agent 身份（适配 Claude Code、Codex 会话环境变量），大幅降低 Agent 进场心智负担。
+- **无感凭证穿透机制 (`src/transport/auth.js`, `src/daemon/index.js`, `src/hook/nexus-hook.mjs`)**
+  - **会话活动凭据文件 (`session.token`)**：Daemon 启动时自动将当前活动操作者凭证安全写入 `~/.agent-nexus/session.token`（`0600` 权限），在正常关停时自动销毁清理。
+  - **链路自动拾取**：Hook、CLI 与 Stdio MCP 进程按 `NEXUS_TOKEN` -> `NEXUS_ADMIN_TOKEN` -> `readSessionToken()` 顺序自适应读取凭证，消除必须手动导出环境变量的摩擦。
+- **工具链扩充与对齐 (`src/mcp/server.js`)**
+  - 在 `NEXUS_PROJECT_TOOLS` 中补齐 `nexus_search_memory`、`nexus_save_memory` 与 `nexus_broadcast` 定义，在 `handleMcpTool` 中打通项目工程记忆的持久化存储与检索。
+- **单测套件与试点工程落地**
+  - **新增 `test/mcp-install.test.js`**：覆盖空白项目创建、已有 AOCI 配置合并、幂等性等用例。
+  - **新增 `test/mcp-stdio.test.js`**：覆盖 JSON-RPC 2.0 握手、工具发现、记忆存取调用、冲突申报走廊端到端调用。
+  - **试点工程落地 (`openrouter-monitor`)**：对 `D:/Claudespace/Project/openrouter-monitor` 实施 `mcp:install`，成功实现 `aoci`（代码全局认知）与 `nexus`（多 Agent 并发与长期记忆）在同一 `.mcp.json` 中和谐共存。
+
+---
+
 ## 2026-10-12 AOCI 本地认知资产 Git 边界治理与解挂清洗
 
 ### 改了什么
