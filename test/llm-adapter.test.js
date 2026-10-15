@@ -16,7 +16,7 @@ test('formatMessagesUrl: 智能补齐与格式化各类反代及官方地址', (
   assert.equal(formatMessagesUrl('http://127.0.0.1:4050/v1'), 'http://127.0.0.1:4050/v1/messages');
   assert.equal(formatMessagesUrl('http://127.0.0.1:4050/messages'), 'http://127.0.0.1:4050/messages');
   assert.equal(formatMessagesUrl('http://127.0.0.1:4050/v1/messages'), 'http://127.0.0.1:4050/v1/messages');
-  assert.equal(formatMessagesUrl('cpa.tannerlab.xyz'), 'https://cpa.tannerlab.xyz/v1/messages');
+  assert.equal(formatMessagesUrl('ai-gateway.example.com'), 'https://ai-gateway.example.com/v1/messages');
 });
 
 test('parseLlmConfig: 环境变量解析逻辑', () => {

@@ -134,8 +134,8 @@
 - **`src/domain/project-registry.js` & `src/daemon/index.js`**
   - `ProjectRegistry` 启动时自动通过 `parseLlmConfig` 装配 `AnthropicAdapter` 或 `NullAdapter`。
   - 守护进程启动时明确打印 AI 架构师状态（启用/禁用、模型名称、端点地址），严格避免打印或泄露 API 密钥。
-- **生产级端到端实测验证（`us-zenix`）**
-  - 在美西生产机配置真实云端大模型代理（`cpa.tannerlab.xyz`，模型 `claude-sonnet-4-6`），编写并执行自动化压测 `test/test-ai-lead-live.mjs`。
+- **生产级端到端实测验证**
+  - 配置真实云端大模型代理（模型 `claude-sonnet-4-6`），编写并执行自动化压测 `test/test-ai-lead-live.mjs`。
   - 实测验证：Session Alpha 锁定 `src/user-service.js` 时，新进场的 Session Beta 申报包含受阻与空闲的多文件修改计划，成功触发 AI 常驻架构师分析（`adviceSource: "llm"`），输出了高水准的解耦指导语（建议立即开工 `order` 与 `payment` 独立跑道，并在锁释放前先为 `user` 模块抽 Mock 与接口契约）。
   - 确定性安全防线 100% 坚守：`safeToStart` 与 `mustWait` 数组分毫不差，AI 绝无权限擅自越权。
   - 容灾降级验证：模拟 1ms 网络中断或故障时，系统在 10ms 内极速无感降级为确定性规则建议（`adviceSource: "deterministic"`），保障会话零卡死。
@@ -158,8 +158,8 @@
   - 重构 Bash 工具写入目标提取引擎：彻底剥离 `/dev/null` 重定向（如 `2>/dev/null`、`2>&1`），修复 Agent 常规只读检查被误判为写操作导致意外锁定整个目录的缺陷；精确提取 `>` 与 `>>` 后紧随的真实目标文件。
 - **`src/daemon/index.js`**
   - 配置 HTTP 服务器 `keepAliveTimeout = 65000` 与 `headersTimeout = 66000`，彻底解决客户端长连接套接字复用导致的 `UND_ERR_SOCKET / other side closed` 异常。
-- **生产级端到端实测验证（`us-zenix`）**
-  - 在美西生产机配置 Claude Code CLI + CPA 动态 SSE 转换垫片（`cpa-shim.mjs`），成功打通与 `cpa.tannerlab.xyz`（`claude-sonnet-4-6`）的稳定直连。
+- **生产级端到端实测验证**
+  - 配置 Claude Code CLI + CPA 动态 SSE 转换垫片（`cpa-shim.mjs`），成功打通与大模型 API（`claude-sonnet-4-6`）的稳定直连。
   - 编写并执行全链路端到端自动化压测 `test/test-parallel-live.mjs`：
     1. Session Alpha 声明并获得核心文件锁定；
     2. Session Beta 真实调用 Claude Code 全速并发完成独立文件，零阻塞零干扰；

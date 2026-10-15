@@ -1,9 +1,9 @@
 import { startDaemon, stopDaemon } from '../src/daemon/index.js';
 
 const PORT = 4199;
-const CPA_URL = 'https://cpa.tannerlab.xyz/v1';
-const CPA_KEY = 'tangtangtangtangclaude';
-const CPA_MODEL = 'claude-sonnet-4-6';
+const CPA_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+const CPA_KEY = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || 'test-mock-key';
+const CPA_MODEL = process.env.NEXUS_LLM_MODEL || 'claude-3-5-sonnet-latest';
 
 console.log('================================================================');
 console.log('🤖 Agent-Nexus AI 常驻架构师 (AI Project Lead) 生产端到端实测');
