@@ -154,7 +154,9 @@ ${deterministicAdvice}
         deterministicAdvice
       );
 
-      const resp = await this.llmAdapter.chat(systemPrompt, userMessage);
+      const resp = await this.llmAdapter.chat(systemPrompt, userMessage, {
+        affinityKey: this.projectId
+      });
       if (resp && typeof resp.content === 'string' && resp.content.trim().length > 0) {
         return { advice: resp.content.trim(), adviceSource: 'llm' };
       }

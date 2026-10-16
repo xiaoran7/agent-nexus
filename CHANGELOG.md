@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-10-16 借鉴 Magpie 架构落地弹性高可用 AI 网关路由层 (v0.2.0)
+
+### 改了什么
+
+- **借鉴 Magpie 的弹性高可用网关路由器 (`src/domain/gateway-router.js`)**
+  - **精准语义级错误归因 (`classifyFailure`)**：从 HTTP 状态码、响应标头与响应体内容，启发式精准归因 7 类异常：`credit`（欠费/余额耗尽）、`quota`（周期用量限额）、`rate`（突发高频限流）、`server`（上游 5xx/529 故障）、`timeout`（超时中断）、`auth`（密钥失效）与 `other`。
+  - **熔断与动态冷却机制 (`resetsIn`, `Candidate.recordFailure`)**：提取 `Retry-After`、Anthropic 与 OpenAI 标准重置时间戳；针对 5xx 服务端错误实施基于连续失败次数的指数退避；故障节点自动进入休眠冷却（`restingUntil`），后续请求 0 延时自动跳过故障节点，彻底解决高频撞墙超时痛点。
+  - **多策略分发算法**：
+    - `smart`（默认）：缓存亲和性优先，基于 `affinityKey`（如项目 ID）哈希确定性绑定主选节点，最大化命中上游 Prompt Cache；
+    - `ordered`：按优先级严格执行主备瀑布流；
+    - `rotate`：多 Key 轮询负载分发；
+    - `least-used`：基于请求数与权重的平滑负载均衡。
+  - **无感故障转移调用 (`routeAndExecute`)**：候选节点遇错自动透明切入下一候选节点，并在成功时回传完整溯源与时延数据。
+- **大模型适配层扩展与多候选自组网 (`src/domain/llm-adapter.js`)**
+  - **`OpenAiAdapter`**：支持标准 OpenAI Chat Completions 协议（兼容 DeepSeek、Ollama、Groq 等），支持 Bearer 鉴权与地址规范化 `formatOpenAiUrl`。
+  - **`GatewayRouterAdapter`**：将 `GatewayRouter` 无损适配为 `LlmAdapter`，与上层 `ProjectLead` 确定性规则引擎 100% 兼容。
+  - **多候选自动组网 (`parseLlmConfig`)**：若同时提供 Anthropic 与 OpenAI 凭证，自动组装双通道主备故障转移链；支持通过 `NEXUS_GATEWAY_CANDIDATES` 传入 JSON 自定义多模型节点拓扑。
+- **Tech Lead 架构师调度与缓存亲和优化 (`src/domain/project-lead.js`, `src/domain/project-registry.js`)**
+  - `ProjectRegistry` 启动时自适应挂载全局 `GatewayRouter`；
+  - `ProjectLead` 调度进场建议时携带 `{ affinityKey: this.projectId }`，同项目稳定复用同一模型与节点。
+- **运维与代理 REST 端点 (`src/transport/rest.js`)**
+  - `GET /api/gateway/route` / `GET /api/gateway/status`：输出各候选节点的健康度、熔断倒计时、成功率与时延统计；
+  - `POST /api/gateway/chat`：提供通用多模型自动故障转移代理通道；
+  - `POST /api/gateway/reset`：提供运维一键解除指定节点或全部节点熔断休眠通道（Unrest）。
+- **自动化测试套件扩建**
+  - **新增 `test/gateway-router.test.js`**：覆盖 7 类错误精准分类、限流标头与指数退避解析、Candidate 状态机、4 种路由策略、透明故障转移与熔断休眠、REST 端点端到端测试。
+  - **扩展 `test/llm-adapter.test.js`**：增加 `OpenAiAdapter` 协议解析、`GatewayRouterAdapter` 包装与多候选环境变量组网用例。
+  - 全量自动化测试套件扩增至 198 项用例，100% 通过。
+
+---
+
 ## 2026-10-15 项目级 MCP 注入架构实现、stdio JSON-RPC 传输与试点项目落地
 
 ### 改了什么

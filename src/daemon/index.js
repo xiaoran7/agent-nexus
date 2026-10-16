@@ -55,8 +55,12 @@ export function startDaemon(options = {}) {
       console.log(`[Agent-Nexus] Daemon listening on http://127.0.0.1:${boundPort}`);
       console.log(`[Agent-Nexus] Real-time Dashboard: http://127.0.0.1:${boundPort}/`);
       if (projectRegistry.llmConfig?.enabled) {
+        const cands = projectRegistry.gatewayRouter?.candidates || [];
+        const provs = [...new Set(cands.map(c => c.provider))].join(',') || projectRegistry.llmConfig.provider;
+        console.log(`[Agent-Nexus] AI Gateway: ENABLED (strategy=${projectRegistry.gatewayRouter?.strategy || 'smart'}, candidates=${cands.length}, providers=${provs})`);
         console.log(`[Agent-Nexus] AI Project Lead: ENABLED (provider=${projectRegistry.llmConfig.provider}, model=${projectRegistry.llmConfig.model}, endpoint=${projectRegistry.llmConfig.baseUrl})`);
       } else {
+        console.log(`[Agent-Nexus] AI Gateway: DISABLED`);
         console.log(`[Agent-Nexus] AI Project Lead: DISABLED (deterministic scheduler only)`);
       }
       if (dbPath !== ':memory:') {

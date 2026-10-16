@@ -1,5 +1,6 @@
 import { ProjectLead } from './project-lead.js';
-import { NullAdapter, AnthropicAdapter, parseLlmConfig } from './llm-adapter.js';
+import { NullAdapter, AnthropicAdapter, GatewayRouterAdapter, parseLlmConfig } from './llm-adapter.js';
+import { GatewayRouter } from './gateway-router.js';
 
 export class ProjectRegistry {
   constructor(db, coordinator, eventBus, llmAdapterFactory = null, memoryService = null) {
@@ -9,15 +10,21 @@ export class ProjectRegistry {
     this.memoryService = memoryService;
     this.llmConfig = parseLlmConfig();
 
+    // 初始化全局 GatewayRouter
+    this.gatewayRouter = new GatewayRouter({
+      strategy: this.llmConfig.strategy || 'smart',
+      eventBus: this.eventBus
+    });
+
+    if (this.llmConfig.enabled && Array.isArray(this.llmConfig.candidates)) {
+      for (const cand of this.llmConfig.candidates) {
+        this.gatewayRouter.addCandidate(cand);
+      }
+    }
+
     this.llmAdapterFactory = llmAdapterFactory || (() => {
-      if (this.llmConfig.enabled) {
-        return new AnthropicAdapter({
-          apiKey: this.llmConfig.apiKey,
-          authToken: this.llmConfig.authToken,
-          baseUrl: this.llmConfig.baseUrl,
-          model: this.llmConfig.model,
-          timeoutMs: this.llmConfig.timeoutMs
-        });
+      if (this.llmConfig.enabled && this.gatewayRouter.candidates.length > 0) {
+        return new GatewayRouterAdapter(this.gatewayRouter);
       }
       return new NullAdapter();
     });

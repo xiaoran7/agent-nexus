@@ -231,7 +231,87 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 
 ---
 
-## 六、MCP 工具协议定义
+## 六、AI 网关路由 REST 端点
+
+### 1. `GET /api/gateway/route` 或 `GET /api/gateway/status`
+检索 AI 智能网关当前各候选节点（Candidate）的运行态数据、健康熔断状态与请求指标。
+
+- 响应：`200 OK`
+  ```json
+  {
+    "strategy": "smart",
+    "candidateCount": 2,
+    "candidates": [
+      {
+        "id": "anthropic-primary",
+        "name": "Anthropic Messages",
+        "provider": "anthropic",
+        "model": "claude-3-5-sonnet-latest",
+        "priority": 0,
+        "weight": 1,
+        "resting": false,
+        "remainingRestSeconds": 0,
+        "consecutiveFailures": 0,
+        "totalRequests": 12,
+        "successCount": 12,
+        "failureCount": 0,
+        "lastLatencyMs": 850
+      },
+      {
+        "id": "openai-fallback",
+        "name": "OpenAI Chat",
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "priority": 1,
+        "weight": 1,
+        "resting": false,
+        "remainingRestSeconds": 0,
+        "consecutiveFailures": 0,
+        "totalRequests": 0,
+        "successCount": 0,
+        "failureCount": 0,
+        "lastLatencyMs": 0
+      }
+    ]
+  }
+  ```
+
+### 2. `POST /api/gateway/chat`
+通过网关实施多模型多候选自动故障转移调用。
+
+- 请求体：
+  ```json
+  {
+    "system_prompt": "You are a tech lead.",
+    "user_message": "How should we schedule task A and B?",
+    "affinity_key": "project-01",
+    "strategy": "smart"
+  }
+  ```
+- 响应：`200 OK`
+  ```json
+  {
+    "content": "建议先执行任务 A 解耦数据模型，再并行推进任务 B。",
+    "candidateId": "anthropic-primary",
+    "provider": "anthropic",
+    "model": "claude-3-5-sonnet-latest",
+    "latencyMs": 760,
+    "tries": [
+      { "id": "anthropic-primary", "success": true, "latencyMs": 760 }
+    ]
+  }
+  ```
+
+### 3. `POST /api/gateway/reset`
+运维手动一键解除指定候选节点或全部节点的熔断冷却（Unrest）。
+
+- 请求体（解除单个节点）：`{ "id": "anthropic-primary" }`
+- 请求体（重置全部节点）：`{}`
+- 响应：`200 OK`，返回 `{ "success": true, "resetId": "..." }` 或 `{ "success": true, "resetCount": N }`
+
+---
+
+## 七、MCP 工具协议定义
 
 `src/mcp/server.js` 定义以下工具及处理函数；当前 daemon 未接入标准 MCP 传输，仍需适配后才能供客户端连接：
 1. `nexus_declare_intent`：声明意图与三级资源 Claims；

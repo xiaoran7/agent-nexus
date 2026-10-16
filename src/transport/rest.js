@@ -251,6 +251,53 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         }
       }
 
+      // 1.3 Gateway Router 运维与代理路由
+      if (url.pathname.startsWith('/api/gateway')) {
+        const gwRouter = projectRegistry?.gatewayRouter;
+        if (!gwRouter) {
+          return sendJson(503, { error: 'Gateway router is not available' });
+        }
+
+        // GET /api/gateway/route 或 /api/gateway/status
+        if ((url.pathname === '/api/gateway/route' || url.pathname === '/api/gateway/status') && req.method === 'GET') {
+          return sendJson(200, {
+            strategy: gwRouter.strategy,
+            candidateCount: gwRouter.candidates.length,
+            candidates: gwRouter.getCandidates()
+          });
+        }
+
+        // POST /api/gateway/chat
+        if (url.pathname === '/api/gateway/chat' && req.method === 'POST') {
+          const body = await readJson();
+          const { system_prompt, user_message, affinity_key, strategy } = body;
+          if (!user_message || typeof user_message !== 'string') {
+            return sendJson(400, { error: '"user_message" is required and must be a string', field: 'user_message' });
+          }
+          const result = await gwRouter.routeAndExecute(system_prompt || '', user_message, {
+            affinityKey: affinity_key || null,
+            strategy: strategy || null
+          });
+          if (!result) {
+            return sendJson(503, { error: 'All gateway candidates failed or resting' });
+          }
+          return sendJson(200, result);
+        }
+
+        // POST /api/gateway/reset
+        if (url.pathname === '/api/gateway/reset' && req.method === 'POST') {
+          let body = {};
+          try { body = await readJson(); } catch {}
+          if (body.id) {
+            const ok = gwRouter.resetCandidate(body.id);
+            return sendJson(200, { success: ok, resetId: body.id });
+          } else {
+            const count = gwRouter.resetAll();
+            return sendJson(200, { success: true, resetCount: count });
+          }
+        }
+      }
+
       // 2. Agents
       if (url.pathname === '/api/agents' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
