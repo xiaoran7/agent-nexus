@@ -237,6 +237,11 @@ export class MessageService {
           agent_id: agentId,
           message_ids: unreadIds
         });
+        for (const m of messages) {
+          if (unreadIds.includes(m.id)) {
+            m.status = 'read';
+          }
+        }
       }
     }
 

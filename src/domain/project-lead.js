@@ -535,9 +535,16 @@ ${deterministicAdvice}
     }
 
     // 重新评估架构师状态
-    const remainingPlans = Array.from(this.sessionPlans.keys());
-    if (remainingPlans.length <= 1) {
-      this.state = remainingPlans.length === 1 ? LEAD_STATES.OBSERVING : LEAD_STATES.STANDBY;
+    const activeAgents = this.coordinator
+      ? this.coordinator.listAgents(this.projectId).filter(a => a.status !== 'departed' && a.id !== agentId)
+      : [];
+    if (activeAgents.length <= 1) {
+      this.state = activeAgents.length === 1 ? LEAD_STATES.OBSERVING : LEAD_STATES.STANDBY;
+    } else {
+      const remainingPlans = Array.from(this.sessionPlans.keys());
+      if (remainingPlans.length <= 1) {
+        this.state = remainingPlans.length === 1 ? LEAD_STATES.OBSERVING : LEAD_STATES.STANDBY;
+      }
     }
 
     return { success: true };

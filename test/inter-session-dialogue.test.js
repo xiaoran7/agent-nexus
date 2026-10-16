@@ -88,6 +88,7 @@ test('Inter-Session 对话网络与进度更新机制', async (t) => {
     assert.equal(msgs[0].id, sent.id);
     assert.equal(msgs[0].from_agent_name, 'Session B (Frontend)');
     assert.equal(msgs[0].content, '前端需要对接接口 mock');
+    assert.equal(msgs[0].status, 'read', '标记已读后返回的消息实体 status 应同步为 read');
 
     // 验证事件广播
     assert.equal(readEvents.length, 1);
