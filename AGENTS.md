@@ -7,6 +7,7 @@
 - 不提交凭据、私钥、Cookie、真实个人资料或运行数据库。删改前核对路径、归属和用途，不动他人改动、源素材、签名材料及私人日志。
 - 发版或部署必须递增实际产品版本并同步相关清单；Android/Harmony 同步 versionCode/versionName。纯文档整理不虚构发版。
 - README 放启动与导航；本文件放约束；docs 放契约和经验；CHANGELOG 放历史；MEMORY 放偏好。同一事实只维护一处，删改同步修复引用；Markdown 用 UTF-8 无 BOM。
+- 开源引用与上游溯源（铁律 2.6）：引入或吸收外部开源项目（如 crewmates、Magpie 等）时，必须在 README 和 docs 中明确标注职责边界与仓库；排查故障时必须先拉取上游最新 Release/Commit/Issue，后考虑本地修复。
 - 临时产物放本项目 `_scratch/`，交付物用项目既定路径或 `Deliverables/`；验证新版后清理本项目过期产物，保留必要回滚及指定基线。收尾只停止本次启动的进程。
 
 ## 项目边界

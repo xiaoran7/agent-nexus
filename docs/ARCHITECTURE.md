@@ -51,10 +51,11 @@
    - `rest.js`：纯标准库 HTTP 路由，零框架轻量化分发。认证在读 body 之前完成，没令牌的请求一个字节都不进。
    - `auth.js`：令牌签发与校验。只在运行中的 daemon 内存里，不落盘。
    - `ws.js`：WebSocket 实时事件分发（向前端推流 Timeline、向 Agent 广播唤醒）。用 `noServer` 模式在 HTTP upgrade 阶段校验令牌——先握手再关的方案有窗口，未授权客户端可能已被算进广播接收方。
-   - `server.js` (`src/mcp/`)：仅提供工具集定义与处理函数，当前 daemon 尚未接入 MCP 传输。
+   - `stdio.js` (`src/mcp/`)：提供标准 JSON-RPC 2.0 stdio MCP 服务，支持客户端一键接入。
+   - `server.js` (`src/mcp/`)：提供工具集定义、参数 Schema 校验与路由处理函数。
 4. **Interception Layer (`src/hook/`, `src/installer/`)**：
-   - `nexus-hook.mjs`：脱离特定 Agent 的通用拦截脚本，从环境自愈解析 Agent 身份，拦截文件写入。
-   - `installer/index.js`：写入 Claude / AgentHub / ZCode 配置文件；宿主是否读取并执行需另行验证，写入会覆盖部分配置。
+   - `nexus-hook.mjs`：脱离特定 Agent 的通用拦截脚本，从环境自愈解析 Agent 身份，拦截文件写入与命名排他资源抢占。
+   - `installer/index.js`：写入 Claude / AgentHub / ZCode 配置文件及项目级 `.mcp.json`；宿主是否读取并执行需另行验证，写入采用无损智能合并。
 5. **Observability Layer (`src/ui/`)**：
    - `index.html`：极简暗黑模式的可解释单页应用，纯原生 JS/CSS，由 Daemon 静态分发。
 
@@ -68,7 +69,7 @@ for (const claim of normalizedClaims) {
   for (const active of activeClaims) {
     if (active.agent_id === agentId) continue; // 允许同 Agent 重入与追加
 
-    // 1. File: 路径完全精确一致
+    // 1. File: 路径完全精确一致 (经 toComparablePath 跨工作树映射对齐)
     if (claim.type === 'file' && active.claim_type === 'file') {
       if (claim.target === active.claim_target) return CONFLICT;
     }
@@ -83,9 +84,32 @@ for (const claim of normalizedClaims) {
     if (claim.type === 'symbol' && active.claim_type === 'symbol') {
       if (claim.target === active.claim_target) return CONFLICT;
     }
+
+    // 4. Resource: 命名排他性资源互斥 (tests, dev-server, build 等)
+    if (claim.type === 'resource' && active.claim_type === 'resource') {
+      if (claim.target === active.claim_target) return CONFLICT;
+    }
   }
 }
 ```
+
+### Git Worktree 跨工作树路径对齐 (借鉴 crewmates)
+
+在大型并发多工作树（Git Worktree）开发环境下，各工作树位于不同绝对物理路径下。Nexus 采用双层映射机制：
+1. **共同根解析 (`resolveGitCommonRoot`)**：读取工作树下的 `.git` 文件并解析 `gitdir` 与 `commondir`，计算主仓库根路径作为统一的 `projectRoot` 与 `projectId`，消除工作树视界隔离。
+2. **相对化对齐 (`toRepoRelativePath`)**：将工作树绝对路径转化为相对于 `projectRoot` 的规范相对路径进行判冲。如果发现两个处于不同工作树的 Agent 并发改动同一文件，直接触发 `CROSS-WORKTREE CONFLICT` 高危警示，提示并发修改会导致 Git 合并冲突。
+
+---
+
+## 四、开源生态上游溯源与职责划分
+
+本项目严格遵循开源项目引用与维护边界铁律：
+
+| 模块名称 | 职责定位 | 借鉴上游 | 维护与排查第一准则 |
+|---|---|---|---|
+| 跨工作树碰撞与资源锁 | Git Worktree 共同根识别、跨树路径对齐、排他性资源锁（`tests`, `dev-server`, `build`） | [asutekku/crewmates](https://github.com/asutekku/crewmates) | 出现工作树定位异常或资源互斥故障时，**第一时间拉取上游最新 Release / Commit / Issue** 对齐官方方案，严禁盲目魔改脱离上游演进 |
+| 弹性 AI 网关路由层 | 启发式错误分类、自动熔断与动态退避冷却、项目亲和多候选无感故障转移 | [magpie-ai/magpie](https://github.com/magpie-ai/magpie) | 错误状态识别与退避策略对齐上游算法实现 |
+| 共享状态与 CAS | 命名空间共享 KV、TTL 过期与原子 CAS 并发保障 | agent-comm | 契约对齐标准分布式原子状态更新规范 |
 
 ---
 

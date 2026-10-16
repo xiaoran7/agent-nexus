@@ -43,11 +43,12 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
 
 - `agent_id`：非空字符串。协调核心与 hook 通道都必须有它。
 - `summary` / `prompt_hint` 之类的描述字段：非空字符串。
-- `claims[].type`：`file` | `module` | `symbol` 之一。
+- `claims[].type`：`file` | `module` | `symbol` | `resource` 之一。
 - `claims[].target`：
-  - `file` / `module`——可相对可绝对，但归一化后不得落在工作目录或盘符根。空串、纯空白、`.`、`./` 都会被拒。这一点很关键：曾经缺失的 `file_path` 会被归一化成 `''` 并当成一条真实 claim，导致第一个这样做的 agent 把所有同样发空目标的 agent 全部锁死。
+  - `file` / `module`——可相对可绝对，但归一化后不得落在工作目录或盘符根。空串、纯空白、`.`、`./` 都会被拒。
   - `symbol`——非空且不以空白或路径分隔符开头。
-- hook 通道的 `file_path` 必填，与 `claims[].target` 同规则。
+  - `resource`——非空且不含空白或路径分隔符的命名资源标示符（如 `tests`、`dev-server`、`build`）。
+- hook 通道的 `file_path` 或 `resource_name` 必填，与 `claims[].target` 同规则。
 
 状态与消息通道的硬性要求（同样返回 400 且不写入）：
 
@@ -148,7 +149,26 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
     "reason": "BLOCKED: File 'src/InteractionResolver.kt' is locked by [重构 InteractionResolver] for \"重构 InteractionResolver 的候选决策逻辑\"."
   }
   ```
+- **响应 (跨工作树阻断)**：
+  ```json
+  {
+    "allow": false,
+    "holder": "重构 InteractionResolver",
+    "reason": "CROSS-WORKTREE CONFLICT: File 'src/InteractionResolver.kt' is locked by [重构 InteractionResolver] in another worktree (concurrent edits will cause git merge conflicts)."
+  }
+  ```
 - **响应 (入参非法)**：`400`，`{"error": "\"claims[].target\" is required and must be a non-empty string", "field": "claims[].target"}`。Hook 收到 4xx 会按"协调库无法评估"处理并拦截（退出码 2），不会当成放行。
+
+### 4. 命名资源锁接口 (Resource Locks)
+针对 `tests`（全量测试）、`dev-server`（开发服务器端口）、`build`（打包构建）等系统排他性资源提供互斥锁定。
+
+- **`GET /api/resources/locks?project_id=default`**：列出当前项目所有活跃的排他资源锁。
+- **`POST /api/resources/lock`**：
+  - 请求体：`{ "agent_id": "a1", "resource_name": "tests", "ttl_seconds": 300, "reason": "Running tests" }`
+  - 响应：`{ "success": true, "status": "GRANTED", "resource_name": "tests", "leaseId": "lease_xxx" }` 或 `{ "success": false, "status": "WAITING", "blockedBy": "...", "reason": "..." }`
+- **`POST /api/resources/unlock`**：
+  - 请求体：`{ "agent_id": "a1", "resource_name": "tests" }`
+  - 响应：`{ "success": true, "resource_name": "tests" }`
 
 ---
 
@@ -313,9 +333,21 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 
 ## 七、MCP 工具协议定义
 
-`src/mcp/server.js` 定义以下工具及处理函数；当前 daemon 未接入标准 MCP 传输，仍需适配后才能供客户端连接：
-1. `nexus_declare_intent`：声明意图与三级资源 Claims；
+`src/mcp/stdio.js` 现已提供标准 JSON-RPC 2.0 stdio 服务（通过 `nexus mcp` 运行），`src/mcp/server.js` 提供以下工具定义与处理函数：
+
+### 核心协调工具 (NEXUS_TOOLS)
+1. `nexus_declare_intent`：声明意图与三级/四级资源 Claims（file, module, symbol, resource）；
 2. `nexus_release_lease`：完成任务后释放租约；
 3. `nexus_state`：共享状态 CRUD 与 CAS 原子操作；
 4. `nexus_message`：向同工作区其他 Agent 投递消息；
 5. `nexus_status`：检索全局协调矩阵与阻塞快照。
+
+### 项目级进阶工具 (NEXUS_PROJECT_TOOLS)
+6. `nexus_lock_resource`：申请命名排他资源锁（如 `tests`, `dev-server`, `build`）；
+7. `nexus_unlock_resource`：释放命名排他资源锁；
+8. `nexus_onboard`：进场向 AI Project Lead 申报工作计划并获取避障通道；
+9. `nexus_advise_plan`：重新评估工作计划与当前系统锁并获取更新建议；
+10. `nexus_report_milestone`：汇报阶段性里程碑、释放资源并沉淀长期记忆；
+11. `nexus_search_memory`：检索项目长期工程记忆（架构决策、规则、踩坑、里程碑）；
+12. `nexus_save_memory`：存入或更新长期工程记忆；
+13. `nexus_broadcast`：向全项目活跃 Agent 会话广播高优先级指令与避障警示。

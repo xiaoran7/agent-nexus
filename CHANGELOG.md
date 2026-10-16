@@ -24,6 +24,12 @@
   - **新增 `test/resource-lock.test.js`**：全面覆盖资源锁申领、排他互斥、锁列举、释放再领、Bash 命令推导判冲、跨工作树相对路径碰撞与 MCP 工具调用。
   - **更新 `test/project.test.js`**：补充 Git Worktree 识别主仓库与工作树共享同一个 `projectId` 及跨工作树路径计算用例。
   - 全量自动化测试套件扩增至 208 项用例，100% 通过。
+- **文档体系洁癖级对齐与开源溯源规范化 (Docs & Architecture Alignment)**
+  - **`README.md`**：对齐 208 项全量单测事实；纠正 MCP 接入状态陈述（补充 `src/mcp/stdio.js` 真实实现与 13 项核心工具）；新增“外部开源引用与上游溯源”章节，明确标明 `crewmates`、`Magpie` 与 `agent-comm` 的模块职责与故障排查第一准则（先拉上游后自修）。
+  - **`docs/ARCHITECTURE.md`**：扩充确定性冲突判决算法至四级（加入 Rule 4 资源互斥）；详述 Git Worktree 共同根识别与相对化对齐机制；新增开源生态上游溯源表格。
+  - **`docs/API.md`**：增补命名资源锁 REST 端点（`GET /api/resources/locks`, `POST /api/resources/lock`, `POST /api/resources/unlock`）、`claims[].type` 资源规范及 13 项 MCP 工具完整清单。
+  - **`docs/HOOKS.md`**：补充 Bash 命令自动推导 `tests`/`dev-server`/`build` 资源锁特征提取与跨工作树阻断逻辑。
+  - **`AGENTS.md`**：写入开源项目引用留痕与上游溯源铁律（2.6）。
 
 ---
 

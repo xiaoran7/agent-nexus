@@ -5,9 +5,15 @@
 ## 目标解析
 
 - 写入类工具（Write/Edit/MultiEdit/NotebookEdit/Update/apply_patch）直接取 `tool_input.file_path`；只读工具（Read/Grep/Glob…）不判冲。
-- Bash 没有 `file_path`，从命令里解析，但有两个前提，缺一不可：命令确实是写入动作（`>`、`tee`、`sed -i`、`cp`/`mv`/`install`），且目标路径落在工作目录之下。前者避免把 `cat a.js` 误判成写入，后者避免全局 hook 拿别处的路径来判冲。
+- **命名排他资源自动推导**：Bash 工具优先匹配高排他命令正则（`extractBashResource`）：
+  - 测试命令（`npm test`、`cargo test`、`pytest`、`go test` 等）自动映射为 `tests` 资源锁；
+  - 启动服务（`vite`、`npm run dev`、`next dev`、`uvicorn` 等）自动映射为 `dev-server` 资源锁；
+  - 打包构建（`npm run build`、`cargo build`、`mvn package` 等）自动映射为 `build` 资源锁。
+  遇到已有其他 Agent 持锁时立即以退出码 2 优雅拦截并提醒等待。
+- **文件写入解析**：Bash 从命令里解析写入目标，有两个前提，缺一不可：命令确实是写入动作（`>`、`tee`、`sed -i`、`cp`/`mv`/`install`），且目标路径落在工作目录之下。前者避免把 `cat a.js` 误判成写入，后者避免全局 hook 拿别处的路径来判冲。
 - `cp`/`mv` 按**目的端**（最后一个路径参数）判冲，不是源端。
-- 一次 Bash 调用只检查一个文件；shell 写入、绕过 Hook 的工具及宿主未接入的调用不受它约束。
+- **跨工作树对齐（Git Worktree）**：Hook 自动解析工作树共同主仓库，将跨工作树的绝对路径统一映射到 `projectRoot` 相对路径。若检测到其他工作树正锁住该文件，发出 `CROSS-WORKTREE CONFLICT` 拦截，防止合并冲突。
+- 一次 Bash 调用只检查一个文件或一个资源；shell 写入、绕过 Hook 的工具及宿主未接入的调用不受它约束。
 - 工作目录取载荷里的 `cwd`（宿主告诉我们的调用位置），退回 `CLAUDE_PROJECT_DIR`。
 
 ## 边界
