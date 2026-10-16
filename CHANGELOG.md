@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-10-16 Magpie 弹性 AI 网关可视化调度大屏落地与项目级初始化 Skill (nexus-setup) (v0.2.2)
+
+### 改了什么
+
+- **Magpie 弹性 AI 网关可视化调度大屏落地 (`src/ui/index.html`, `src/ui/style.css`, `src/ui/app.js`, `src/transport/rest.js`)**
+  - **三态视图切换系统**：在 Header 顶部引入平滑三态 View 切换 Tab（`War Room` / `Magpie Gateway` / `Unified`），支持多 Agent 协同施工泳道与 AI 网关拓扑按需或统揽查看。
+  - **策略动态热切换 REST 端点 (`POST /api/gateway/strategy`)**：支持前端控制台毫秒级热切换 4 种路由策略（`smart` 缓存亲和、`ordered` 瀑布流、`rotate` 轮询、`least-used` 最小负载），并实施非法参数校验拦截（HTTP 400）。
+  - **Visual Dispatch Pipeline Topology（调度拓扑画布）**：直观可视化 Agent Request ➔ 亲和哈希 ➔ Magpie Core ➔ 上游候选集群通道 ➔ 弹性容灾输出的全链路动态流动，采用 `will-change: transform; transform: translateZ(0);` 启用独立 GPU 合成层，严格遵守 60 FPS 性能铁律与 Aozora UI 玻璃拟态设计。
+  - **Upstream Candidate Pool Grid（候选节点断路器网格）**：动态渲染各候选节点优先级、权重、调用量、成功率、最后时延与连续失败数；集成启发式 7 类错误分类药丸（`rate`、`credit`、`quota`、`server`、`timeout`、`auth`、`other`）与动态冷却休眠倒计时条。
+  - **交互式运维控制**：支持一键全局解除熔断（Reset All / Unrest）与单节点独立解除休眠；支持一键载入双通道演练拓扑（Demo Mode）。
+  - **Live Route Dispatch Console（实时拨测控制台）**：提供控制台实时向网关路由发起测试请求，高亮打印路由走向、故障转移轨迹（Failover Traces）、响应时延与回复正文。
+- **项目级初始化 Skill (`nexus-setup`) 权威落地 (`skills/nexus-setup/SKILL.md`)**
+  - **标准化六步工程接入流水线**：以当前工程目录为上下文，提供环境检测、Git Worktree 共同根识别、项目级 `.mcp.json` 无损智能合并（与 AOCI 和谐共存）、PreToolUse 物理拦截 Hook 治理、`.gitignore` 零污染对齐与 `AGENTS.md` 协同纪律注入。
+  - **双端同步分发**：在仓库内受控归档 `skills/nexus-setup/SKILL.md`，并同步部署至本机 Claude Code 全局 Skill 目录 `C:\Users\tanner\.claude\skills\nexus-setup\SKILL.md`，任意目标项目均可通过 `/nexus-setup` 一键接入。
+- **测试与文档闭环**
+  - 在 `test/gateway-router.test.js` 中补齐 `POST /api/gateway/strategy` 成功切换与非法拦截单测断言；全套 208 项单测全部通过。
+  - 更新 `README.md` 与 `docs/API.md`，对齐网关策略接口与可视化大屏事实。
+
+---
+
 ## 2026-10-16 借鉴 crewmates 吸收跨工作树路径对齐与排他命名资源锁 (v0.2.1)
 
 ### 改了什么

@@ -329,6 +329,24 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 - 请求体（重置全部节点）：`{}`
 - 响应：`200 OK`，返回 `{ "success": true, "resetId": "..." }` 或 `{ "success": true, "resetCount": N }`
 
+### 4. `POST /api/gateway/strategy`
+动态热切换网关路由策略，立即在当前运行态生效。
+
+- 请求体：
+  ```json
+  {
+    "strategy": "ordered"
+  }
+  ```
+  合法策略值包括：
+  - `smart`：缓存亲和绑定（Prompt Cache 优化）；
+  - `ordered`：优先级主备瀑布流；
+  - `rotate`：轮询负载分发；
+  - `least-used`：最小负载均衡。
+- 响应：
+  - 成功：`200 OK`，返回 `{ "success": true, "strategy": "ordered" }`
+  - 非法策略：`400 Bad Request`，返回 `{ "error": "Invalid strategy ... Allowed: smart, ordered, rotate, least-used", "field": "strategy" }`
+
 ---
 
 ## 七、MCP 工具协议定义

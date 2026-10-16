@@ -14,6 +14,14 @@ npm.cmd test
 
 默认面板为 `http://127.0.0.1:4100`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`，`NEXUS_DB_PATH` 的父目录不存在时会自动创建。必须用 `npm ci`（或 `npm install`）安装依赖后再启动：唯一运行时依赖是 `ws`，缺失时 daemon 会在 `src/transport/ws.js` 直接报 `ERR_MODULE_NOT_FOUND`。端口被占用时启动会失败并提示改用 `NEXUS_PORT`，不会带原始堆栈崩溃。
 
+前端控制台支持 **三态视图切换**：
+- **War Room（作战指挥大屏）**：展示 Tech Lead 架构师态势、活跃施工泳道（带 TTL 动态倒计时）、Agent 矩阵排他锁定与实时时间线流水；
+- **Magpie Gateway（弹性网关拓扑大屏）**：可视化调度流水线（Visual Dispatch Pipeline Topology），直观呈现请求流动、Cache 亲和哈希、候选上游集群断路器状态（Active/Resting/Dead）、启发式 7 类错误分类药丸与动态冷却倒计时，支持策略动态热切换（`smart`/`ordered`/`rotate`/`least-used`）、一键解除熔断（Unrest）与实时拨测控制台；
+- **Unified（综合大屏）**：上下协同统览。
+
+**项目级快速接入（Skill）**：
+支持通过 Claude Code 执行 `/nexus-setup`，或执行 `skills/nexus-setup/SKILL.md` 标准化流水线，一键自动完成目标工程的物理边界探测、Git Worktree 共同根识别、项目级 `.mcp.json` 无损智能合并（与 AOCI 和谐共存）、PreToolUse 物理拦截 Hook 治理、`.gitignore` 零污染对齐与 `AGENTS.md` 协同纪律注入。
+
 **启动需要令牌。** daemon 启动时打印一枚 operator 令牌（read + write + mint），只打印一次、不落盘，重启即轮换。除 `/health` 和面板 HTML 外，`/api/*` 与 WebSocket 缺令牌一律 401。换一枚绑定具体 agent 的令牌：
 
 ```bash

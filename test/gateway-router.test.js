@@ -219,4 +219,20 @@ test('REST Endpoints: /api/gateway/route, /chat 与 /reset 接口端到端验证
   assert.equal(resetRes.status, 200);
   assert.equal(resetRes.json.success, true);
   assert.equal(resetRes.json.resetId, 'rest-mock-cand');
+
+  // 4. POST /api/gateway/strategy
+  const stratRes = await d.request('/api/gateway/strategy', {
+    method: 'POST',
+    body: { strategy: 'ordered' }
+  });
+  assert.equal(stratRes.status, 200);
+  assert.equal(stratRes.json.strategy, 'ordered');
+  assert.equal(d.projectRegistry.gatewayRouter.strategy, 'ordered');
+
+  // 非法策略应返回 400
+  const invalidStratRes = await d.request('/api/gateway/strategy', {
+    method: 'POST',
+    body: { strategy: 'invalid-strat' }
+  });
+  assert.equal(invalidStratRes.status, 400);
 });

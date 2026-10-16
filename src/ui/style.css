@@ -130,6 +130,57 @@ header {
   letter-spacing: 0.2px;
 }
 
+/* View Mode Switcher (War Room / Magpie Gateway / Unified) */
+.view-tabs {
+  display: flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border-subtle);
+  border-radius: 24px;
+  padding: 3px;
+  gap: 4px;
+}
+.view-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.view-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+.view-tab.active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.25), rgba(99, 102, 241, 0.25));
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.2);
+}
+.tab-icon {
+  font-size: 13px;
+}
+.badge-tab-healthy {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  letter-spacing: 0.3px;
+}
+
 .top-right-meta {
   display: flex;
   align-items: center;
@@ -206,6 +257,24 @@ header {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+/* View Pane Switching */
+.view-pane {
+  display: none;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  will-change: opacity, transform;
+  transform: translateZ(0);
+}
+.view-pane.active {
+  display: flex;
+  animation: fadeInPane 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes fadeInPane {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* 0. Tech Lead Status Banner */
@@ -862,6 +931,709 @@ header {
   border-radius: 8px;
   padding: 8px;
   cursor: pointer;
+}
+
+/* ========================================================= */
+/* MAGPIE ELASTIC GATEWAY & VISUAL SCHEDULER STYLES          */
+/* ========================================================= */
+
+/* 1. Gateway Status & Hero Banner */
+.gateway-hero-panel {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(20, 32, 60, 0.85) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 18px;
+  padding: 22px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+.gateway-hero-panel::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0; width: 4px;
+  background: linear-gradient(180deg, #38bdf8, #818cf8, #34d399);
+}
+
+.gw-hero-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.gw-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.gw-icon-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(99, 102, 241, 0.25));
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #38bdf8;
+  box-shadow: 0 0 16px rgba(14, 165, 233, 0.25);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.gw-main-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.3px;
+}
+.badge-gw-live {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(14, 165, 233, 0.18);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  letter-spacing: 0.3px;
+}
+.gw-sub-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.gw-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.gw-strategy-capsule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 12px;
+}
+.capsule-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.gw-select {
+  background: transparent;
+  border: none;
+  color: #38bdf8;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+.gw-select option {
+  background: #0b1120;
+  color: #fff;
+}
+.gw-health-capsule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+}
+.gw-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(239, 68, 68, 0.15));
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fcd34d;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.gw-action-btn:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.28), rgba(239, 68, 68, 0.28));
+  border-color: #fbbf24;
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.25);
+}
+
+.gw-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  padding-top: 6px;
+}
+.gw-metric-box {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.2s ease;
+}
+.gw-metric-box:hover {
+  border-color: rgba(56, 189, 248, 0.25);
+}
+.gw-metric-num {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: #fff;
+  letter-spacing: -0.5px;
+}
+.gw-metric-desc {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+/* 2. Visual Dispatch Pipeline Topology Panel */
+.gw-topology-panel {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+.topology-canvas {
+  background: radial-gradient(circle at 50% 50%, rgba(14, 165, 233, 0.05) 0%, transparent 70%),
+              rgba(11, 17, 32, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  padding: 30px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  overflow-x: auto;
+  position: relative;
+}
+
+.topo-node {
+  min-width: 150px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  position: relative;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.topo-node:hover {
+  transform: translateY(-2px);
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.2);
+}
+.topo-node.inbound {
+  border-color: rgba(14, 165, 233, 0.4);
+}
+.topo-node.router {
+  border-color: rgba(129, 140, 248, 0.45);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 27, 75, 0.5));
+}
+.topo-node.output {
+  border-color: rgba(52, 211, 153, 0.4);
+}
+.topo-node-badge {
+  font-size: 8.5px;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 8px;
+  letter-spacing: 0.5px;
+}
+.inbound .topo-node-badge { background: rgba(14, 165, 233, 0.2); color: #38bdf8; }
+.router .topo-node-badge { background: rgba(99, 102, 241, 0.2); color: #a5b4fc; }
+.output .topo-node-badge { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.topo-node-icon {
+  font-size: 22px;
+}
+.topo-node-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.topo-node-sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* Light Beam Connectors */
+.topo-beam-connector {
+  flex: 1;
+  min-width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.beam-line {
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+.beam-line::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 40%; height: 100%;
+  background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+  will-change: transform;
+  transform: translateZ(0);
+  animation: beamFlow 2.2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes beamFlow {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+.beam-label {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.beam-label code {
+  color: #38bdf8;
+  background: rgba(14, 165, 233, 0.1);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+/* Candidate Cluster in Topology */
+.topo-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+}
+.topo-channel-row {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+.topo-channel-row.active {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(6, 78, 59, 0.15);
+}
+.topo-channel-row.resting {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(120, 53, 15, 0.15);
+  opacity: 0.8;
+}
+.topo-channel-name {
+  font-weight: 600;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.topo-channel-status {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.topo-channel-status.healthy {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+.topo-channel-status.cooldown {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+/* 3. Upstream Candidates Pool Grid */
+.gw-candidates-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.panel-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gw-mini-btn {
+  background: rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.gw-mini-btn:hover {
+  background: rgba(14, 165, 233, 0.3);
+  border-color: #38bdf8;
+}
+
+.candidates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+}
+.candidate-card {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  position: relative;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.candidate-card:hover {
+  border-color: rgba(56, 189, 248, 0.35);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.candidate-card.resting {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(45, 25, 5, 0.25));
+}
+.candidate-card.dead {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(50, 10, 15, 0.3));
+}
+
+.cand-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cand-title-box {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cand-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cand-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+.cand-provider-tag {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+.cand-model {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: #38bdf8;
+}
+
+.cand-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.cand-status-badge.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+.cand-status-badge.resting {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+.cand-status-badge.dead {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.cand-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  background: rgba(11, 17, 32, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.cand-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cand-stat-label {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.cand-stat-val {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+/* Circuit Breaker & Error Classifier Info */
+.cand-breaker-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+}
+.cand-breaker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.cand-error-pill {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 8px;
+  text-transform: uppercase;
+}
+.pill-rate { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+.pill-credit { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+.pill-quota { background: rgba(217, 70, 239, 0.2); color: #e879f9; border: 1px solid rgba(217, 70, 239, 0.35); }
+.pill-server { background: rgba(249, 115, 22, 0.2); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.35); }
+.pill-timeout { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.35); }
+.pill-auth { background: rgba(244, 63, 94, 0.2); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.35); }
+
+.cooldown-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cooldown-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: #fbbf24;
+  font-family: var(--font-mono);
+}
+.cooldown-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.cooldown-progress {
+  height: 100%;
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+  border-radius: 2px;
+  transition: width 0.5s linear;
+}
+
+.cand-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+.cand-unrest-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.cand-unrest-btn:hover {
+  background: rgba(14, 165, 233, 0.2);
+  border-color: #38bdf8;
+  color: #fff;
+}
+
+/* 4. Live Gateway Probe Console */
+.gw-probe-section {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+.probe-body {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 18px;
+}
+@media (max-width: 1024px) {
+  .probe-body {
+    grid-template-columns: 1fr;
+  }
+}
+.probe-input-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.probe-row {
+  display: flex;
+  gap: 10px;
+}
+.probe-input {
+  flex: 1;
+  background: rgba(11, 17, 32, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: #fff;
+  outline: none;
+  font-family: var(--font-sans);
+  transition: border-color 0.2s ease;
+}
+.probe-input:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.25);
+}
+.probe-btn {
+  background: linear-gradient(135deg, #0ea5e9, #6366f1);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 0 18px;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.35);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.probe-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.5);
+}
+.probe-btn:active {
+  transform: translateY(1px);
+}
+.probe-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.probe-output-col {
+  background: #080d19;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 12px;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: #cbd5e1;
+  min-height: 120px;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.probe-output-placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.probe-res-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.probe-res-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 10px;
+}
+.probe-res-badge.ok { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.probe-res-badge.fail { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.probe-res-meta {
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+.probe-res-body {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #38bdf8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
 }
 
 /* Footer */

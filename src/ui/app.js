@@ -62,7 +62,42 @@ const dom = {
   metricRunning: document.getElementById('metric-running'),
   metricWaiting: document.getElementById('metric-waiting'),
   metricMemories: document.getElementById('metric-memories'),
-  memoryCountBadge: document.getElementById('memory-count-badge')
+  memoryCountBadge: document.getElementById('memory-count-badge'),
+
+  // View Switcher Tabs & Panes
+  tabWarRoom: document.getElementById('tab-war-room'),
+  tabGateway: document.getElementById('tab-gateway'),
+  tabUnified: document.getElementById('tab-unified'),
+  viewWarRoom: document.getElementById('view-war-room'),
+  viewGateway: document.getElementById('view-gateway'),
+  gatewayTabBadge: document.getElementById('gateway-tab-badge'),
+
+  // Gateway Controls & Metric Cards
+  gwStrategySelect: document.getElementById('gw-strategy-select'),
+  gwHealthDot: document.getElementById('gw-health-dot'),
+  gwHealthText: document.getElementById('gw-health-text'),
+  gwCandidateCountText: document.getElementById('gw-candidate-count-text'),
+  gwResetAllBtn: document.getElementById('gw-reset-all-btn'),
+  gwTotalRequests: document.getElementById('gw-total-requests'),
+  gwActiveNodes: document.getElementById('gw-active-nodes'),
+  gwRestingNodes: document.getElementById('gw-resting-nodes'),
+  gwAvgLatency: document.getElementById('gw-avg-latency'),
+
+  // Topology Elements
+  topoAffinityKey: document.getElementById('topo-affinity-key'),
+  topoStrategyDisplay: document.getElementById('topo-strategy-display'),
+  topoCandidatesCluster: document.getElementById('topo-candidates-cluster'),
+  topologyFlowStatus: document.getElementById('topology-flow-status'),
+
+  // Upstream Candidate Pool Grid
+  gwCandidatesContainer: document.getElementById('gw-candidates-container'),
+  candidatesPoolMeta: document.getElementById('candidates-pool-meta'),
+  gwDemoLoadBtn: document.getElementById('gw-demo-load-btn'),
+
+  // Live Probe Console
+  probeUserMessage: document.getElementById('probe-user-message'),
+  probeDispatchBtn: document.getElementById('probe-dispatch-btn'),
+  probeOutputContainer: document.getElementById('probe-output-container')
 };
 
 // 抽屉与项目交互
@@ -380,13 +415,527 @@ if (dom.masterBroadcastBtn) {
 const debouncedFetchDashboard = debounce(fetchDashboard, 100);
 const debouncedFetchMemories = debounce(fetchMemories, 150);
 
+// ==========================================
+// View Switcher (War Room / Magpie Gateway / Unified)
+// ==========================================
+let currentViewMode = 'war-room';
+
+function setViewMode(mode) {
+  currentViewMode = mode;
+  [dom.tabWarRoom, dom.tabGateway, dom.tabUnified].forEach(t => t?.classList.remove('active'));
+
+  if (mode === 'war-room') {
+    dom.tabWarRoom?.classList.add('active');
+    dom.viewWarRoom?.classList.add('active');
+    dom.viewGateway?.classList.remove('active');
+  } else if (mode === 'gateway') {
+    dom.tabGateway?.classList.add('active');
+    dom.viewWarRoom?.classList.remove('active');
+    dom.viewGateway?.classList.add('active');
+    fetchGatewayStatus();
+  } else if (mode === 'unified') {
+    dom.tabUnified?.classList.add('active');
+    dom.viewWarRoom?.classList.add('active');
+    dom.viewGateway?.classList.add('active');
+    fetchGatewayStatus();
+  }
+}
+
+if (dom.tabWarRoom) dom.tabWarRoom.onclick = () => setViewMode('war-room');
+if (dom.tabGateway) dom.tabGateway.onclick = () => setViewMode('gateway');
+if (dom.tabUnified) dom.tabUnified.onclick = () => setViewMode('unified');
+
+// ==========================================
+// Magpie Elastic Gateway Controller
+// ==========================================
+let currentGatewayData = null;
+let isDemoMode = false;
+
+async function fetchGatewayStatus() {
+  if (isDemoMode) {
+    renderGateway(currentGatewayData);
+    return;
+  }
+  try {
+    const res = await fetch('/api/gateway/status', { headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    currentGatewayData = data;
+    renderGateway(data);
+  } catch (err) {
+    console.error('Fetch gateway status error:', err);
+  }
+}
+
+function renderGateway(data) {
+  if (!data) return;
+
+  const strategy = data.strategy || 'smart';
+  const candidates = data.candidates || [];
+  const candidateCount = data.candidateCount != null ? data.candidateCount : candidates.length;
+
+  // 1. 同步策略下拉框与拓扑策略展示
+  if (dom.gwStrategySelect && dom.gwStrategySelect.value !== strategy) {
+    dom.gwStrategySelect.value = strategy;
+  }
+  if (dom.topoStrategyDisplay) {
+    const stratNames = {
+      smart: 'Strategy: Smart (Affinity)',
+      ordered: 'Strategy: Ordered Waterfall',
+      rotate: 'Strategy: Round Robin',
+      'least-used': 'Strategy: Least Used'
+    };
+    dom.topoStrategyDisplay.textContent = stratNames[strategy] || `Strategy: ${strategy}`;
+  }
+  if (dom.topoAffinityKey) {
+    dom.topoAffinityKey.textContent = escapeHtml(currentProjectId || 'default');
+  }
+
+  // 2. 统计指标与健康判定
+  let totalReqs = 0;
+  let activeNodes = 0;
+  let restingNodes = 0;
+  let lastLatency = 0;
+
+  candidates.forEach(c => {
+    totalReqs += (c.totalRequests || 0);
+    if (c.resting) {
+      restingNodes++;
+    } else {
+      activeNodes++;
+    }
+    if (c.lastLatencyMs && c.lastLatencyMs > 0) {
+      lastLatency = c.lastLatencyMs;
+    }
+  });
+
+  if (dom.gwTotalRequests) dom.gwTotalRequests.textContent = totalReqs;
+  if (dom.gwActiveNodes) dom.gwActiveNodes.textContent = activeNodes;
+  if (dom.gwRestingNodes) dom.gwRestingNodes.textContent = restingNodes;
+  if (dom.gwAvgLatency) dom.gwAvgLatency.textContent = `${lastLatency}ms`;
+
+  if (dom.gwCandidateCountText) {
+    dom.gwCandidateCountText.textContent = `${candidateCount} Node${candidateCount === 1 ? '' : 's'}`;
+  }
+
+  // 顶部健康胶囊与标签 Badge
+  const allDead = candidateCount > 0 && activeNodes === 0;
+  if (dom.gwHealthDot && dom.gwHealthText) {
+    if (candidateCount === 0) {
+      dom.gwHealthText.textContent = 'STANDBY';
+      dom.gwHealthDot.style.background = '#64748b';
+      dom.gwHealthDot.style.boxShadow = '0 0 8px #64748b';
+    } else if (allDead) {
+      dom.gwHealthText.textContent = 'ALL RESTING';
+      dom.gwHealthDot.style.background = '#ef4444';
+      dom.gwHealthDot.style.boxShadow = '0 0 8px #ef4444';
+    } else if (restingNodes > 0) {
+      dom.gwHealthText.textContent = 'DEGRADED';
+      dom.gwHealthDot.style.background = '#f59e0b';
+      dom.gwHealthDot.style.boxShadow = '0 0 8px #f59e0b';
+    } else {
+      dom.gwHealthText.textContent = 'HEALTHY';
+      dom.gwHealthDot.style.background = '#10b981';
+      dom.gwHealthDot.style.boxShadow = '0 0 8px #10b981';
+    }
+  }
+
+  // 3. 渲染拓扑集群通道
+  if (dom.topoCandidatesCluster) {
+    if (candidates.length === 0) {
+      dom.topoCandidatesCluster.innerHTML = `
+        <div class="topo-channel-row" style="color: var(--text-faint); font-size: 11px; justify-content: center;">
+          No upstream candidates configured.
+        </div>
+      `;
+    } else {
+      dom.topoCandidatesCluster.innerHTML = candidates.map((c, idx) => {
+        const isResting = !!c.resting;
+        const channelClass = isResting ? 'resting' : 'active';
+        const statusClass = isResting ? 'cooldown' : 'healthy';
+        const statusLabel = isResting
+          ? `Cooldown (${c.remainingRestSeconds || 0}s)`
+          : `Active (P:${c.priority})`;
+        return `
+          <div class="topo-channel-row ${channelClass}">
+            <span class="topo-channel-name">
+              <span>${isResting ? '⚠️' : '⚡'}</span>
+              <span>[#${idx + 1}] ${escapeHtml(c.name || c.id)}</span>
+            </span>
+            <span class="topo-channel-status ${statusClass}">${statusLabel}</span>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 4. 渲染 Upstream Candidate Pool Grid 卡片
+  renderCandidatesGrid(candidates);
+}
+
+function renderCandidatesGrid(candidates) {
+  if (!dom.gwCandidatesContainer) return;
+
+  if (!candidates || candidates.length === 0) {
+    dom.gwCandidatesContainer.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 16px;">
+        <div>No upstream candidates registered in current daemon.</div>
+        <div style="margin-top: 8px; font-size: 11px;">💡 点击上方 "✨ 载入演练拓扑 (Demo Mode)" 可即刻体验双通道故障转移与断路器调度！</div>
+      </div>
+    `;
+    return;
+  }
+
+  dom.gwCandidatesContainer.innerHTML = candidates.map(c => {
+    const isResting = !!c.resting;
+    const isDead = c.consecutiveFailures >= 5;
+    const cardClass = isDead ? 'dead' : (isResting ? 'resting' : '');
+    const badgeClass = isDead ? 'dead' : (isResting ? 'resting' : 'active');
+    const badgeText = isDead ? 'DEAD' : (isResting ? 'RESTING' : 'HEALTHY');
+
+    const lastFailureType = c.lastFailureType || 'none';
+    const pillClass = `pill-${lastFailureType}`;
+
+    const remainingSec = c.remainingRestSeconds || 0;
+    const totalCooldownSec = Math.max(60, remainingSec);
+    const progressPct = isResting ? Math.min(100, Math.max(5, (remainingSec / totalCooldownSec) * 100)) : 0;
+
+    return `
+      <div class="candidate-card ${cardClass}">
+        <div class="cand-header">
+          <div class="cand-title-box">
+            <div class="cand-name-row">
+              <span class="cand-name" title="${escapeHtml(c.id)}">${escapeHtml(c.name || c.id)}</span>
+              <span class="cand-provider-tag">${escapeHtml((c.provider || 'unknown').toUpperCase())}</span>
+            </div>
+            <span class="cand-model">${escapeHtml(c.model || 'adaptive-llm')}</span>
+          </div>
+          <span class="cand-status-badge ${badgeClass}">${badgeText}</span>
+        </div>
+
+        <div class="cand-stats-grid">
+          <div class="cand-stat-item">
+            <span class="cand-stat-label">Priority / Wt</span>
+            <span class="cand-stat-val">P${c.priority || 0} / W${c.weight || 1}</span>
+          </div>
+          <div class="cand-stat-item">
+            <span class="cand-stat-label">Success Rate</span>
+            <span class="cand-stat-val" style="color: #34d399;">${c.successCount || 0} / ${c.totalRequests || 0}</span>
+          </div>
+          <div class="cand-stat-item">
+            <span class="cand-stat-label">Last Latency</span>
+            <span class="cand-stat-val" style="color: #38bdf8;">${c.lastLatencyMs || 0}ms</span>
+          </div>
+        </div>
+
+        <div class="cand-breaker-box">
+          <div class="cand-breaker-row">
+            <span style="color: var(--text-faint);">Heuristic Error Type:</span>
+            ${lastFailureType !== 'none'
+              ? `<span class="cand-error-pill ${pillClass}">${escapeHtml(lastFailureType)}</span>`
+              : `<span style="color: var(--text-faint); font-family: var(--font-mono); font-size: 10px;">NONE (0 Faults)</span>`
+            }
+          </div>
+
+          ${isResting ? `
+            <div class="cooldown-wrap">
+              <div class="cooldown-meta">
+                <span>Circuit Breaker Active</span>
+                <span>${remainingSec}s remaining</span>
+              </div>
+              <div class="cooldown-track">
+                <div class="cooldown-progress" style="width: ${progressPct}%;"></div>
+              </div>
+            </div>
+          ` : ''}
+
+          <div class="cand-footer-row">
+            <span style="font-size: 10px; color: var(--text-faint); font-family: var(--font-mono);">
+              Failures: ${c.failureCount || 0} (Consecutive: ${c.consecutiveFailures || 0})
+            </span>
+            <button class="cand-unrest-btn" data-unrest-id="${escapeHtml(c.id)}">
+              ${isResting ? '⚡ Reset (Unrest)' : 'Reset Stats'}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 绑定各卡片独立 Reset 按钮
+  dom.gwCandidatesContainer.querySelectorAll('.cand-unrest-btn').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.getAttribute('data-unrest-id');
+      if (id) unrestCandidate(id);
+    };
+  });
+}
+
+// 切换路由策略
+if (dom.gwStrategySelect) {
+  dom.gwStrategySelect.onchange = async () => {
+    const strategy = dom.gwStrategySelect.value;
+    try {
+      const res = await fetch('/api/gateway/strategy', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ strategy })
+      });
+      if (res.ok) {
+        if (isDemoMode && currentGatewayData) {
+          currentGatewayData.strategy = strategy;
+        }
+        fetchGatewayStatus();
+      } else {
+        const err = await res.json();
+        alert('Strategy update failed: ' + (err.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Strategy update error: ' + err.message);
+    }
+  };
+}
+
+// 单个节点解除休眠
+window.unrestCandidate = async function (id) {
+  if (isDemoMode && currentGatewayData) {
+    const c = currentGatewayData.candidates.find(item => item.id === id);
+    if (c) {
+      c.resting = false;
+      c.remainingRestSeconds = 0;
+      c.consecutiveFailures = 0;
+      c.lastFailureType = 'none';
+    }
+    renderGateway(currentGatewayData);
+    return;
+  }
+  try {
+    const res = await fetch('/api/gateway/reset', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ id })
+    });
+    if (res.ok) {
+      fetchGatewayStatus();
+    }
+  } catch (err) {
+    alert('Unrest error: ' + err.message);
+  }
+};
+
+// 一键全局解除所有休眠
+if (dom.gwResetAllBtn) {
+  dom.gwResetAllBtn.onclick = async () => {
+    if (isDemoMode && currentGatewayData) {
+      currentGatewayData.candidates.forEach(c => {
+        c.resting = false;
+        c.remainingRestSeconds = 0;
+        c.consecutiveFailures = 0;
+        c.lastFailureType = 'none';
+      });
+      renderGateway(currentGatewayData);
+      return;
+    }
+    try {
+      const res = await fetch('/api/gateway/reset', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        fetchGatewayStatus();
+      }
+    } catch (err) {
+      alert('Reset all error: ' + err.message);
+    }
+  };
+}
+
+// 实时路由拨测交互
+if (dom.probeDispatchBtn && dom.probeUserMessage) {
+  async function dispatchProbe() {
+    const text = dom.probeUserMessage.value.trim();
+    if (!text) return;
+
+    if (dom.probeOutputContainer) {
+      dom.probeOutputContainer.innerHTML = `
+        <div style="color: #38bdf8; font-style: italic;">
+          ⏳ Routing request through Magpie gateway topology with affinityKey="${escapeHtml(currentProjectId)}"...
+        </div>
+      `;
+    }
+
+    const startTime = Date.now();
+    try {
+      dom.probeDispatchBtn.disabled = true;
+      dom.probeDispatchBtn.style.opacity = '0.6';
+
+      if (isDemoMode) {
+        // Demo 模拟路由响应
+        await new Promise(r => setTimeout(r, 450));
+        const latency = Date.now() - startTime;
+        if (dom.probeOutputContainer) {
+          dom.probeOutputContainer.innerHTML = `
+            <div class="probe-res-line">
+              <span class="probe-res-badge ok">HTTP 200 OK</span>
+              <span class="probe-res-meta">Routed to: <strong>backup-deepseek-v3</strong> | Latency: ${latency}ms | Strategy: ${escapeHtml(currentGatewayData.strategy)}</span>
+            </div>
+            <div class="probe-res-body">[Magpie Resilient Failover Trace]
+• Primary "primary-anthropic-claude" was RESTING (429 Rate Limit Cooldown).
+• Zero-loss instant fallback engaged ➔ "backup-deepseek-v3" served request.
+Response: Successfully processed: "${escapeHtml(text)}"</div>
+          `;
+        }
+        if (currentGatewayData) {
+          const backup = currentGatewayData.candidates.find(c => c.id === 'backup-deepseek-v3');
+          if (backup) {
+            backup.totalRequests = (backup.totalRequests || 0) + 1;
+            backup.successCount = (backup.successCount || 0) + 1;
+            backup.lastLatencyMs = latency;
+          }
+          renderGateway(currentGatewayData);
+        }
+        return;
+      }
+
+      const res = await fetch('/api/gateway/chat', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          system_prompt: 'You are Magpie resilient gateway verification probe.',
+          user_message: text,
+          affinityKey: currentProjectId
+        })
+      });
+
+      const latency = Date.now() - startTime;
+      const json = await res.json();
+
+      if (res.ok) {
+        if (dom.probeOutputContainer) {
+          dom.probeOutputContainer.innerHTML = `
+            <div class="probe-res-line">
+              <span class="probe-res-badge ok">HTTP 200 OK</span>
+              <span class="probe-res-meta">Routed to: <strong>${escapeHtml(json.candidateId || 'gateway')}</strong> | Latency: ${latency}ms</span>
+            </div>
+            <div class="probe-res-body">${escapeHtml(json.content || JSON.stringify(json, null, 2))}</div>
+          `;
+        }
+      } else {
+        if (dom.probeOutputContainer) {
+          dom.probeOutputContainer.innerHTML = `
+            <div class="probe-res-line">
+              <span class="probe-res-badge fail">HTTP ${res.status} ERROR</span>
+              <span class="probe-res-meta">Time: ${latency}ms</span>
+            </div>
+            <div class="probe-res-body" style="color: #f87171;">${escapeHtml(json.error || 'All candidate nodes exhausted')}</div>
+          `;
+        }
+      }
+      fetchGatewayStatus();
+    } catch (err) {
+      if (dom.probeOutputContainer) {
+        dom.probeOutputContainer.innerHTML = `
+          <div class="probe-res-line">
+            <span class="probe-res-badge fail">NETWORK ERROR</span>
+          </div>
+          <div class="probe-res-body" style="color: #f87171;">${escapeHtml(err.message)}</div>
+        `;
+      }
+    } finally {
+      dom.probeDispatchBtn.disabled = false;
+      dom.probeDispatchBtn.style.opacity = '1';
+    }
+  }
+
+  dom.probeDispatchBtn.onclick = dispatchProbe;
+  dom.probeUserMessage.onkeydown = (e) => {
+    if (e.key === 'Enter') dispatchProbe();
+  };
+}
+
+// 载入演示拓扑 (Demo Mode)
+if (dom.gwDemoLoadBtn) {
+  dom.gwDemoLoadBtn.onclick = () => {
+    isDemoMode = true;
+    currentGatewayData = {
+      strategy: 'smart',
+      candidateCount: 2,
+      candidates: [
+        {
+          id: 'primary-anthropic-claude',
+          name: 'Primary Claude 3.7 Sonnet',
+          provider: 'anthropic',
+          model: 'claude-3-7-sonnet-20250219',
+          priority: 0,
+          weight: 1,
+          totalRequests: 42,
+          successCount: 41,
+          failureCount: 1,
+          consecutiveFailures: 1,
+          lastLatencyMs: 380,
+          resting: true,
+          remainingRestSeconds: 48,
+          lastFailureType: 'rate'
+        },
+        {
+          id: 'backup-deepseek-v3',
+          name: 'Backup DeepSeek V3 (Failover)',
+          provider: 'openai',
+          model: 'deepseek-chat',
+          priority: 1,
+          weight: 1,
+          totalRequests: 18,
+          successCount: 18,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          lastLatencyMs: 240,
+          resting: false,
+          remainingRestSeconds: 0,
+          lastFailureType: 'none'
+        }
+      ]
+    };
+    if (dom.candidatesPoolMeta) {
+      dom.candidatesPoolMeta.textContent = 'DEMO TOPOLOGY SIMULATION ACTIVE';
+    }
+    renderGateway(currentGatewayData);
+  };
+}
+
+// 倒计时自然衰减计算（每 1000ms 刷新一次休眠倒计时）
+setInterval(() => {
+  if (currentGatewayData && currentGatewayData.candidates) {
+    let changed = false;
+    currentGatewayData.candidates.forEach(c => {
+      if (c.resting && c.remainingRestSeconds > 0) {
+        c.remainingRestSeconds--;
+        changed = true;
+        if (c.remainingRestSeconds <= 0) {
+          c.resting = false;
+          c.lastFailureType = 'none';
+        }
+      }
+    });
+    if (changed) {
+      renderGateway(currentGatewayData);
+    }
+  }
+}, 1000);
+
 // 初始化
 loadProjects();
 fetchDashboard();
 fetchMemories();
+fetchGatewayStatus();
 
 // 定时保底轮询（2500ms 刷新频率完全符合 60 FPS 规约）
-setInterval(fetchDashboard, 2500);
+setInterval(() => {
+  fetchDashboard();
+  if (currentViewMode === 'gateway' || currentViewMode === 'unified') {
+    fetchGatewayStatus();
+  }
+}, 2500);
 
 // WebSocket 协议自适应与自动重连
 function connectWebSocket() {

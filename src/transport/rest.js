@@ -296,6 +296,20 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
             return sendJson(200, { success: true, resetCount: count });
           }
         }
+
+        // POST /api/gateway/strategy
+        if (url.pathname === '/api/gateway/strategy' && req.method === 'POST') {
+          const body = await readJson();
+          const validStrategies = ['smart', 'ordered', 'rotate', 'least-used'];
+          if (!body.strategy || !validStrategies.includes(body.strategy)) {
+            return sendJson(400, {
+              error: `Invalid strategy "${body.strategy}". Allowed: ${validStrategies.join(', ')}`,
+              field: 'strategy'
+            });
+          }
+          gwRouter.strategy = body.strategy;
+          return sendJson(200, { success: true, strategy: gwRouter.strategy });
+        }
       }
 
       // 2. Agents
