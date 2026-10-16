@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-16 借鉴 crewmates 吸收跨工作树路径对齐与排他命名资源锁 (v0.2.1)
+
+### 改了什么
+
+- **Git Worktree 共同根识别与跨工作树相对化对齐 (`src/domain/project.js`, `src/daemon/coordinator.js`)**
+  - **Git 共同根探测 (`resolveGitCommonRoot`)**：针对 Git Worktree 下 `.git` 为指针文件的形态，自动解析 `gitdir` 与 `commondir`，向上追溯至主仓库 `.git`，确保主仓库与各工作树共享同一个 `projectId` 与 `projectRoot`，消除多工作树环境下的项目视界隔离。
+  - **跨工作树路径映射 (`toRepoRelativePath`, `toComparablePath`)**：将各工作树内的绝对物理路径统一映射到相对于 `projectRoot` 的规范相对路径进行冲突比对；当检测到并发修改来自不同工作树时，显式标记 `CROSS-WORKTREE CONFLICT` 高危警示，提醒并发修改将引发 Git 合并冲突。
+- **命令级排他性命名资源锁 (`src/daemon/coordinator.js`, `src/transport/rest.js`, `src/mcp/server.js`)**
+  - **扩展 `CLAIM_TYPES` 支持 `resource` 类型**：针对测试套件（`tests`）、本地开发服务（`dev-server`）、打包构建（`build`）等系统级排他性共享资源实施排他性租约互斥，阻断端口争用与测试状态污染。
+  - **核心协调层方法**：提供 `acquireResourceLock`、`releaseResourceLock` 和 `listResourceLocks`；在四级冲突判定（`findConflict`）中增加 Rule 4 资源互斥规则。
+  - **REST API 与 MCP 工具暴露**：
+    - REST 端点：`GET /api/resources/locks`、`POST /api/resources/lock`、`POST /api/resources/unlock`；
+    - MCP 工具：在 `NEXUS_PROJECT_TOOLS` 中暴露 `nexus_lock_resource` 与 `nexus_unlock_resource`。
+- **Hook 命令自动推导与无感加锁 (`src/hook/nexus-hook.mjs`)**
+  - **Bash 命令特征提取 (`extractBashResource`)**：正则匹配 `npm test`、`cargo test`、`vite`、`npm run build` 等高排他命令，在 Agent 未显式声明的情况下自动在 `/api/hook/check` 阶段申请或检查资源锁，冲突时以退出码 2 安全拦截。
+  - **Fail-Open 稳健降级**：当协调感知层发生非预期异常或网络波动时透明放行，杜绝阻塞主干工作流。
+- **自动化测试闭环**
+  - **新增 `test/resource-lock.test.js`**：全面覆盖资源锁申领、排他互斥、锁列举、释放再领、Bash 命令推导判冲、跨工作树相对路径碰撞与 MCP 工具调用。
+  - **更新 `test/project.test.js`**：补充 Git Worktree 识别主仓库与工作树共享同一个 `projectId` 及跨工作树路径计算用例。
+  - 全量自动化测试套件扩增至 208 项用例，100% 通过。
+
+---
+
 ## 2026-10-16 借鉴 Magpie 架构落地弹性高可用 AI 网关路由层 (v0.2.0)
 
 ### 改了什么

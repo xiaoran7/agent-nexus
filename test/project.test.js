@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { canonicalizePath, hashProjectId, resolveProject } from '../src/domain/project.js';
+import { canonicalizePath, hashProjectId, resolveProject, toRepoRelativePath } from '../src/domain/project.js';
 
 test('项目识别与路径归一化', async (t) => {
   const baseTmp = mkdtempSync(join(tmpdir(), 'nexus-proj-test-'));
@@ -76,5 +76,41 @@ test('项目识别与路径归一化', async (t) => {
     const res = resolveProject(isolatedDir);
     assert.equal(res.marker, null);
     assert.equal(res.projectRoot, canonicalizePath(isolatedDir));
+  });
+
+  await t.test('Git Worktree 识别：主仓库与工作树共享同一个 projectId 与 projectRoot', () => {
+    const mainRepo = join(baseTmp, 'main-repo');
+    const worktreeDir = join(baseTmp, 'main-repo-worktree-feat');
+    const gitDir = join(mainRepo, '.git');
+    const wtGitDir = join(gitDir, 'worktrees', 'feat-x');
+
+    mkdirSync(wtGitDir, { recursive: true });
+    mkdirSync(worktreeDir, { recursive: true });
+
+    // 在 worktree 根目录写入 .git 文件，模拟 git worktree 行为
+    writeFileSync(join(worktreeDir, '.git'), `gitdir: ${wtGitDir}\n`);
+
+    const mainRes = resolveProject(mainRepo);
+    const wtRes = resolveProject(worktreeDir);
+
+    assert.equal(wtRes.marker, '.git');
+    assert.equal(wtRes.worktree.isWorktree, true);
+    assert.equal(wtRes.worktree.name, 'feat-x');
+    assert.equal(mainRes.projectRoot, wtRes.projectRoot);
+    assert.equal(mainRes.projectId, wtRes.projectId);
+  });
+
+  await t.test('toRepoRelativePath 计算跨工作树相对路径', () => {
+    const projRoot = 'c:/workspace/my-repo';
+    const wtRoot = 'c:/workspace/my-repo-feat';
+
+    // 绝对路径位于主工程内
+    assert.equal(toRepoRelativePath('c:/workspace/my-repo/src/domain/state.js', projRoot, projRoot), 'src/domain/state.js');
+
+    // 相对路径
+    assert.equal(toRepoRelativePath('src/domain/state.js', projRoot, wtRoot), 'src/domain/state.js');
+
+    // 绝对路径位于 worktree 内，相对 worktree 解析出相同的相对路径
+    assert.equal(toRepoRelativePath('c:/workspace/my-repo-feat/src/domain/state.js', projRoot, wtRoot), 'src/domain/state.js');
   });
 });

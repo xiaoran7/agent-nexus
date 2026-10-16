@@ -70,6 +70,37 @@ function resolveTargetFile(payload) {
   return process.env.CLAUDE_TOOL_FILE || process.env.TOOL_INPUT_PATH || null;
 }
 
+// 资源锁命令特征：测试套件、开发服务器与大型构建等排他性资源
+const RESOURCE_COMMAND_PATTERNS = [
+  {
+    resource: 'tests',
+    re: /(?:^|[;&|]\s*)(?:npm\s+(?:test|t\b|run\s+test)|pnpm\s+(?:test|t\b|run\s+test)|yarn\s+test|bun\s+test|npx\s+(?:vitest|jest)|pytest|cargo\s+test|go\s+test|mvn\s+test|gradlew?\s+test)(?:\s|$)/i
+  },
+  {
+    resource: 'dev-server',
+    re: /(?:^|[;&|]\s*)(?:npm\s+run\s+dev|pnpm\s+run\s+dev|yarn\s+dev|bun\s+run\s+dev|vite(?:\s|$)|next\s+dev|nuxt\s+dev|flask\s+run|uvicorn|nodemon|webpack\s+serve)(?:\s|$)/i
+  },
+  {
+    resource: 'build',
+    re: /(?:^|[;&|]\s*)(?:npm\s+run\s+build|pnpm\s+run\s+build|yarn\s+build|bun\s+run\s+build|cargo\s+build|gradlew?\s+build|mvn\s+package)(?:\s|$)/i
+  }
+];
+
+function extractBashResource(payload) {
+  const toolName = payload.tool_name;
+  if (toolName && toolName !== 'Bash') return null;
+
+  const rawCommand = (payload.tool_input || payload.input || {}).command;
+  if (typeof rawCommand !== 'string' || !rawCommand.trim()) return null;
+
+  for (const { resource, re } of RESOURCE_COMMAND_PATTERNS) {
+    if (re.test(rawCommand)) {
+      return resource;
+    }
+  }
+  return null;
+}
+
 // Bash 没有 file_path，目标是命令行本身。只在命令确实会写入、且参数里带有
 // 本地文件路径时才挑一个目标出来。
 //
@@ -191,14 +222,37 @@ async function main() {
   // daemon 用自己的 cwd 解析相对路径，两者不一致会让判冲落到不同文件上。
   const workspaceDir = payload.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
+  const identity = resolveAgentIdentity(payload);
+  const projectInfo = resolveProject(workspaceDir);
+
+  // 1. 优先检查 Bash 是否涉及命名排他性资源（如 tests, dev-server, build）
+  const targetResource = extractBashResource(payload);
+  if (targetResource) {
+    const resourceRes = await checkPermission({
+      agent_id: identity.agentId,
+      provider: identity.provider,
+      session_id: identity.sessionId,
+      prompt_hint: identity.promptHint,
+      resource_name: targetResource,
+      project_id: projectInfo.projectId,
+      project_root: projectInfo.projectRoot,
+      workspace_dir: workspaceDir
+    });
+
+    if (resourceRes.allow === false) {
+      console.error(`\n[Agent-Nexus] ⚠️ RESOURCE CONFLICT DETECTED & OPERATION BLOCKED:`);
+      console.error(resourceRes.reason || `Resource '${targetResource}' is currently locked by another agent.`);
+      console.error(`Please WAIT for the concurrent process to finish before running this command.\n`);
+      process.exit(2);
+    }
+  }
+
+  // 2. 检查文件改写与文件锁冲突 (支持跨 Worktree 相对化对齐)
   const targetFile = resolveTargetFile(payload) || extractBashTarget(payload, workspaceDir);
 
   if (!targetFile) {
     process.exit(0);
   }
-
-  const identity = resolveAgentIdentity(payload);
-  const projectInfo = resolveProject(workspaceDir);
 
   const res = await checkPermission({
     agent_id: identity.agentId,

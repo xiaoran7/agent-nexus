@@ -358,7 +358,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(result.success ? 200 : 404, result);
       }
 
-      // 6. Universal Hook fast check
+      // 6. Universal Hook fast check (支持文件冲突与命名资源锁检查)
       if (url.pathname === '/api/hook/check' && req.method === 'POST') {
         const data = await readJson();
         const checkResult = coordinator.fastCheckAndAutoClaim({
@@ -366,11 +366,40 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           provider: data.provider || 'unknown',
           sessionId: data.session_id || 'default',
           filePath: data.file_path || (data.tool_input && data.tool_input.file_path),
+          resourceName: data.resource_name || data.resource || null,
           promptHint: data.prompt_hint,
           projectId: data.project_id || 'default',
-          workspaceDir: data.workspace_dir || ''
+          workspaceDir: data.workspace_dir || '',
+          projectRoot: data.project_root || null
         });
         return sendJson(200, checkResult);
+      }
+
+      // 6.1 显式命名资源锁接口 (Resource Locks)
+      if (url.pathname === '/api/resources/locks' && req.method === 'GET') {
+        const pid = url.searchParams.get('project_id') || 'default';
+        return sendJson(200, coordinator.listResourceLocks(pid));
+      }
+      if (url.pathname === '/api/resources/lock' && req.method === 'POST') {
+        const body = await readJson();
+        const result = coordinator.acquireResourceLock({
+          agentId: body.agent_id,
+          resourceName: body.resource_name || body.resource,
+          ttlSeconds: body.ttl_seconds || 300,
+          reason: body.reason || 'Resource held',
+          projectId: body.project_id || 'default',
+          projectRoot: body.project_root || null
+        });
+        return sendJson(200, result);
+      }
+      if (url.pathname === '/api/resources/unlock' && req.method === 'POST') {
+        const body = await readJson();
+        const result = coordinator.releaseResourceLock({
+          agentId: body.agent_id,
+          resourceName: body.resource_name || body.resource,
+          projectId: body.project_id || 'default'
+        });
+        return sendJson(200, result);
       }
 
       // 7. State & CAS

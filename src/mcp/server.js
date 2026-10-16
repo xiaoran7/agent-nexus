@@ -206,6 +206,34 @@ export const NEXUS_PROJECT_TOOLS = [
       },
       required: ['content']
     }
+  },
+  {
+    name: 'nexus_lock_resource',
+    description: 'Acquire an exclusive lock on a named shared resource (e.g., "tests", "dev-server", "build") to prevent concurrent collisions with sibling agents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        resource_name: { type: 'string', description: 'Named exclusive resource (e.g. "tests", "dev-server", "build")' },
+        reason: { type: 'string', description: 'Reason for holding the resource' },
+        ttl_seconds: { type: 'number', description: 'Lock TTL in seconds (default 300)' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' }
+      },
+      required: ['agent_id', 'resource_name']
+    }
+  },
+  {
+    name: 'nexus_unlock_resource',
+    description: 'Release an exclusive lock on a named shared resource (e.g., "tests", "dev-server", "build").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        resource_name: { type: 'string', description: 'Named exclusive resource to release' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' }
+      },
+      required: ['agent_id', 'resource_name']
+    }
   }
 ];
 
@@ -299,6 +327,24 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
 
   if (toolName === 'nexus_release_lease') {
     return coordinator.releaseLease(args.lease_id, args.agent_id);
+  }
+
+  if (toolName === 'nexus_lock_resource') {
+    return coordinator.acquireResourceLock({
+      agentId: args.agent_id,
+      resourceName: args.resource_name,
+      ttlSeconds: args.ttl_seconds || 300,
+      reason: args.reason || 'Resource held via MCP',
+      projectId: pid
+    });
+  }
+
+  if (toolName === 'nexus_unlock_resource') {
+    return coordinator.releaseResourceLock({
+      agentId: args.agent_id,
+      resourceName: args.resource_name,
+      projectId: pid
+    });
   }
 
   if (toolName === 'nexus_state') {
