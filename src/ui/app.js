@@ -53,6 +53,12 @@ const dom = {
   masterBroadcastUrgent: document.getElementById('master-broadcast-urgent'),
   masterBroadcastBtn: document.getElementById('master-broadcast-btn'),
   leadAdviceContainer: document.getElementById('lead-advice-container'),
+  leadStatusChip: document.getElementById('lead-status-chip'),
+  leadSessionStats: document.getElementById('lead-session-stats'),
+  leadAwakenedDetail: document.getElementById('lead-awakened-detail'),
+  dialogueContainer: document.getElementById('dialogue-stream'),
+  dialogueCounter: document.getElementById('dialogue-counter'),
+  refreshDialogueBtn: document.getElementById('refresh-dialogue-btn'),
   matrixStatus: document.getElementById('matrix-last-updated'),
   lanesContainer: document.getElementById('lanes-container'),
   lanesStatus: document.getElementById('lanes-status'),
@@ -216,6 +222,58 @@ function renderMetrics(data) {
   if (dom.metricTotalAgents) dom.metricTotalAgents.textContent = agents.length;
   if (dom.metricRunning) dom.metricRunning.textContent = agents.filter(a => a.status === 'running').length;
   if (dom.metricWaiting) dom.metricWaiting.textContent = agents.filter(a => a.status === 'waiting').length;
+
+  // 动态同步 Tech Lead 架构师视窗
+  updateLeadConsole(agents);
+}
+
+function updateLeadConsole(agents) {
+  if (!dom.leadStatusChip) return;
+  const activeCount = agents.filter(a => a.status !== 'departed').length;
+
+  if (dom.leadSessionStats) {
+    dom.leadSessionStats.textContent = `${activeCount} SESSION${activeCount === 1 ? '' : 'S'} ACTIVE`;
+  }
+
+  if (activeCount <= 1) {
+    dom.leadStatusChip.className = 'lead-chip chip-silent';
+    dom.leadStatusChip.textContent = 'OBSERVING (SILENT SPRINT)';
+    if (dom.leadAdviceContainer && !dom.leadAdviceContainer.getAttribute('data-sticky')) {
+      dom.leadAdviceContainer.innerHTML = `[Nexus 架构师静默保驾] 当前只有单 Session 独立施工，架构师保持静默，绝不产生干扰。当检测到新 Session 带着并发计划加入时，将实时唤醒并提供避障重排与接力路线。`;
+    }
+  } else {
+    dom.leadStatusChip.className = 'lead-chip chip-awakened';
+    dom.leadStatusChip.textContent = 'AWAKENED (MULTI-SESSION COORDINATION)';
+  }
+}
+
+function handleLeadAwakened(data) {
+  if (!dom.leadStatusChip || !dom.leadAdviceContainer) return;
+  dom.leadStatusChip.className = 'lead-chip chip-awakened';
+  dom.leadStatusChip.textContent = 'AWAKENED (MULTI-SESSION COORDINATION)';
+
+  const joiningId = escapeHtml(data.joining_agent_id);
+  const activeCount = data.active_peer_count || 1;
+  const conflictsCount = data.conflicts_count || 0;
+
+  dom.leadAdviceContainer.setAttribute('data-sticky', 'true');
+  dom.leadAdviceContainer.innerHTML = `
+    <strong>[Tech Lead 架构师实时唤醒]</strong>
+    检测到新 Session <strong>${joiningId}</strong> 加入工作区（在席活跃施工 Session: ${activeCount} 个，潜在写冲突: ${conflictsCount} 项）。
+    已完成全景信息聚合（A 施工进度、持有的排他锁与长期工程记忆），避障重排指引已就绪！
+  `;
+
+  if (dom.leadAwakenedDetail && data.peer_sessions && data.peer_sessions.length > 0) {
+    dom.leadAwakenedDetail.style.display = 'block';
+    dom.leadAwakenedDetail.innerHTML = `
+      <div style="font-weight: 700; color: #38bdf8; margin-bottom: 6px;">【在席 Session 施工现场快照】</div>
+      ${data.peer_sessions.map(p => `
+        <div style="padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 4px; font-size: 11px;">
+          • 会话 [${escapeHtml(p.name)}]: 意图 "${escapeHtml(p.currentIntent || '无')}" | 进度 "${escapeHtml(p.progressSummary || '进行中')}" | 独占锁 ${p.activeLeasesCount || 0} 个
+        </div>
+      `).join('')}
+    `;
+  }
 }
 
 function renderAgents(agents, activeClaims) {
@@ -248,6 +306,11 @@ function renderAgents(agents, activeClaims) {
         <div class="intent-box">
           ${a.current_intent ? `<strong>Intent:</strong> ${escapeHtml(a.current_intent)}` : '<span style="color: var(--text-faint);">No active declared intent</span>'}
         </div>
+        ${a.progress_summary ? `
+          <div class="progress-box" style="margin-top: 8px; padding: 6px 10px; background: rgba(14, 165, 233, 0.08); border-left: 2px solid #0ea5e9; border-radius: 4px; font-size: 11px;">
+            <strong style="color: #38bdf8;">Progress:</strong> ${escapeHtml(a.progress_summary)}
+          </div>
+        ` : ''}
         ${a.blocked_reason ? `
           <div class="blocked-callout">
             <span>⚠️</span>
@@ -414,6 +477,58 @@ if (dom.masterBroadcastBtn) {
 // 刷新防抖，避免事件风暴冲击服务端
 const debouncedFetchDashboard = debounce(fetchDashboard, 100);
 const debouncedFetchMemories = debounce(fetchMemories, 150);
+const debouncedFetchDialogues = debounce(fetchDialogues, 150);
+
+// 会话间对话网络拉取与渲染
+async function fetchDialogues() {
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/dialogue`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const list = await res.json();
+    if (!Array.isArray(list)) return;
+
+    if (dom.dialogueCounter) dom.dialogueCounter.textContent = `${list.length} DIALOGUES`;
+    if (!dom.dialogueContainer) return;
+
+    if (list.length === 0) {
+      dom.dialogueContainer.innerHTML = '<div class="dialogue-empty-hint">暂无跨 Session 对话，当多会话并发沟通接口、交接进度时将在此呈现。</div>';
+      return;
+    }
+
+    dom.dialogueContainer.innerHTML = list.map(m => {
+      const timeStr = escapeHtml(new Date(m.created_at).toTimeString().split(' ')[0]);
+      const fromSafe = escapeHtml(m.from_agent_name || m.from_agent);
+      const toSafe = m.to_agent ? `@${escapeHtml(m.to_agent_name || m.to_agent)}` : 'BROADCAST';
+      const typeSafe = escapeHtml((m.dialogue_type || 'chat').toUpperCase());
+      const contentSafe = escapeHtml(m.content);
+      const threadSafe = m.thread_id ? `#${escapeHtml(m.thread_id)}` : '';
+      const statusSafe = escapeHtml(m.status || 'read');
+
+      return `
+        <div class="dialogue-card type-${escapeHtml(m.dialogue_type || 'chat')}">
+          <div class="dialogue-header-row">
+            <div class="dialogue-tags">
+              <span class="dialogue-type-pill">${typeSafe}</span>
+              ${threadSafe ? `<span class="dialogue-thread-pill">${threadSafe}</span>` : ''}
+              <span class="dialogue-status-pill ${statusSafe}">${statusSafe}</span>
+            </div>
+            <span class="dialogue-time">${timeStr}</span>
+          </div>
+          <div class="dialogue-body-content">
+            <span class="dialogue-route">[${fromSafe} ➔ ${toSafe}]:</span>
+            <span class="dialogue-text">${contentSafe}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Fetch dialogues error:', err);
+  }
+}
+
+if (dom.refreshDialogueBtn) {
+  dom.refreshDialogueBtn.onclick = () => fetchDialogues();
+}
 
 // ==========================================
 // View Switcher (War Room / Magpie Gateway / Unified)
@@ -927,11 +1042,13 @@ setInterval(() => {
 loadProjects();
 fetchDashboard();
 fetchMemories();
+fetchDialogues();
 fetchGatewayStatus();
 
 // 定时保底轮询（2500ms 刷新频率完全符合 60 FPS 规约）
 setInterval(() => {
   fetchDashboard();
+  fetchDialogues();
   if (currentViewMode === 'gateway' || currentViewMode === 'unified') {
     fetchGatewayStatus();
   }
@@ -956,6 +1073,13 @@ function connectWebSocket() {
         const payload = JSON.parse(event.data);
         if (payload.type && payload.type.startsWith('memory:')) {
           debouncedFetchMemories();
+        } else if (payload.type === 'message:sent' || payload.type === 'messages:read') {
+          debouncedFetchDialogues();
+          debouncedFetchDashboard();
+        } else if (payload.type === 'lead:awakened') {
+          handleLeadAwakened(payload.data);
+          debouncedFetchDashboard();
+          debouncedFetchDialogues();
         } else {
           debouncedFetchDashboard();
         }

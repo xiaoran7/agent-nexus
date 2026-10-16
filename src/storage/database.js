@@ -41,7 +41,9 @@ export function createDatabase(customPath = null) {
       workspace_dir TEXT,
       status TEXT NOT NULL DEFAULT 'idle',
       last_heartbeat INTEGER NOT NULL,
-      registered_at INTEGER NOT NULL
+      registered_at INTEGER NOT NULL,
+      current_intent TEXT,
+      progress_summary TEXT
     );
 
     -- 2. 意图总账 (Intent Ledger)
@@ -120,7 +122,11 @@ export function createDatabase(customPath = null) {
       intent_id TEXT REFERENCES intents(id),
       content TEXT NOT NULL,
       importance TEXT DEFAULT 'normal',
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      thread_id TEXT,
+      reply_to_id INTEGER REFERENCES messages(id),
+      status TEXT NOT NULL DEFAULT 'unread',
+      dialogue_type TEXT NOT NULL DEFAULT 'chat'
     );
 
     -- 9. 项目长期工程记忆库 (Project Long-term Memories)
@@ -150,6 +156,8 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(project_id, thread_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(project_id, to_agent, status);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_cat ON project_memories(project_id, category);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_updated ON project_memories(project_id, updated_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_proj_cat_key ON project_memories(project_id, category, key);
@@ -165,6 +173,34 @@ function migrateOldSchemaIfNeeded(db) {
       db.exec(`ALTER TABLE ${table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';`);
     } catch {
       // 字段已存在，忽略错误
+    }
+  }
+
+  // 针对 agents 表的进度追踪字段平滑补列
+  const agentColumns = [
+    { name: 'current_intent', type: 'TEXT' },
+    { name: 'progress_summary', type: 'TEXT' },
+  ];
+  for (const col of agentColumns) {
+    try {
+      db.exec(`ALTER TABLE agents ADD COLUMN ${col.name} ${col.type};`);
+    } catch {
+      // 忽略已存在列
+    }
+  }
+
+  // 针对 messages 表的跨 Session 对话增强字段平滑补列
+  const messageColumns = [
+    { name: 'thread_id', type: 'TEXT' },
+    { name: 'reply_to_id', type: 'INTEGER REFERENCES messages(id)' },
+    { name: 'status', type: "TEXT NOT NULL DEFAULT 'unread'" },
+    { name: 'dialogue_type', type: "TEXT NOT NULL DEFAULT 'chat'" },
+  ];
+  for (const col of messageColumns) {
+    try {
+      db.exec(`ALTER TABLE messages ADD COLUMN ${col.name} ${col.type};`);
+    } catch {
+      // 忽略已存在列
     }
   }
 

@@ -4,6 +4,53 @@
 
 ---
 
+## 2026-10-16 内嵌项目级常驻架构师 (Tech Lead) 唤醒规划与 Session 间结构化对话网络 (v0.2.3)
+
+### 改了什么
+
+- **内嵌项目级常驻架构师（Tech Lead）非侵入静默与多 Session 唤醒机制 (`src/domain/project-lead.js`)**
+  - **非侵入静默保驾（Solo Sprint / OBSERVING）**：当项目内仅有单 Session（如 Session A）独立施工时，架构师保持静默观察态，绝不盲目插手打扰单会话自主开发，给出安全施工与全速前进指引。
+  - **多 Session 动态唤醒与避障重排（Multi-Session Arbitration / AWAKENED）**：当 Session A 施工未完、新会话 Session B 进场申报计划时，架构师自动唤醒并派发 `lead:awakened` 事件。
+  - **施工现场与进度画像深度聚合（"A 已经干了多少"）**：
+    - 采集在席会话声明的意图（`current_intent`）、锁定的独占资源与租约剩余秒数（`heldClaims` / `activeLeasesCount`）；
+    - 聚合在席会话达成的阶段性里程碑（`project_memories` 中 `category='milestone'`）与活动流水（`activity_log`）；
+    - 读取在席会话实时申报的施工进度摘要（`progress_summary`）。
+  - **两级路线规划与避障重排建议**：
+    - 确定性基线（Ground Truth）：精确切分可立即施工的安全走廊（`safeToStart`）与必须等待交接的重叠冲突模块（`mustWait`）；
+    - 智能架构师指导建议（LLM 增强 + 规则保底）：向 Session B 明确说明在席 Session A 当前干了多少、何时预估交接，并给出先写独立接口/周边单测/Mock 解耦的工程重排建议。
+- **Session 间结构化对话网络与已读状态追踪 (`src/domain/messages.js`, `src/storage/database.js`)**
+  - **数据库 Schema 迁移升级**：
+    - `agents` 表新增 `current_intent TEXT` 与 `progress_summary TEXT`；
+    - `messages` 表新增 `thread_id TEXT`、`reply_to_id INTEGER`、`status TEXT ('unread'|'read')` 与 `dialogue_type TEXT ('chat'|'query'|'response'|'handoff'|'milestone')`；
+    - 增设 `idx_messages_thread` 与 `idx_messages_status` 索引，并平滑支持历史旧库迁移。
+  - **跨 Session 结构化对话（Inter-Session Dialogue）**：
+    - `sendDialogue` / `send`：支持话题线程（Thread）绑定、引用回复（Reply-To）与多种会话类型；
+    - `readDialogue`：支持按 Session、Thread、未读过滤读取，并提供自动标记已读与 `messages:read` 事件总线广播；
+    - `getThread`：按时间序完整追踪特定技术讨论流；
+    - `reportProgress`：支持 Session 随时上报阶段进展并同步更新架构师画像。
+- **MCP 工具与 Transport 接口扩展 (`src/mcp/server.js`, `src/mcp/stdio.js`, `src/transport/rest.js`, `src/transport/ws.js`)**
+  - **新增与强化 MCP 工具**：
+    - `nexus_onboard` / `nexus_advise_plan`：自动触发架构师全景抽取与重排指引；
+    - `nexus_report_progress`：随时上报 Session 当前已完成进度与下一阶段诉求；
+    - `nexus_dialogue_send`：跨 Session 发起问答、交接说明与技术沟通；
+    - `nexus_dialogue_read`：拉取定向未读消息并自动标记已读；
+    - `stdio.js` 补齐 MCP Stdio 对 `nexus_lock_resource`、`nexus_unlock_resource` 及对话类工具的直通支持。
+  - **REST API 端点增设**：
+    - `POST /api/projects/:id/progress`：上报 Session 进度画像；
+    - `POST /api/projects/:id/dialogue`：跨会话发送结构化消息；
+    - `GET /api/projects/:id/dialogue`：读取会话与 Thread 对答。
+  - **WebSocket / SSE 实时广播**：
+    - 广播 `lead:awakened`、`agent:progress`、`messages:read`。
+- **War Room 架构师可视化工作台与对话视窗 (`src/ui/index.html`, `src/ui/style.css`, `src/ui/app.js`)**
+  - **Tech Lead 架构师实况控制台**：动态展示当前架构师状态芯片（`STANDBY`、`OBSERVING` 静默保驾、`AWAKENED` 实时唤醒），并卡片式呈现各 Session 施工实况、进度摘要与避障指引。
+  - **Inter-Session 对话抽屉**：实时滚动呈现各 Session 间 Technical Thread、交接通知与双向问答，支持人类 Sensei 与 Agent 跨会话透明协同。
+- **自动化测试闭环**
+  - 新增 `test/architect-awakening.test.js`：覆盖单 Session 静默保驾、进度汇报与多 Session 并发唤醒避障重排全流程；
+  - 新增 `test/inter-session-dialogue.test.js`：覆盖跨会话提问、Thread 继承、未读过滤与已读状态流转；
+  - 全套 217 项自动化单测全部通过。
+
+---
+
 ## 2026-10-16 Magpie 弹性 AI 网关可视化调度大屏落地与项目级初始化 Skill (nexus-setup) (v0.2.2)
 
 ### 改了什么

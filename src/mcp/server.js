@@ -234,6 +234,53 @@ export const NEXUS_PROJECT_TOOLS = [
       },
       required: ['agent_id', 'resource_name']
     }
+  },
+  {
+    name: 'nexus_report_progress',
+    description: 'Update and broadcast current progress summary of your work (what you have finished so far) so the Tech Lead and sibling sessions can see it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        summary: { type: 'string', description: 'Brief description of what you have finished or are currently working on' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' }
+      },
+      required: ['agent_id', 'summary']
+    }
+  },
+  {
+    name: 'nexus_dialogue_send',
+    description: 'Send a structured cross-session query, response, handoff, or chat message to a peer session or broadcast.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Your agent ID' },
+        to: { type: 'string', description: 'Recipient agent ID (omit or null for broadcast)' },
+        content: { type: 'string', description: 'Dialogue message content' },
+        thread_id: { type: 'string', description: 'Thread identifier for grouped discussions (optional)' },
+        reply_to_id: { type: 'number', description: 'Message ID being replied to (optional)' },
+        dialogue_type: { type: 'string', enum: ['chat', 'query', 'response', 'handoff', 'milestone'], default: 'chat', description: 'Dialogue category' },
+        importance: { type: 'string', enum: ['normal', 'urgent'], default: 'normal' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' }
+      },
+      required: ['from', 'content']
+    }
+  },
+  {
+    name: 'nexus_dialogue_read',
+    description: 'Read incoming dialogues, queries, and replies addressed to your session or broadcasted in this project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        thread_id: { type: 'string', description: 'Filter by specific thread ID (optional)' },
+        unread_only: { type: 'boolean', default: false, description: 'Only fetch unread messages' },
+        mark_as_read: { type: 'boolean', default: true, description: 'Automatically mark returned messages as read' },
+        limit: { type: 'number', default: 50, description: 'Max messages to return' },
+        project_id: { type: 'string', description: 'Project ID (default "default")' }
+      },
+      required: ['agent_id']
+    }
   }
 ];
 
@@ -343,6 +390,33 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
     return coordinator.releaseResourceLock({
       agentId: args.agent_id,
       resourceName: args.resource_name,
+      projectId: pid
+    });
+  }
+
+  if (toolName === 'nexus_report_progress') {
+    return messageService.reportProgress(args.agent_id, args.summary, pid);
+  }
+
+  if (toolName === 'nexus_dialogue_send') {
+    return messageService.send({
+      from: args.from,
+      to: args.to || null,
+      content: args.content,
+      threadId: args.thread_id || null,
+      replyToId: args.reply_to_id || null,
+      dialogueType: args.dialogue_type || 'chat',
+      importance: args.importance || 'normal',
+      projectId: pid
+    });
+  }
+
+  if (toolName === 'nexus_dialogue_read') {
+    return messageService.readDialogue(args.agent_id, {
+      threadId: args.thread_id || null,
+      unreadOnly: args.unread_only === true,
+      markAsRead: args.mark_as_read !== false,
+      limit: args.limit || 50,
       projectId: pid
     });
   }

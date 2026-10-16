@@ -73,6 +73,18 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
     broadcast(wss, { type: 'lead:broadcast', data });
   });
 
+  eventBus.on('lead:awakened', (data) => {
+    broadcast(wss, { type: 'lead:awakened', data });
+  });
+
+  eventBus.on('agent:progress', (data) => {
+    broadcast(wss, { type: 'agent:progress', data });
+  });
+
+  eventBus.on('messages:read', (data) => {
+    broadcast(wss, { type: 'messages:read', data });
+  });
+
   eventBus.on('memory:saved', (data) => {
     broadcast(wss, { type: 'memory:saved', data });
   });

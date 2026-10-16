@@ -74,18 +74,24 @@
     <!-- VIEW 1: War Room (多 Agent 协同与泳道)      -->
     <!-- ========================================== -->
     <div id="view-war-room" class="view-pane active">
-      <!-- 0. Tech Lead Status Banner -->
+      <!-- 0. Tech Lead Status Banner (内嵌项目级常驻架构师 Session 视窗) -->
       <div class="lead-banner">
         <div class="lead-header-row">
           <div class="lead-title-box">
             <span style="font-size: 16px;">🏛️</span>
-            <span style="font-weight: 800; font-size: 14px; letter-spacing: -0.2px; color: #fff;">AI Tech Lead & Master Architect</span>
-            <span id="lead-status-chip" class="lead-chip">DETERMINISTIC + CPA</span>
+            <span style="font-weight: 800; font-size: 14px; letter-spacing: -0.2px; color: #fff;">Embedded AI Tech Lead (项目常驻架构师视窗)</span>
+            <span id="lead-status-chip" class="lead-chip chip-silent">OBSERVING (SILENT SPRINT)</span>
           </div>
-          <span id="lead-last-activity" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">READY</span>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span id="lead-session-stats" style="font-size: 11px; font-family: var(--font-mono); color: #38bdf8;">1 SESSION ACTIVE</span>
+            <span id="lead-last-activity" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">READY</span>
+          </div>
         </div>
         <div id="lead-advice-container" class="lead-advice-text">
-          [Nexus 调度指引] 常驻架构师正在持续巡检项目工作区。所有在席会话按照既定契约协同开发，写冲突将自动触发无等待重排。
+          [Nexus 架构师静默保驾] 单会话施工中，架构师保持静默，绝不产生干扰。当检测到新 Session 带着并发计划加入时，将实时唤醒并提供避障重排与接力路线。
+        </div>
+        <div id="lead-awakened-detail" class="lead-awakened-box" style="display: none;">
+          <!-- 唤醒后的两会话任务交接与重排明细 -->
         </div>
       </div>
 
@@ -205,6 +211,28 @@
           </div>
         </section>
       </div>
+
+      <!-- 3. Inter-Session Dialogue & Cross-Session Q&A (Session 间结构化对话与交接抽屉) -->
+      <section class="glass-panel" style="margin-top: 18px;">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>Inter-Session Dialogue & Handoffs (会话间双向对话网络)</span>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <span class="panel-meta" id="dialogue-counter">0 DIALOGUES</span>
+            <button id="refresh-dialogue-btn" class="gw-action-btn" style="padding: 3px 8px; font-size: 11px;">
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+        <div class="dialogue-container" id="dialogue-stream">
+          <!-- 动态注入会话对答流水 -->
+          <div class="dialogue-empty-hint">暂无跨 Session 对话，当多会话并发沟通接口、交接进度时将在此呈现。</div>
+        </div>
+      </section>
     </div>
 
     <!-- ========================================== -->

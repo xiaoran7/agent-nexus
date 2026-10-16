@@ -170,6 +170,49 @@ export function startMcpStdio(options = {}) {
         throw new Error(`Unsupported state action: ${args.action}`);
       }
 
+      case 'nexus_lock_resource':
+        return apiFetch('/api/resources/lock', 'POST', {
+          agent_id: args.agent_id,
+          resource_name: args.resource_name,
+          ttl_seconds: args.ttl_seconds || 300,
+          reason: args.reason,
+          project_id: args.project_id
+        });
+
+      case 'nexus_unlock_resource':
+        return apiFetch('/api/resources/unlock', 'POST', {
+          agent_id: args.agent_id,
+          resource_name: args.resource_name,
+          project_id: args.project_id
+        });
+
+      case 'nexus_report_progress':
+        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/progress`, 'POST', {
+          agent_id: args.agent_id,
+          summary: args.summary
+        });
+
+      case 'nexus_dialogue_send':
+        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/dialogue`, 'POST', {
+          from: args.from || defaultAgentId,
+          to: args.to || null,
+          content: args.content,
+          thread_id: args.thread_id || null,
+          reply_to_id: args.reply_to_id || null,
+          dialogue_type: args.dialogue_type || 'chat',
+          importance: args.importance || 'normal'
+        });
+
+      case 'nexus_dialogue_read': {
+        const params = new URLSearchParams();
+        params.set('agent_id', args.agent_id);
+        if (args.thread_id) params.set('thread_id', args.thread_id);
+        if (args.unread_only) params.set('unread_only', 'true');
+        if (args.mark_as_read !== undefined) params.set('mark_as_read', String(args.mark_as_read));
+        if (args.limit) params.set('limit', String(args.limit));
+        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/dialogue?${params.toString()}`, 'GET');
+      }
+
       case 'nexus_message':
         return apiFetch('/api/messages', 'POST', {
           from: args.from || defaultAgentId,

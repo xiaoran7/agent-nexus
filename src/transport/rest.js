@@ -231,6 +231,58 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
             }
           }
 
+          if (action === 'progress' && req.method === 'POST') {
+            const data = await readJson();
+            const result = messageService.reportProgress(data.agent_id, data.summary, projectId);
+            return sendJson(200, result);
+          }
+
+          if (action === 'dialogue') {
+            if (req.method === 'GET') {
+              const agentId = url.searchParams.get('agent_id');
+              const threadId = url.searchParams.get('thread_id') || null;
+              const unreadOnly = url.searchParams.get('unread_only') === 'true';
+              const markAsRead = url.searchParams.get('mark_as_read') !== 'false';
+              const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+
+              if (!agentId) {
+                // 若未指定 agentId，则返回该项目下的会话流或特定线程
+                if (threadId) {
+                  return sendJson(200, messageService.getThread(threadId, projectId));
+                }
+                return sendJson(200, messageService.list(limit, projectId));
+              }
+
+              if (token && token.agent_id && token.agent_id !== agentId) {
+                return sendJson(403, { error: 'This token cannot read another agent\'s dialogue' });
+              }
+
+              const result = messageService.readDialogue(agentId, {
+                threadId,
+                unreadOnly,
+                markAsRead,
+                limit,
+                projectId
+              });
+              return sendJson(200, result);
+            }
+
+            if (req.method === 'POST') {
+              const data = await readJson();
+              const msg = messageService.send({
+                from: data.from,
+                to: data.to || null,
+                content: data.content,
+                threadId: data.thread_id || null,
+                replyToId: data.reply_to_id || null,
+                dialogueType: data.dialogue_type || 'chat',
+                importance: data.importance || 'normal',
+                projectId
+              }, token);
+              return sendJson(200, msg);
+            }
+          }
+
           if (action === 'broadcast' && req.method === 'POST') {
             const body = await readJson();
             if (!body.content || typeof body.content !== 'string' || !body.content.trim()) {

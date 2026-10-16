@@ -1,6 +1,6 @@
 {
   "name": "agent-nexus",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Passive Agent Coordinator - Multi-agent conflict detection, lease management, resilient AI gateway and real-time coordination dashboard",
   "main": "src/daemon/index.js",
   "type": "module",
