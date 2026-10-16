@@ -5,10 +5,19 @@ import { createHash } from 'node:crypto';
 const PROJECT_MARKERS = ['.nexus', '.git', 'package.json', 'CLAUDE.md'];
 
 /**
- * 规范化文件系统路径：统一转为物理路径（解析软链接）、小写、正斜杠，并处理 Windows 盘符
+ * 规范化文件系统路径：统一转为物理路径（解析软链接）、正斜杠，并处理 Windows 盘符与跨平台大小写
  */
 export function canonicalizePath(p) {
   if (!p || typeof p !== 'string') return '';
+  // 若是 Windows 盘符绝对路径 (如 C:/... 或 c:\...)，遵循 Windows 大小写不敏感契约规范为小写
+  if (/^[a-zA-Z]:[/\\]/.test(p)) {
+    let normalized = p.replace(/\\/g, '/');
+    if (normalized.length > 3 && normalized.endsWith('/')) {
+      normalized = normalized.slice(0, -1);
+    }
+    return normalized.toLowerCase();
+  }
+
   let resolved = resolve(p);
   try {
     if (existsSync(resolved)) {
@@ -16,15 +25,14 @@ export function canonicalizePath(p) {
     }
   } catch {}
   let normalized = resolved.replace(/\\/g, '/');
-  // 统一 Windows 盘符为小写 (如 C:/ -> c:/)
   if (/^[A-Za-z]:\//.test(normalized)) {
     normalized = normalized[0].toLowerCase() + normalized.slice(1);
   }
-  // 去除末尾冗余斜杠（除根目录外）
   if (normalized.length > 3 && normalized.endsWith('/')) {
     normalized = normalized.slice(0, -1);
   }
-  return normalized.toLowerCase();
+  // Windows 平台下文件系统大小写不敏感，统一小写；POSIX (Linux/macOS) 平台保留真实物理大小写以保证真实文件路径可寻址
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 /**
@@ -146,13 +154,31 @@ export function resolveProject(startDir) {
   };
 }
 
+function isPathAbsolute(p) {
+  if (!p || typeof p !== 'string') return false;
+  return p.startsWith('/') || p.startsWith('\\') || /^[a-zA-Z]:[/\\]/.test(p);
+}
+
+function resolveCrossPath(baseDir, filePath) {
+  if (!filePath) return '';
+  if (isPathAbsolute(filePath)) {
+    return filePath;
+  }
+  if (baseDir && /^[a-zA-Z]:[/\\]/.test(baseDir) && process.platform !== 'win32') {
+    const cleanBase = baseDir.replace(/\\/g, '/').replace(/\/+$/, '');
+    const cleanRel = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+    return `${cleanBase}/${cleanRel}`;
+  }
+  return resolve(baseDir || process.cwd(), filePath);
+}
+
 /**
  * 将给定的绝对或相对路径转为相对于项目根（projectRoot）的规范化跨工作树相对路径
  */
 export function toRepoRelativePath(filePath, projectRoot, workspaceDir) {
   if (!filePath || typeof filePath !== 'string') return '';
   const baseDir = workspaceDir || projectRoot || process.cwd();
-  const absolutePath = resolve(baseDir, filePath);
+  const absolutePath = resolveCrossPath(baseDir, filePath);
   const canonicalProjectRoot = canonicalizePath(projectRoot);
   const canonicalTarget = canonicalizePath(absolutePath);
 

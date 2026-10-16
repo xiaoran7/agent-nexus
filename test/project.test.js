@@ -112,5 +112,11 @@ test('项目识别与路径归一化', async (t) => {
 
     // 绝对路径位于 worktree 内，相对 worktree 解析出相同的相对路径
     assert.equal(toRepoRelativePath('c:/workspace/my-repo-feat/src/domain/state.js', projRoot, wtRoot), 'src/domain/state.js');
+
+    // POSIX 风格绝对路径 (Linux / macOS 平台兼容性)
+    const posixProj = '/workspace/my-repo';
+    const posixWt = '/workspace/my-repo-feat';
+    assert.equal(toRepoRelativePath('/workspace/my-repo/src/domain/state.js', posixProj, posixProj), 'src/domain/state.js');
+    assert.equal(toRepoRelativePath('/workspace/my-repo-feat/src/domain/state.js', posixProj, posixWt), 'src/domain/state.js');
   });
 });

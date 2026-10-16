@@ -9,8 +9,26 @@ const CLAIM_TYPES = new Set(['file', 'module', 'symbol', 'resource']);
 
 const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
 
+function isPathAbsolute(p) {
+  if (!p || typeof p !== 'string') return false;
+  return p.startsWith('/') || p.startsWith('\\') || /^[a-zA-Z]:[/\\]/.test(p);
+}
+
+function resolveSafe(baseDir, value) {
+  if (!value) return '';
+  if (isPathAbsolute(value)) {
+    return value;
+  }
+  if (baseDir && /^[a-zA-Z]:[/\\]/.test(baseDir) && process.platform !== 'win32') {
+    const cleanBase = baseDir.replace(/\\/g, '/').replace(/\/+$/, '');
+    const cleanRel = value.replace(/\\/g, '/').replace(/^\/+/, '');
+    return `${cleanBase}/${cleanRel}`;
+  }
+  return baseDir ? resolve(baseDir, value) : resolve(value);
+}
+
 function toComparablePath(value, baseDir, projectRoot) {
-  let resolved = baseDir && !isAbsolute(value) ? resolve(baseDir, value) : resolve(value);
+  let resolved = resolveSafe(baseDir, value);
   try {
     if (existsSync(resolved)) {
       resolved = realpathSync(resolved);
@@ -19,17 +37,18 @@ function toComparablePath(value, baseDir, projectRoot) {
 
   // 跨 Worktree 相对化对齐：若指定了 projectRoot 且 baseDir 与 projectRoot 不一致，将工作树内的文件映射到主工程路径
   if (projectRoot && baseDir) {
-    const canonicalBase = normalize(baseDir).replace(/\\/g, '/').toLowerCase();
-    const canonicalProj = normalize(projectRoot).replace(/\\/g, '/').toLowerCase();
-    const canonicalTarget = normalize(resolved).replace(/\\/g, '/').toLowerCase();
+    const canonicalBase = baseDir.replace(/\\/g, '/').toLowerCase();
+    const canonicalProj = projectRoot.replace(/\\/g, '/').toLowerCase();
+    const canonicalTarget = resolved.replace(/\\/g, '/').toLowerCase();
 
     if (canonicalBase !== canonicalProj && canonicalTarget.startsWith(canonicalBase + '/')) {
       const rel = canonicalTarget.slice(canonicalBase.length + 1);
-      resolved = resolve(projectRoot, rel);
+      resolved = resolveSafe(projectRoot, rel);
     }
   }
 
-  return normalize(resolved).replace(/\\/g, '/').toLowerCase();
+  let normalized = resolved.replace(/\\/g, '/');
+  return normalize(normalized).replace(/\\/g, '/').toLowerCase();
 }
 
 function requireAgentId(value) {

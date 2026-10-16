@@ -11,6 +11,10 @@
 - **Git Worktree 共同根识别与跨工作树相对化对齐 (`src/domain/project.js`, `src/daemon/coordinator.js`)**
   - **Git 共同根探测 (`resolveGitCommonRoot`)**：针对 Git Worktree 下 `.git` 为指针文件的形态，自动解析 `gitdir` 与 `commondir`，向上追溯至主仓库 `.git`，确保主仓库与各工作树共享同一个 `projectId` 与 `projectRoot`，消除多工作树环境下的项目视界隔离。
   - **跨工作树路径映射 (`toRepoRelativePath`, `toComparablePath`)**：将各工作树内的绝对物理路径统一映射到相对于 `projectRoot` 的规范相对路径进行冲突比对；当检测到并发修改来自不同工作树时，显式标记 `CROSS-WORKTREE CONFLICT` 高危警示，提醒并发修改将引发 Git 合并冲突。
+  - **Linux/POSIX 大小写敏感与 Windows 盘符跨平台兼容加固**：
+    - 修复 `canonicalizePath` 在 Linux 下全局小写化导致真实大小写敏感路径 `ENOENT` 的严重缺陷，改为仅在 Windows（`win32`）或显式盘符特征下小写化，Linux 下严格保留物理真实大小写；
+    - 修复在 Linux 环境下对携带 Windows 盘符的虚拟/跨平台绝对路径误调用 POSIX `path.resolve` 导致前缀拼接 cwd 与工作树无法映射的问题（引入 `isPathAbsolute` 与 `resolveCrossPath`/`resolveSafe`）；
+    - 全面修复 GitHub Actions CI (Ubuntu) 构建与测试。
 - **命令级排他性命名资源锁 (`src/daemon/coordinator.js`, `src/transport/rest.js`, `src/mcp/server.js`)**
   - **扩展 `CLAIM_TYPES` 支持 `resource` 类型**：针对测试套件（`tests`）、本地开发服务（`dev-server`）、打包构建（`build`）等系统级排他性共享资源实施排他性租约互斥，阻断端口争用与测试状态污染。
   - **核心协调层方法**：提供 `acquireResourceLock`、`releaseResourceLock` 和 `listResourceLocks`；在四级冲突判定（`findConflict`）中增加 Rule 4 资源互斥规则。
