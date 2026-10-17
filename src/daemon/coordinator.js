@@ -296,6 +296,7 @@ export class CoordinatorEngine {
       return assertClaimTarget(c.target, c.type, baseDir, effectiveProjectRoot);
     });
 
+    this.reapDeadAgentLeases();
     this.expireLeases();
     const now = Date.now();
     const intentId = `intent_${randomUUID().slice(0, 8)}`;
@@ -495,6 +496,16 @@ export class CoordinatorEngine {
       allReleasedClaims.push(...claims);
       releasedLeaseIds.push(lease.id);
 
+      const isProcessExit = reason === 'process_exit';
+      const finalStatus = isProcessExit ? 'aborted' : 'completed';
+      const nodeType = isProcessExit ? 'handoff' : 'completed';
+      const nodeTitle = isProcessExit
+        ? (intentRow?.summary ? `进程退出异常释放: ${intentRow.summary}` : `进程退出租约提前回收 (Intent ${lease.intent_id})`)
+        : (intentRow?.summary ? `提交完成: ${intentRow.summary}` : `Git 提交完工 (Intent ${lease.intent_id})`);
+      const nodeDesc = isProcessExit
+        ? `监测到进程退出 (${reason})，提前安全回收了 ${claims.length} 项资源锁并唤醒等待者`
+        : `生命周期自动感知完成 (${reason})，释放了 ${claims.length} 项资源锁`;
+
       if (this.topologyService && claims.length > 0) {
         try {
           this.topologyService.recordNode({
@@ -502,9 +513,9 @@ export class CoordinatorEngine {
             agentId,
             agentName: releasedByName,
             provider: agentRow?.provider || 'agent',
-            nodeType: 'completed',
-            title: intentRow?.summary ? `提交完成: ${intentRow.summary}` : `Git 提交完工 (Intent ${lease.intent_id})`,
-            description: `生命周期自动感知完成 (${reason})，释放了 ${claims.length} 项资源锁`,
+            nodeType,
+            title: nodeTitle,
+            description: nodeDesc,
             intentId: lease.intent_id,
             claims,
             causalityType: 'sequence'
@@ -512,7 +523,7 @@ export class CoordinatorEngine {
         } catch {}
       }
 
-      this.db.prepare(`UPDATE intents SET status = 'completed', updated_at = ? WHERE id = ?`).run(now, lease.intent_id);
+      this.db.prepare(`UPDATE intents SET status = ?, updated_at = ? WHERE id = ?`).run(finalStatus, now, lease.intent_id);
       this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
       this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(lease.intent_id);
 
@@ -743,9 +754,6 @@ export class CoordinatorEngine {
       }
 
       if (!isAlive) {
-        // 标记 agent 状态为 departed
-        this.updateAgentStatus(holder.id, 'departed');
-
         // 立即提前回收该死亡 Agent 在对应项目下的所有租约，并唤醒所有等待会话
         const releaseRes = this.releaseAgentLeases({
           agentId: holder.id,
@@ -753,6 +761,9 @@ export class CoordinatorEngine {
           reason: 'process_exit',
           scope: 'all'
         });
+
+        // 标记 agent 状态为 departed（必须在 releaseAgentLeases 之后，避免被 _syncAgentRunningStatus 覆盖为 idle）
+        this.updateAgentStatus(holder.id, 'departed');
 
         this.logActivity(
           holder.id,

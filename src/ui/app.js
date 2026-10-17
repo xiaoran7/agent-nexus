@@ -373,7 +373,10 @@ function renderAgents(agents, activeClaims) {
         <div class="agent-top-row">
           <div class="agent-id-name">
             <div class="agent-icon">${providerShort}</div>
-            <div class="agent-title-text" title="${nameSafe}">${nameSafe}</div>
+            <div class="agent-title-text" title="${nameSafe}">
+              ${nameSafe}
+              ${a.pid ? `<span style="font-size: 11px; opacity: 0.6; font-weight: normal; margin-left: 4px;">(PID: ${escapeHtml(String(a.pid))})</span>` : ''}
+            </div>
           </div>
           <span class="status-tag ${statusSafe}">${statusLabel}</span>
         </div>
