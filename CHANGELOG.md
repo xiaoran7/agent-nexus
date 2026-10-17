@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-10-17 补齐 package-lock.json 恢复 GitHub Actions CI 干净构建
+
+### 改了什么
+
+- **对齐 package-lock.json 与 package.json (`package-lock.json`)**：
+  - 同步补充 `electron`（^34.2.0）及其完整依赖树声明；
+  - 修复 GitHub Actions 在 `npm ci` 阶段因 lockfile 缺少 electron 导致中断退出的问题；
+  - 本地与远端 CI 干净构建与 230 个测试全部 100% 通过。
+
+---
+
 ## 2026-10-17 默认端口避让迁移至 4300（彻底避开 AgentHub 4100）
 
 ### 改了什么
