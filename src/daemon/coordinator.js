@@ -55,6 +55,15 @@ function requireAgentId(value) {
   return requireString(value, 'agent_id');
 }
 
+function splitTargetAnchor(target) {
+  if (typeof target !== 'string') return { baseTarget: '', anchor: null };
+  const hashIdx = target.indexOf('#');
+  if (hashIdx === -1) return { baseTarget: target, anchor: null };
+  const baseTarget = target.slice(0, hashIdx).trim();
+  const anchor = target.slice(hashIdx + 1).trim().toLowerCase();
+  return { baseTarget, anchor: anchor || null };
+}
+
 function assertClaimTarget(raw, claimType, baseDir, projectRoot) {
   const target = requireString(raw, 'claims[].target');
 
@@ -80,13 +89,16 @@ function assertClaimTarget(raw, claimType, baseDir, projectRoot) {
     return { type: claimType, target: cleanTarget };
   }
 
-  const normalized = toComparablePath(target, baseDir, projectRoot);
-  if (normalized === toComparablePath('.', baseDir, projectRoot) || normalized === toComparablePath('/', baseDir, projectRoot)) {
+  // 支持大文件局部锁 file#anchor（如 admin.html#header-nav）
+  const { baseTarget, anchor } = splitTargetAnchor(target);
+  const normalizedBase = toComparablePath(baseTarget, baseDir, projectRoot);
+  if (normalizedBase === toComparablePath('.', baseDir, projectRoot) || normalizedBase === toComparablePath('/', baseDir, projectRoot)) {
     throw new ValidationError(
       `Claim target "${target}" resolves to a directory root or the working directory, not a specific resource`,
       'claims[].target'
     );
   }
+  const normalized = anchor ? `${normalizedBase}#${anchor}` : normalizedBase;
   return { type: claimType, target: normalized };
 }
 
@@ -107,10 +119,11 @@ export class CoordinatorEngine {
     return a.startsWith(b + '/') || b.startsWith(a + '/');
   }
 
-  // 四级冲突判定的唯一实现，加入 projectId 作用域与资源锁互斥
+  // 四级冲突判定的唯一实现，加入 projectId 作用域与资源锁互斥，支持 #anchor 大文件细粒度锁
   findConflict(normalizedClaims, agentId, now, projectId = 'default') {
     const activeClaims = this.db.prepare(`
-      SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, a.name as agent_name
+      SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, l.expires_at,
+             a.name as agent_name, a.workspace_dir as holder_workspace
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
@@ -123,23 +136,48 @@ export class CoordinatorEngine {
           continue;
         }
 
-        // Rule 1: 文件精确重合
+        const remainingSec = Math.max(0, Math.ceil((active.expires_at - now) / 1000));
+        const meta = {
+          blockedByAgentId: active.agent_id,
+          blockedByAgentName: active.agent_name,
+          holderWorkspace: active.holder_workspace || '',
+          claimType: active.claim_type,
+          claimTarget: active.claim_target,
+          expiresAt: active.expires_at,
+          remainingSec
+        };
+
+        // Rule 1: 文件精确重合或大文件锚点判定 (#anchor)
         if (claim.type === 'file' && active.claim_type === 'file') {
-          if (claim.target === active.claim_target) {
+          const { baseTarget: baseA, anchor: anchorA } = splitTargetAnchor(claim.target);
+          const { baseTarget: baseB, anchor: anchorB } = splitTargetAnchor(active.claim_target);
+
+          if (baseA === baseB) {
+            // 如果双方都显式指定了不同的 anchor，属于文件不同逻辑区域，允许并发施工
+            if (anchorA && anchorB && anchorA !== anchorB) {
+              continue;
+            }
+
+            const isAnchorConflict = Boolean(anchorA && anchorB);
+            const reason = isAnchorConflict
+              ? `Anchor conflict: Section '#${anchorA}' in '${baseA}' is currently locked by ${active.agent_name}`
+              : `File conflict: '${baseA}' ${!anchorB ? 'whole file is locked by' : "section '#" + anchorB + "' is locked by"} ${active.agent_name}`;
+
             return {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
-              reason: `File conflict: '${claim.target}' is currently locked by ${active.agent_name}`
+              ...meta,
+              reason
             };
           }
         }
 
-        // Rule 2: 模块 / 目录包含关系
+        // Rule 2: 模块 / 目录包含关系 (模块锁包含文件及其所有 anchor 锚点)
         if (claim.type === 'module' || active.claim_type === 'module') {
-          if (this.pathsOverlap(claim.target, active.claim_target)) {
+          const targetA = claim.type === 'file' ? splitTargetAnchor(claim.target).baseTarget : claim.target;
+          const targetB = active.claim_type === 'file' ? splitTargetAnchor(active.claim_target).baseTarget : active.claim_target;
+
+          if (this.pathsOverlap(targetA, targetB)) {
             return {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
+              ...meta,
               reason: `Module conflict between '${claim.target}' and '${active.claim_target}' held by ${active.agent_name}`
             };
           }
@@ -149,8 +187,7 @@ export class CoordinatorEngine {
         if (claim.type === 'symbol' && active.claim_type === 'symbol') {
           if (claim.target === active.claim_target) {
             return {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
+              ...meta,
               reason: `Symbol conflict: '${claim.target}' is being modified by ${active.agent_name}`
             };
           }
@@ -160,8 +197,7 @@ export class CoordinatorEngine {
         if (claim.type === 'resource' && active.claim_type === 'resource') {
           if (claim.target === active.claim_target) {
             return {
-              blockedByAgentId: active.agent_id,
-              blockedByAgentName: active.agent_name,
+              ...meta,
               reason: `Resource conflict: '${claim.target}' is currently held by ${active.agent_name}`
             };
           }
@@ -335,6 +371,9 @@ export class CoordinatorEngine {
         intentId,
         blockedBy: conflict.blockedByAgentId,
         blockedByName: conflict.blockedByAgentName,
+        holderWorkspace: conflict.holderWorkspace || '',
+        expiresAt: conflict.expiresAt,
+        remainingSec: conflict.remainingSec,
         reason: conflict.reason,
         claims: normalizedClaims
       };
@@ -370,13 +409,21 @@ export class CoordinatorEngine {
     this._syncAgentRunningStatus(agentId, projectId, now);
     this.logActivity(agentId, 'lease:released', lease.id, `Agent released lease for intent ${lease.intent_id}`, projectId);
 
+    const agentRow = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(agentId);
+    const releasedByName = agentRow?.name || agentId;
+
     this.eventBus.emit('resource:freed', {
       project_id: projectId,
       resources: releasedClaims,
-      released_by: agentId
+      released_by: agentId,
+      released_by_name: releasedByName
     });
 
-    const { nextWaiter, skipped } = this._wakeNextEligibleWaiter(projectId, now);
+    const { nextWaiter, skipped } = this._wakeNextEligibleWaiter(projectId, now, {
+      resources: releasedClaims,
+      releasedBy: agentId,
+      releasedByName
+    });
 
     return {
       success: true,
@@ -386,6 +433,82 @@ export class CoordinatorEngine {
         intent_id: nextWaiter.intent_id
       } : null,
       stillBlocked: skipped
+    };
+  }
+
+  // 3.1 批量释放指定 Agent 的全部或指定范围租约 (用于 git commit / git push 后的零感自动释放)
+  releaseAgentLeases({ agentId, projectId = 'default', reason = 'git_action', scope = 'all' }) {
+    requireAgentId(agentId);
+    const now = Date.now();
+    const finalProjectId = projectId || 'default';
+
+    const activeLeases = this.db.prepare(`
+      SELECT l.id, l.intent_id, l.project_id
+      FROM leases l
+      WHERE l.agent_id = ? AND l.project_id = ? AND l.expires_at > ?
+    `).all(agentId, finalProjectId, now);
+
+    if (activeLeases.length === 0) {
+      return {
+        success: true,
+        releasedCount: 0,
+        releasedLeases: [],
+        notifiedWaiters: []
+      };
+    }
+
+    const agentRow = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(agentId);
+    const releasedByName = agentRow?.name || agentId;
+
+    const allReleasedClaims = [];
+    const releasedLeaseIds = [];
+
+    for (const lease of activeLeases) {
+      const claims = this.db.prepare(`
+        SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
+      `).all(lease.intent_id).map(c => ({ type: c.claim_type, target: c.claim_target }));
+
+      allReleasedClaims.push(...claims);
+      releasedLeaseIds.push(lease.id);
+
+      this.db.prepare(`UPDATE intents SET status = 'completed', updated_at = ? WHERE id = ?`).run(now, lease.intent_id);
+      this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
+      this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(lease.intent_id);
+
+      this.logActivity(agentId, 'lease:released', lease.id, `Auto-released lease upon ${reason} for intent ${lease.intent_id}`, finalProjectId);
+    }
+
+    this._syncAgentRunningStatus(agentId, finalProjectId, now);
+
+    this.eventBus.emit('resource:freed', {
+      project_id: finalProjectId,
+      resources: allReleasedClaims,
+      released_by: agentId,
+      released_by_name: releasedByName,
+      reason
+    });
+
+    // 循环唤醒所有当前可能已经无冲突的等待者
+    const notifiedWaiters = [];
+    while (true) {
+      const { nextWaiter } = this._wakeNextEligibleWaiter(finalProjectId, now, {
+        resources: allReleasedClaims,
+        releasedBy: agentId,
+        releasedByName
+      });
+      if (!nextWaiter) break;
+      notifiedWaiters.push({
+        agent_id: nextWaiter.agent_id,
+        intent_id: nextWaiter.intent_id
+      });
+    }
+
+    return {
+      success: true,
+      releasedCount: releasedLeaseIds.length,
+      releasedLeases: releasedLeaseIds,
+      releasedClaims: allReleasedClaims,
+      notifiedWaiters
     };
   }
 
@@ -402,7 +525,7 @@ export class CoordinatorEngine {
   }
 
   // 内部辅助方法：复核并唤醒等待队列中首个满足条件的 Agent
-  _wakeNextEligibleWaiter(projectId, now) {
+  _wakeNextEligibleWaiter(projectId, now, freedInfo = null) {
     const breadthOf = (intentId) => this.db.prepare(`
       SELECT COALESCE(SUM(
         CASE WHEN claim_type = 'file' THEN 1
@@ -423,6 +546,7 @@ export class CoordinatorEngine {
       .sort((a, b) => (b.breadth.segments - a.breadth.segments) || (b.breadth.n - a.breadth.n));
 
     let nextWaiter = null;
+    let waiterClaims = [];
     let skipped = 0;
     for (const cand of candidates) {
       const claims = this.db.prepare(`
@@ -434,6 +558,7 @@ export class CoordinatorEngine {
         continue;
       }
       nextWaiter = cand;
+      waiterClaims = claims;
       break;
     }
 
@@ -447,13 +572,55 @@ export class CoordinatorEngine {
       `).run(now, nextWaiter.intent_id);
 
       this.logActivity(nextWaiter.agent_id, 'agent:woken', nextWaiter.intent_id, `Notified waiter ${nextWaiter.agent_name} to recheck`, projectId);
-      this.eventBus.emit('agent:woken', {
+
+      const targetDesc = freedInfo?.resources?.map(r => r.target).join(', ') || 'locked resource';
+      const freedByName = freedInfo?.releasedByName || freedInfo?.releasedBy || 'previous holder';
+      const resumeHint = `Resource '${targetDesc}' held by [${freedByName}] has been released. Your claimed targets (${waiterClaims.map(c => c.target).join(', ')}) are now conflict-free. Refresh workspace and proceed.`;
+
+      const wokenPayload = {
         project_id: projectId,
         agent_id: nextWaiter.agent_id,
+        agent_name: nextWaiter.agent_name,
         intent_id: nextWaiter.intent_id,
+        summary: nextWaiter.summary,
         verified: true,
-        message: 'Resource released and your claims are now conflict-free. Refresh workspace and proceed.'
-      });
+        freed_resources: freedInfo?.resources || [],
+        freed_by: freedInfo?.releasedBy || null,
+        freed_by_name: freedByName,
+        claims: waiterClaims,
+        resume_hint: resumeHint,
+        message: resumeHint
+      };
+
+      this.eventBus.emit('agent:woken', wokenPayload);
+
+      // 持久化通知到 messages 表中，确保通过 nexus_dialogue_read 轮询的会话可检索到
+      try {
+        if (this.messageService) {
+          const senderId = freedInfo?.releasedBy || 'nexus';
+          if (!this.getAgent(senderId)) {
+            this.registerAgent({
+              id: senderId,
+              name: freedByName || 'Nexus Coordinator',
+              provider: 'system',
+              sessionId: 'coordinator',
+              projectId
+            });
+          }
+          this.messageService.send({
+            from: senderId,
+            to: nextWaiter.agent_id,
+            intentId: nextWaiter.intent_id,
+            content: `[Resource Woken] ${resumeHint}`,
+            importance: 'urgent',
+            projectId,
+            dialogueType: 'handoff',
+            status: 'unread'
+          });
+        }
+      } catch (err) {
+        // 消息持久化作为辅助增强，不阻断主唤醒链路
+      }
     }
 
     return { nextWaiter, skipped };
@@ -548,9 +715,14 @@ export class CoordinatorEngine {
           return { allow: true, reason: 'self-held-resource-lease' };
         } else {
           this.logActivity(agentId, 'hook:blocked', cleanResource, `Blocked access to resource '${cleanResource}' (held by ${existingResourceLock.agent_name})`, finalProjectId);
+          const remainingSec = Math.max(0, Math.ceil((existingResourceLock.expires_at - now) / 1000));
           return {
             allow: false,
             holder: existingResourceLock.agent_name,
+            holderWorkspace: '',
+            expiresAt: existingResourceLock.expires_at,
+            remainingSec,
+            advice: `Resource '${cleanResource}' is busy. You can work on independent code or wait for the process to finish (ETA ~${remainingSec}s).`,
             reason: `BLOCKED: Resource '${cleanResource}' is currently locked by [${existingResourceLock.agent_name}] for "${existingResourceLock.summary}". Please wait for the current run to finish.`
           };
         }
@@ -567,9 +739,14 @@ export class CoordinatorEngine {
 
       if (intentRes.status === 'WAITING') {
         this.logActivity(agentId, 'hook:blocked', cleanResource, `Blocked access to resource '${cleanResource}' (${intentRes.reason})`, finalProjectId);
+        const remainingSec = intentRes.remainingSec || 0;
         return {
           allow: false,
           holder: intentRes.blockedByName,
+          holderWorkspace: intentRes.holderWorkspace || '',
+          expiresAt: intentRes.expiresAt || null,
+          remainingSec,
+          advice: `Resource '${cleanResource}' is blocked. Please wait for previous job to finish (ETA ~${remainingSec}s).`,
           reason: `BLOCKED: Resource '${cleanResource}' is blocked by [${intentRes.blockedByName}] (${intentRes.reason}). Please wait.`
         };
       }
@@ -581,35 +758,58 @@ export class CoordinatorEngine {
       };
     }
 
-    // 5.2 文件与模块路径冲突拦截 (支持跨工作树相对化对齐)
+    // 5.2 文件与模块路径冲突拦截 (支持跨工作树相对化对齐与 #anchor 细粒度锁)
     assertClaimTarget(filePath, 'file', workspaceDir, finalProjectRoot);
     const normalizedFile = this.normalizePath(filePath, workspaceDir, finalProjectRoot);
+    const { baseTarget: baseFile, anchor: fileAnchor } = splitTargetAnchor(normalizedFile);
 
     const existingLock = this.db.prepare(`
-      SELECT c.agent_id, a.name as agent_name, a.workspace_dir as holder_workspace, i.summary, l.id as lease_id
+      SELECT c.agent_id, c.claim_target, a.name as agent_name, a.workspace_dir as holder_workspace, i.summary, l.id as lease_id, l.expires_at
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
       JOIN intents i ON c.intent_id = i.id
-      WHERE c.project_id = ? AND c.claim_type = 'file' AND c.claim_target = ? AND l.expires_at > ?
-    `).get(finalProjectId, normalizedFile, now);
+      WHERE c.project_id = ? AND c.claim_type = 'file' AND (c.claim_target = ? OR c.claim_target LIKE ? || '#%') AND l.expires_at > ?
+    `).all(finalProjectId, baseFile, baseFile, now);
 
-    if (existingLock) {
-      if (existingLock.agent_id === agentId) {
-        return { allow: true, reason: 'self-held-lease' };
-      } else {
-        const isCrossWorktree = workspaceDir && existingLock.holder_workspace &&
-          toComparablePath(workspaceDir, '') !== toComparablePath(existingLock.holder_workspace, '');
-        const conflictPrefix = isCrossWorktree ? 'CROSS-WORKTREE CONFLICT' : 'BLOCKED';
-        const worktreeNote = isCrossWorktree ? ' in another worktree (concurrent edits will cause git merge conflicts)' : '';
-
-        this.logActivity(agentId, 'hook:blocked', normalizedFile, `Blocked write to ${normalizedFile} (held by ${existingLock.agent_name}${worktreeNote})`, finalProjectId);
-        return {
-          allow: false,
-          holder: existingLock.agent_name,
-          reason: `${conflictPrefix}: File '${filePath}' is locked by [${existingLock.agent_name}]${worktreeNote} for "${existingLock.summary}". Please wait or choose another task.`
-        };
+    // 检查是否存在冲突锁
+    let conflictingLock = null;
+    let selfHeld = false;
+    for (const lock of existingLock) {
+      if (lock.agent_id === agentId) {
+        selfHeld = true;
+        continue;
       }
+      const { anchor: lockAnchor } = splitTargetAnchor(lock.claim_target);
+      // 如果双方都有不同 anchor，允许并发
+      if (fileAnchor && lockAnchor && fileAnchor !== lockAnchor) {
+        continue;
+      }
+      conflictingLock = lock;
+      break;
+    }
+
+    if (conflictingLock) {
+      const isCrossWorktree = workspaceDir && conflictingLock.holder_workspace &&
+        toComparablePath(workspaceDir, '') !== toComparablePath(conflictingLock.holder_workspace, '');
+      const conflictPrefix = isCrossWorktree ? 'CROSS-WORKTREE CONFLICT' : 'BLOCKED';
+      const worktreeNote = isCrossWorktree ? ' in another worktree (concurrent edits will cause git merge conflicts)' : '';
+      const remainingSec = Math.max(0, Math.ceil((conflictingLock.expires_at - now) / 1000));
+
+      this.logActivity(agentId, 'hook:blocked', normalizedFile, `Blocked write to ${normalizedFile} (held by ${conflictingLock.agent_name}${worktreeNote})`, finalProjectId);
+      return {
+        allow: false,
+        holder: conflictingLock.agent_name,
+        holderWorkspace: conflictingLock.holder_workspace || '',
+        expiresAt: conflictingLock.expires_at,
+        remainingSec,
+        advice: `File '${filePath}' is locked by [${conflictingLock.agent_name}]. You can: 1) Read and analyze code, 2) Work on other independent modules/anchors, 3) Wait for holder to git commit/push (ETA ~${remainingSec}s).`,
+        reason: `${conflictPrefix}: File '${filePath}' is locked by [${conflictingLock.agent_name}]${worktreeNote} for "${conflictingLock.summary}". Please wait or choose another task.`
+      };
+    }
+
+    if (selfHeld) {
+      return { allow: true, reason: 'self-held-lease' };
     }
 
     const intentRes = this.declareIntent({
@@ -624,9 +824,14 @@ export class CoordinatorEngine {
     // 关键防御：如果意图被判定为冲突等待（例如命中模块锁或符号锁），坚决实施拦截
     if (intentRes.status === 'WAITING') {
       this.logActivity(agentId, 'hook:blocked', normalizedFile, `Blocked write to ${normalizedFile} (${intentRes.reason})`, finalProjectId);
+      const remainingSec = intentRes.remainingSec || 0;
       return {
         allow: false,
         holder: intentRes.blockedByName,
+        holderWorkspace: intentRes.holderWorkspace || '',
+        expiresAt: intentRes.expiresAt || null,
+        remainingSec,
+        advice: `Target '${filePath}' is blocked (${intentRes.reason}). Switch to an independent file or wait for holder to git commit/push (ETA ~${remainingSec}s).`,
         reason: `BLOCKED: File '${filePath}' is blocked by [${intentRes.blockedByName}] (${intentRes.reason}). Please wait or choose another task.`
       };
     }

@@ -16,6 +16,7 @@ export function createHarness() {
   const messageService = new MessageService(db, eventBus);
   // 与 daemon 装配一致：发件人外键要靠协调器核实，否则 SQLite 会抛外键失败。
   messageService.agentResolver = (id) => coordinator.getAgent(id);
+  coordinator.messageService = messageService;
 
   return {
     db,

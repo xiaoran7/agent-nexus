@@ -27,6 +27,7 @@ export function startDaemon(options = {}) {
   const projectRegistry = new ProjectRegistry(db, coordinator, eventBus, null, memoryService);
 
   messageService.agentResolver = (agentId) => coordinator.getAgent(agentId);
+  coordinator.messageService = messageService;
 
   const cleanupTimer = setInterval(() => {
     coordinator.expireLeases();

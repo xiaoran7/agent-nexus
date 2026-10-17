@@ -162,6 +162,57 @@ function extractBashTarget(payload, workspaceDir) {
   return target;
 }
 
+// Git 提交与推送生命周期命令特征：用于工作完成后的零感租约自动释放
+const GIT_RELEASE_COMMAND_RE = /(?:^|[;&|]\s*)git\s+(?:commit|push)(?:\s|$)/i;
+
+function isGitCommitOrPush(payload) {
+  const toolName = payload.tool_name;
+  if (toolName && toolName !== 'Bash') return false;
+
+  const rawCommand = (payload.tool_input || payload.input || {}).command;
+  if (typeof rawCommand !== 'string' || !rawCommand.trim()) return false;
+
+  return GIT_RELEASE_COMMAND_RE.test(rawCommand);
+}
+
+function notifyGitRelease(payload) {
+  return new Promise((resolvePromise) => {
+    const data = JSON.stringify(payload);
+    const req = request({
+      host: HOST,
+      port: PORT,
+      path: '/api/hook/git-release',
+      method: 'POST',
+      family: 4,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+        ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
+      },
+      timeout: 1500,
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => buf += c);
+      res.on('end', () => {
+        try {
+          resolvePromise(JSON.parse(buf));
+        } catch {
+          resolvePromise({ success: true });
+        }
+      });
+    });
+
+    req.on('error', () => resolvePromise({ success: false, offline: true }));
+    req.on('timeout', () => {
+      req.destroy();
+      resolvePromise({ success: false, timeout: true });
+    });
+
+    req.write(data);
+    req.end();
+  });
+}
+
 function checkPermission(payload) {
   return new Promise((resolvePromise) => {
     const data = JSON.stringify(payload);
@@ -225,7 +276,21 @@ async function main() {
   const identity = resolveAgentIdentity(payload);
   const projectInfo = resolveProject(workspaceDir);
 
-  // 1. 优先检查 Bash 是否涉及命名排他性资源（如 tests, dev-server, build）
+  // 1. 优先检查生命周期动作：若执行 git commit / git push，说明当前施工单元完结，零感释放持有的所有租约
+  if (isGitCommitOrPush(payload)) {
+    const releaseRes = await notifyGitRelease({
+      agent_id: identity.agentId,
+      project_id: projectInfo.projectId,
+      workspace_dir: workspaceDir,
+      reason: 'git_lifecycle'
+    });
+    if (releaseRes && releaseRes.releasedCount > 0) {
+      console.error(`[Agent-Nexus] 🚀 Auto-released ${releaseRes.releasedCount} lease(s) upon git commit/push and notified waiters.`);
+    }
+    process.exit(0);
+  }
+
+  // 2. 检查 Bash 是否涉及命名排他性资源（如 tests, dev-server, build）
   const targetResource = extractBashResource(payload);
   if (targetResource) {
     const resourceRes = await checkPermission({
@@ -242,12 +307,22 @@ async function main() {
     if (resourceRes.allow === false) {
       console.error(`\n[Agent-Nexus] ⚠️ RESOURCE CONFLICT DETECTED & OPERATION BLOCKED:`);
       console.error(resourceRes.reason || `Resource '${targetResource}' is currently locked by another agent.`);
-      console.error(`Please WAIT for the concurrent process to finish before running this command.\n`);
+      if (resourceRes.holder) {
+        console.error(`  - Lock Holder:   [${resourceRes.holder}]`);
+      }
+      if (resourceRes.remainingSec !== undefined) {
+        console.error(`  - Estimated ETA: ~${resourceRes.remainingSec}s`);
+      }
+      if (resourceRes.advice) {
+        console.error(`  - Action Advice: ${resourceRes.advice}`);
+      } else {
+        console.error(`Please WAIT for the concurrent process to finish before running this command.\n`);
+      }
       process.exit(2);
     }
   }
 
-  // 2. 检查文件改写与文件锁冲突 (支持跨 Worktree 相对化对齐)
+  // 3. 检查文件改写与文件锁冲突 (支持跨 Worktree 相对化对齐与 #anchor 细粒度锁)
   const targetFile = resolveTargetFile(payload) || extractBashTarget(payload, workspaceDir);
 
   if (!targetFile) {
@@ -268,7 +343,20 @@ async function main() {
   if (res.allow === false) {
     console.error(`\n[Agent-Nexus] ⚠️ CONFLICT DETECTED & OPERATION BLOCKED:`);
     console.error(res.reason || `File '${basename(targetFile)}' is currently locked by another agent.`);
-    console.error(`Please WAIT for the resource to be released, or switch to another independent file/task.\n`);
+    if (res.holder) {
+      console.error(`  - Lock Holder:   [${res.holder}]`);
+    }
+    if (res.holderWorkspace) {
+      console.error(`  - Workspace:     ${res.holderWorkspace}`);
+    }
+    if (res.remainingSec !== undefined) {
+      console.error(`  - Estimated ETA: ~${res.remainingSec}s (auto-releases on git commit/push)`);
+    }
+    if (res.advice) {
+      console.error(`  - Action Advice: ${res.advice}`);
+    } else {
+      console.error(`Please WAIT for the resource to be released, or switch to another independent file/task.\n`);
+    }
     process.exit(2);
   }
 

@@ -110,7 +110,11 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
         };
 
-        const events = ['timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent', 'project:onboarded', 'milestone:reached', 'lead:broadcast', 'memory:saved', 'memory:deleted'];
+        const events = [
+          'timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent',
+          'project:onboarded', 'milestone:reached', 'lead:broadcast', 'lead:awakened',
+          'agent:progress', 'messages:read', 'memory:saved', 'memory:deleted'
+        ];
         const handlers = new Map();
         for (const ev of events) {
           const handler = (p) => listener(ev, p);
@@ -422,6 +426,22 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const data = await readJson();
         const result = coordinator.releaseLease(leaseId, data.agent_id);
         return sendJson(result.success ? 200 : 404, result);
+      }
+
+      // 5.1 Batch Release Leases by Agent (生命周期与 git commit/push 零感释放)
+      if ((url.pathname === '/api/leases/release-agent' || url.pathname === '/api/hook/git-release') && req.method === 'POST') {
+        const data = await readJson();
+        const agentId = data.agent_id || token?.agent_id;
+        if (!agentId) {
+          return sendJson(400, { error: 'Missing required field: agent_id' });
+        }
+        const result = coordinator.releaseAgentLeases({
+          agentId,
+          projectId: data.project_id || 'default',
+          reason: data.reason || 'git_action',
+          scope: data.scope || 'all'
+        });
+        return sendJson(200, result);
       }
 
       // 6. Universal Hook fast check (支持文件冲突与命名资源锁检查)

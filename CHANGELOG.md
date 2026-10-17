@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-10-17 生产级并发协同优化：生命周期零感释放、大文件锚点锁与高信息诊断 (v0.2.4)
+
+### 改了什么
+
+- **生命周期零感自动释放 (Zero-Touch Auto-Release on Git Commit / Push)**
+  - **Hook 态生命周期命令捕获 (`src/hook/nexus-hook.mjs`)**：在 Claude Code `PreToolUse` Hook 中精准嗅探 `git commit` 与 `git push` 命令，一旦当前施工单元完成提交或推送，立即触发零感批量释放，无需等待 5 分钟 TTL 超时或人工干预；
+  - **批量租约释放与连锁唤醒 (`src/daemon/coordinator.js`)**：新增 `releaseAgentLeases({ agentId, projectId, reason, scope })`，一次性解除持有的全部独占文件锁与排他命名资源锁，自动将意图转为 `completed`，重新同步 Agent 闲置状态，并驱动等待队列首位候选者复核唤醒；
+  - **REST 端点直通 (`src/transport/rest.js`)**：新增 `POST /api/hook/git-release` 与 `POST /api/leases/release-agent`，无缝联动 Hook 通道与外部自动化脚本。
+- **大文件局部锚点锁 (#anchor Granular File Locking)**
+  - **锚点语法解析与校验 (`src/daemon/coordinator.js`)**：支持形如 `path/to/file.ext#anchor-name` 的区域锁声明（如 `admin.html#header-nav` 与 `admin.html#traffic-stream`）；
+  - **安全并发区间仲裁**：当两个 Agent 操作同一文件但声明不同非空 `#anchor` 时，判定为安全并发施工；若任一方未声明 anchor（全文件排他锁）或双方声明相同 anchor，则严格互斥拦截；
+  - **模块锁全包围兼容**：父级目录/模块锁依旧完全覆盖子文件的全部 anchor 锚点，守住目录级重构底线。
+- **高信息密度冲突拦截诊断与避障指引 (Enriched Conflict Diagnostics & Actionable Advice)**
+  - **丰富冲突元数据抽取 (`src/daemon/coordinator.js`)**：在冲突拦截返回中补全锁定者详情、持有者工作区路径（`holderWorkspace`）、租约到期时间戳与剩余预估秒数（`remainingSec`）；
+  - **格式化诊断卡片输出 (`src/hook/nexus-hook.mjs`)**：在 exit code 2 阻断时输出结构化诊断控制台卡片，明确告知剩余 ETA、对方所在工作树（跨 Worktree 警示），并给出具体的并行工作建议（先读代码、施工其他解耦模块、或等待对方 git commit 触发释放）。
+- **持久化唤醒通知与端到端传输对齐 (Durable Waiter Notifications & Transport Parity)**
+  - **消息表持久化落地 (`src/daemon/coordinator.js`, `src/daemon/index.js`, `test/helpers.js`)**：当 Coordinator 唤醒排队等待者时，除了派发 `agent:woken` 广播，自动向 `messages` 表落盘一条类型为 `handoff`、重要度为 `urgent` 的未读唤醒通知，确保通过 `nexus_dialogue_read` 轮询的会话绝对不漏通知；
+  - **传输总线事件对齐 (`src/transport/ws.js`, `src/transport/rest.js`)**：WS 与 SSE 完整同步 `resource:freed`、`lead:awakened`、`agent:progress`、`messages:read` 事件广播，彻底消除多端异构事件丢失。
+- **自动化测试闭环 (`test/optimizations.test.js`)**
+  - 新增 5 项生产级优化专项测试，全面覆盖 Git 提交释放、大文件局部锚点并发与互斥、冲突拦截诊断卡片、持久化唤醒信箱及 REST 端点集成；
+  - 全套 221 项自动化测试 100% 绿色通过，零回归。
+
+---
+
 ## 2026-10-16 内嵌项目级常驻架构师 (Tech Lead) 唤醒规划与 Session 间结构化对话网络 (v0.2.3)
 
 ### 改了什么

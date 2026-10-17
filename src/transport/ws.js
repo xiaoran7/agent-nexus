@@ -61,6 +61,10 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
     broadcast(wss, { type: 'agent:woken', data });
   });
 
+  eventBus.on('resource:freed', (data) => {
+    broadcast(wss, { type: 'resource:freed', data });
+  });
+
   eventBus.on('state:changed', (data) => {
     broadcast(wss, { type: 'state:changed', data });
   });
