@@ -70,8 +70,13 @@ for (const claim of normalizedClaims) {
     if (active.agent_id === agentId) continue; // 允许同 Agent 重入与追加
 
     // 1. File: 路径完全精确一致 (经 toComparablePath 跨工作树映射对齐)
+    //    支持细粒度大文件锚点锁 (#anchor): 同文件不同锚点放行安全并发，任意一方整文件锁互斥
     if (claim.type === 'file' && active.claim_type === 'file') {
-      if (claim.target === active.claim_target) return CONFLICT;
+      const [baseA, anchorA] = claim.target.split('#');
+      const [baseB, anchorB] = active.claim_target.split('#');
+      if (baseA === baseB) {
+        if (!anchorA || !anchorB || anchorA === anchorB) return CONFLICT;
+      }
     }
 
     // 2. Module: 路径包含关系 (父目录包含子文件，或子文件处于已锁定的父目录中)
@@ -124,11 +129,12 @@ for (const claim of normalizedClaims) {
    - 命中冲突，将 Intent 标记为 `waiting`，记录 `blocked_by_agent_id` 与原因；
    - 入队 `wait_queue`，写入 Activity Log。
 5. **RELEASE / WAKE-UP**：
-   - 前序 Agent 调用 `/api/leases/:id/release` 释放资源；
+   - **主动释放**：前序 Agent 调用 `/api/leases/:id/release` 或 `nexus_release_lease` 显式释放资源；
+   - **Git 提交零感自动释放**：Agent 执行 `git commit` 或 `git push` 时，全局 Hook 瞬时捕获并派发 `/api/hook/git-release`，批量释放该 Agent 的全部租约，无需人工介入也无需等待 5 分钟 TTL；
    - 选出下一个该唤醒的等待者，**不是纯 FIFO**（见下）；
    - 把该意图置为 `released` 并清除判冲留痕
      （否则陈旧的 `waiting` 记录会在面板快照里盖过重新声明后的 `granted` 意图）；
-   - 通过 EventBus / WebSocket 发出 `agent:woken`，带 `verified: true`；
+   - 向被唤醒 Agent 信箱持久化定向 handoff 通知，并通过 EventBus / WebSocket 发出 `agent:woken`，带 `verified: true`；
    - 被唤醒的 Agent 收到信号后重新读取工作区代码，重新提交 Intent。
 
 ### 唤醒队列的选取

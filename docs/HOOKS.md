@@ -5,11 +5,16 @@
 ## 目标解析
 
 - 写入类工具（Write/Edit/MultiEdit/NotebookEdit/Update/apply_patch）直接取 `tool_input.file_path`；只读工具（Read/Grep/Glob…）不判冲。
+- **Git 生命周期零感释放 (Git Commit / Push Auto-Release)**：Bash 工具优先探测 `git commit` 或 `git push`（`GIT_LIFECYCLE_COMMAND_RE`）。当 Agent 阶段性完成代码提交或推送时，Hook 自动向 `/api/hook/git-release` 派发异步释放通知，瞬间解开该 Agent 持有的所有文件与资源租约，并立即唤醒后排等待者，彻底消除 5 分钟 TTL 倒计时卡壳。
 - **命名排他资源自动推导**：Bash 工具优先匹配高排他命令正则（`extractBashResource`）：
   - 测试命令（`npm test`、`cargo test`、`pytest`、`go test` 等）自动映射为 `tests` 资源锁；
   - 启动服务（`vite`、`npm run dev`、`next dev`、`uvicorn` 等）自动映射为 `dev-server` 资源锁；
   - 打包构建（`npm run build`、`cargo build`、`mvn package` 等）自动映射为 `build` 资源锁。
   遇到已有其他 Agent 持锁时立即以退出码 2 优雅拦截并提醒等待。
+- **高信息密度冲突拦截诊断**：当拦截到写入或命令冲突时，Hook 在 stderr 打印结构化避障卡片：
+  - 明确标注冲突文件/资源与当前持锁 Agent（含其所在工作区目录）；
+  - 打印剩余租约预估等待时间（`ETA: ~Xs`）；
+  - 提供可操作避障指引（建议先阅读其他代码、切换非冲突模块，或等待对方 `git commit` 自动释放）。
 - **文件写入解析**：Bash 从命令里解析写入目标，有两个前提，缺一不可：命令确实是写入动作（`>`、`tee`、`sed -i`、`cp`/`mv`/`install`），且目标路径落在工作目录之下。前者避免把 `cat a.js` 误判成写入，后者避免全局 hook 拿别处的路径来判冲。
 - `cp`/`mv` 按**目的端**（最后一个路径参数）判冲，不是源端。
 - **跨工作树对齐（Git Worktree）**：Hook 自动解析工作树共同主仓库，将跨工作树的绝对路径统一映射到 `projectRoot` 相对路径。若检测到其他工作树正锁住该文件，发出 `CROSS-WORKTREE CONFLICT` 拦截，防止合并冲突。

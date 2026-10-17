@@ -141,20 +141,47 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
   ```json
   { "allow": true, "autoClaimed": true, "leaseId": "lease_999" }
   ```
-- **响应 (阻断)**：
+- **响应 (阻断，带高信息密度诊断与 ETA)**：
   ```json
   {
     "allow": false,
-    "holder": "重构 InteractionResolver",
-    "reason": "BLOCKED: File 'src/InteractionResolver.kt' is locked by [重构 InteractionResolver] for \"重构 InteractionResolver 的候选决策逻辑\"."
+    "holder": "claude-sess_01",
+    "holder_workspace": "D:/Claudespace/Project/gate",
+    "expires_at": 1774218300000,
+    "remaining_sec": 185,
+    "reason": "BLOCKED: File 'src/InteractionResolver.kt' is locked by [claude-sess_01].",
+    "advice": "Consider reading other files or working on unrelated modules while waiting for claude-sess_01 to commit."
   }
   ```
 - **响应 (跨工作树阻断)**：
   ```json
   {
     "allow": false,
-    "holder": "重构 InteractionResolver",
-    "reason": "CROSS-WORKTREE CONFLICT: File 'src/InteractionResolver.kt' is locked by [重构 InteractionResolver] in another worktree (concurrent edits will cause git merge conflicts)."
+    "holder": "claude-sess_01",
+    "holder_workspace": "D:/Claudespace/Project/gate-worktree-feat",
+    "reason": "CROSS-WORKTREE CONFLICT: File 'src/InteractionResolver.kt' is locked by [claude-sess_01] in another worktree (concurrent edits will cause git merge conflicts)."
+  }
+  ```
+
+### 4. Git 生命周期零感释放 (Git Commit / Push Auto-Release)
+- **路径**：`POST /api/hook/git-release` 或 `POST /api/leases/release-agent`
+- **说明**：Agent 执行 `git commit` 或 `git push` 时由通用 Hook 自动触发，批量释放该 Agent 在当前项目下的所有活跃租约，并在毫秒级唤醒等待队列，彻底消除 5 分钟 TTL 空耗。
+- **请求体**：
+  ```json
+  {
+    "agent_id": "claude-sess_01",
+    "project_id": "efdbbb4db064cbdf",
+    "reason": "git_lifecycle"
+  }
+  ```
+- **响应**：
+  ```json
+  {
+    "success": true,
+    "releasedCount": 2,
+    "notifiedWaiters": [
+      { "agent_id": "claude-sess_02", "intent_id": "intent_2a7fc900" }
+    ]
   }
   ```
 - **响应 (入参非法)**：`400`，`{"error": "\"claims[].target\" is required and must be a non-empty string", "field": "claims[].target"}`。Hook 收到 4xx 会按"协调库无法评估"处理并拦截（退出码 2），不会当成放行。
