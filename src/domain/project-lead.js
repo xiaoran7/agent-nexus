@@ -457,6 +457,25 @@ ${deterministicAdvice}
       } catch {}
     }
 
+    // 沉淀到演进拓扑服务 (Milestone 节点)
+    if (this.coordinator.topologyService && description) {
+      try {
+        const agentRow = this.coordinator.db.prepare('SELECT name, provider FROM agents WHERE id = ?').get(agentId);
+        this.coordinator.topologyService.recordNode({
+          projectId: this.projectId,
+          agentId,
+          agentName: agentRow?.name || agentId,
+          provider: agentRow?.provider || 'agent',
+          nodeType: 'milestone',
+          title: `里程碑: ${description.length > 30 ? description.slice(0, 30) + '...' : description}`,
+          description: description,
+          intentId: leaseIdToRelease || null,
+          claims: [],
+          causalityType: 'sequence'
+        });
+      } catch {}
+    }
+
     this.coordinator.logActivity(agentId, 'milestone:reached', null, description || 'Milestone completed', this.projectId);
     this.eventBus.emit('milestone:reached', {
       project_id: this.projectId,

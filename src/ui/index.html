@@ -34,6 +34,11 @@
         <span class="tab-icon">🏛️</span>
         <span>协同看板</span>
       </button>
+      <button id="tab-topology" class="view-tab">
+        <span class="tab-icon">🌳</span>
+        <span>功能演进拓扑</span>
+        <span id="topology-tab-badge" class="badge-tab-healthy" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3);">全景</span>
+      </button>
       <button id="tab-gateway" class="view-tab">
         <span class="tab-icon">⚡</span>
         <span>模型网关调度</span>
@@ -423,6 +428,62 @@
           </div>
         </div>
       </section>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW 3: Functional Topology (功能演进拓扑)  -->
+    <!-- ========================================== -->
+    <div id="view-topology" class="view-pane">
+      <div class="topo-head-bar">
+        <div class="topo-title-box">
+          <div class="topo-icon-badge">🌳</div>
+          <div>
+            <div style="font-weight: 700; font-size: 15px; color: #fff;">功能开发与问题解决拓扑全景</div>
+            <div style="font-size: 12px; color: var(--text-faint);">按时间序串联演进脉络，呈现哪个 Agent 解决了什么问题、触达哪些核心文件与交接因果</div>
+          </div>
+        </div>
+        <div class="topo-toolbar">
+          <input type="text" id="topo-search-input" class="topo-search-input" placeholder="按功能、Agent、或文件路径筛选..." />
+          <button id="topo-refresh-btn" class="topo-refresh-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6"></path>
+              <path d="M1 20v-6h6"></path>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            <span>刷新拓扑</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="topo-stats-banner">
+        <div class="topo-stat-item">
+          <span class="topo-stat-label">演进节点总数</span>
+          <span class="topo-stat-val" id="topo-stat-nodes">0</span>
+        </div>
+        <div class="topo-stat-divider"></div>
+        <div class="topo-stat-item">
+          <span class="topo-stat-label">因果关联边</span>
+          <span class="topo-stat-val" id="topo-stat-edges">0</span>
+        </div>
+        <div class="topo-stat-divider"></div>
+        <div class="topo-stat-item">
+          <span class="topo-stat-label">参与施工 Agent</span>
+          <span class="topo-stat-val" id="topo-stat-agents">0</span>
+        </div>
+        <div class="topo-stat-divider"></div>
+        <div class="topo-stat-item" style="flex: 1; text-align: right; color: var(--text-faint); font-size: 11px;">
+          <span>💡 悬停节点卡片高亮因果链路，点击查看解决问题与改动文件快照</span>
+        </div>
+      </div>
+
+      <div class="topo-canvas-viewport" id="topo-viewport">
+        <div class="topo-canvas-inner" id="topo-canvas-inner">
+          <svg class="topo-svg-layer" id="topo-svg-layer"></svg>
+          <div class="topo-nodes-layer" id="topo-nodes-layer">
+            <!-- 动态生成拓扑节点卡片 -->
+          </div>
+        </div>
+      </div>
     </div>
   </main>
 

@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-10-17 桌面端系统托盘常驻与功能演进拓扑图 (v0.2.6)
+
+### 改了什么
+
+- **桌面端系统托盘常驻与 Daemon 托管绑定 (Desktop Tray & Daemon Binding - `desktop/`)**
+  - **基于 Electron 的无感桌面端封装 (`desktop/main.cjs`, `desktop/daemon-runner.cjs`, `desktop/preload.cjs`)**：
+    - **系统单实例锁 (`app.requestSingleInstanceLock`)**：多开应用时自动唤醒并激活已有窗口，防止多实例冲突；
+    - **右下角系统托盘常驻与右键菜单**：支持“显示协同控制台”、“查看演进拓扑”、“在系统浏览器中打开”、“退出”等核心操作；双击托盘图标随叫随到，点击窗口右上角“X”拦截关闭并平滑最小化至系统托盘，保证后台协同防碰撞持续生效；
+    - **智能 Daemon 生命期托管与探活**：启动时自动探活 `127.0.0.1:4100/health`，若已有外部 Daemon 进程运行则无缝连接复用；若未启动则自动拉起托管子进程并在退出时优雅停机；
+    - **无感令牌注入**：主进程自动读取 `~/.agent-nexus/session.token` 并透明附加至前端加载 URL，开发者无需输入密码或配置令牌；
+    - **动态状态气泡与指示图标 (`desktop/assets/`)**：每 3 秒自动轮询协同状态，动态切换托盘图标与状态提示（绿色=待命就绪、蓝色=施工中、橙色=冲突排队等待中）。
+- **按时间顺序的功能开发与问题解决拓扑图 (Changelog & Topology DAG)**
+  - **数据层持久化 (`src/storage/database.js`)**：
+    - 新建 `topology_nodes` 表及关联索引（`idx_topology_project_created`, `idx_topology_agent`, `idx_topology_intent`），记录演进节点类型（`milestone` / `completed` / `handoff` / `unblocked`）、功能标题、解决问题描述、触达文件快照（`claims_snapshot`）、前驱节点列表（`parent_node_ids`）与因果类型；
+    - 数据库启动时自动执行热升级平滑建表，向后完全兼容。
+  - **拓扑领域服务与因果推断 (`src/domain/topology.js`)**：
+    - 实现 `TopologyService`，提供 `recordNode` 与 `getTopologyGraph` 方法；
+    - 支持前驱节点自动推导（无显式挂接时自动按时间序追溯上一节点）、支持交接与解锁因果边生成，保障项目级隔离。
+  - **业务层自动沉淀与因果闭环 (`src/domain/project-lead.js`, `src/daemon/coordinator.js`)**：
+    - 在 `reportMilestone` 处自动将结构化里程碑录入演进图谱；
+    - 在租约释放（`releaseLease` / `releaseAgentLeases`，含 Git Commit 自动释放）时，捕获任务意图与触及文件快照，自动沉淀为 `completed` 拓扑节点。
+  - **REST API 与实时 WebSocket 广播 (`src/transport/rest.js`, `src/transport/ws.js`)**：
+    - 暴露 `GET /api/topology` 接口（支持 `project_id`、`limit`、`since` 过滤）；
+    - WebSocket 实时监听 `topology:node_created` 并向所有连接客户端实时推送。
+  - **Aozora UI 纯原生 SVG 拓扑大屏渲染 (`src/ui/index.html`, `src/ui/style.css`, `src/ui/app.js`)**：
+    - 顶部导航新增“演进拓扑 (Topology)”标签页；
+    - 采用纯原生 SVG 三次贝塞尔曲线（`<path d="M... C...">`）绘制因果依赖流动边，具备发光流动微动画与青空设计规范透光卡片；
+    - 每个节点清晰展示：产生时间、执行 Agent 代号、解决的问题/功能标题、涉及文件胶囊标签；
+    - 交互体验增强：支持搜索关键词高亮过滤、鼠标悬浮因果链路穿透高亮（自动点亮所有祖先和后继节点与连线，淡化无关节点）。
+- **自动化测试闭环 (`test/topology.test.js`, `test/desktop-runner.test.js`)**
+  - 新增拓扑节点记录、因果图生成、项目隔离、Daemon 探活与 Token 读取等专项测试；
+  - 全套 230 个测试用例保持 100% 绿色通过。
+
+---
+
 ## 2026-10-17 控制台界面全面人话化汉化与 Hook 写入正则误伤修复 (v0.2.5)
 
 ### 改了什么

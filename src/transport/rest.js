@@ -34,7 +34,7 @@ function applyCors(req, res) {
   return false;
 }
 
-export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null) {
+export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null, topologyService = null) {
   const staticCache = new Map();
 
   return async function handleRest(req, res) {
@@ -366,6 +366,19 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           gwRouter.strategy = body.strategy;
           return sendJson(200, { success: true, strategy: gwRouter.strategy });
         }
+      }
+
+      // 1.4 Topology (演进拓扑图数据查询)
+      if (url.pathname === '/api/topology' && req.method === 'GET') {
+        const topoSvc = topologyService || coordinator?.topologyService;
+        if (!topoSvc) {
+          return sendJson(503, { error: 'Topology service is not available' });
+        }
+        const projectId = url.searchParams.get('project_id') || 'default';
+        const limit = Math.min(200, parseInt(url.searchParams.get('limit') || '100', 10));
+        const since = parseInt(url.searchParams.get('since') || '0', 10);
+        const graph = topoSvc.getTopologyGraph(projectId, { limit, since });
+        return sendJson(200, graph);
       }
 
       // 2. Agents

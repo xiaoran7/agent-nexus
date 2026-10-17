@@ -140,6 +140,24 @@ export function createDatabase(customPath = null) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    -- 10. 功能开发与问题解决拓扑节点 (Changelog & Topology Ledger)
+    CREATE TABLE IF NOT EXISTS topology_nodes (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default',
+      agent_id TEXT NOT NULL,
+      agent_name TEXT,
+      provider TEXT,
+      node_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      intent_id TEXT,
+      claims_snapshot TEXT NOT NULL DEFAULT '[]',
+      parent_node_ids TEXT NOT NULL DEFAULT '[]',
+      causality_type TEXT DEFAULT 'sequence',
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL
+    );
   `);
 
   // 针对已存在的旧版本表结构进行平滑补列迁移
@@ -161,6 +179,9 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_cat ON project_memories(project_id, category);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_updated ON project_memories(project_id, updated_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_proj_cat_key ON project_memories(project_id, category, key);
+    CREATE INDEX IF NOT EXISTS idx_topology_project_created ON topology_nodes(project_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_topology_agent ON topology_nodes(project_id, agent_id);
+    CREATE INDEX IF NOT EXISTS idx_topology_intent ON topology_nodes(intent_id);
   `);
 
   return db;

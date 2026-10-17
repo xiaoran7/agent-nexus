@@ -72,11 +72,25 @@ const dom = {
 
   // View Switcher Tabs & Panes
   tabWarRoom: document.getElementById('tab-war-room'),
+  tabTopology: document.getElementById('tab-topology'),
   tabGateway: document.getElementById('tab-gateway'),
   tabUnified: document.getElementById('tab-unified'),
   viewWarRoom: document.getElementById('view-war-room'),
+  viewTopology: document.getElementById('view-topology'),
   viewGateway: document.getElementById('view-gateway'),
   gatewayTabBadge: document.getElementById('gateway-tab-badge'),
+  topologyTabBadge: document.getElementById('topology-tab-badge'),
+
+  // Functional Topology DOM Elements
+  topoStatNodes: document.getElementById('topo-stat-nodes'),
+  topoStatEdges: document.getElementById('topo-stat-edges'),
+  topoStatAgents: document.getElementById('topo-stat-agents'),
+  topoSearchInput: document.getElementById('topo-search-input'),
+  topoRefreshBtn: document.getElementById('topo-refresh-btn'),
+  topoViewport: document.getElementById('topo-viewport'),
+  topoCanvasInner: document.getElementById('topo-canvas-inner'),
+  topoSvgLayer: document.getElementById('topo-svg-layer'),
+  topoNodesLayer: document.getElementById('topo-nodes-layer'),
 
   // Gateway Controls & Metric Cards
   gwStrategySelect: document.getElementById('gw-strategy-select'),
@@ -539,34 +553,266 @@ if (dom.refreshDialogueBtn) {
 }
 
 // ==========================================
-// View Switcher (War Room / Magpie Gateway / Unified)
+// View Switcher (War Room / Topology / Magpie Gateway / Unified)
 // ==========================================
 let currentViewMode = 'war-room';
 
 function setViewMode(mode) {
   currentViewMode = mode;
-  [dom.tabWarRoom, dom.tabGateway, dom.tabUnified].forEach(t => t?.classList.remove('active'));
+  [dom.tabWarRoom, dom.tabTopology, dom.tabGateway, dom.tabUnified].forEach(t => t?.classList.remove('active'));
+  [dom.viewWarRoom, dom.viewTopology, dom.viewGateway].forEach(v => v?.classList.remove('active'));
 
   if (mode === 'war-room') {
     dom.tabWarRoom?.classList.add('active');
     dom.viewWarRoom?.classList.add('active');
-    dom.viewGateway?.classList.remove('active');
+  } else if (mode === 'topology') {
+    dom.tabTopology?.classList.add('active');
+    dom.viewTopology?.classList.add('active');
+    fetchTopologyGraph();
   } else if (mode === 'gateway') {
     dom.tabGateway?.classList.add('active');
-    dom.viewWarRoom?.classList.remove('active');
     dom.viewGateway?.classList.add('active');
     fetchGatewayStatus();
   } else if (mode === 'unified') {
     dom.tabUnified?.classList.add('active');
     dom.viewWarRoom?.classList.add('active');
+    dom.viewTopology?.classList.add('active');
     dom.viewGateway?.classList.add('active');
+    fetchTopologyGraph();
     fetchGatewayStatus();
   }
 }
 
 if (dom.tabWarRoom) dom.tabWarRoom.onclick = () => setViewMode('war-room');
+if (dom.tabTopology) dom.tabTopology.onclick = () => setViewMode('topology');
 if (dom.tabGateway) dom.tabGateway.onclick = () => setViewMode('gateway');
 if (dom.tabUnified) dom.tabUnified.onclick = () => setViewMode('unified');
+
+// ==========================================
+// Functional Topology Controller (功能演进拓扑大屏)
+// ==========================================
+let currentTopologyData = null;
+let topoSearchQuery = '';
+
+async function fetchTopologyGraph() {
+  try {
+    const res = await fetch(`/api/topology?project_id=${encodeURIComponent(currentProjectId)}&limit=100`, {
+      headers: authHeaders()
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    currentTopologyData = data;
+    renderTopologyView(data);
+  } catch (err) {
+    console.error('Fetch topology error:', err);
+  }
+}
+
+if (dom.topoRefreshBtn) {
+  dom.topoRefreshBtn.onclick = () => fetchTopologyGraph();
+}
+
+if (dom.topoSearchInput) {
+  dom.topoSearchInput.oninput = (e) => {
+    topoSearchQuery = (e.target.value || '').trim().toLowerCase();
+    if (currentTopologyData) {
+      renderTopologyView(currentTopologyData);
+    }
+  };
+}
+
+function renderTopologyView(data) {
+  if (!dom.topoNodesLayer || !dom.topoSvgLayer) return;
+
+  const rawNodes = data?.nodes || [];
+  const edges = data?.edges || [];
+
+  // 过滤节点
+  const filteredNodes = rawNodes.filter(n => {
+    if (!topoSearchQuery) return true;
+    const matchTitle = (n.title || '').toLowerCase().includes(topoSearchQuery);
+    const matchDesc = (n.description || '').toLowerCase().includes(topoSearchQuery);
+    const matchAgent = (n.agentName || n.agentId || '').toLowerCase().includes(topoSearchQuery);
+    const matchFiles = (n.claims || []).some(c => (c.target || '').toLowerCase().includes(topoSearchQuery));
+    return matchTitle || matchDesc || matchAgent || matchFiles;
+  });
+
+  // 更新指标
+  const distinctAgents = new Set(rawNodes.map(n => n.agentId)).size;
+  if (dom.topoStatNodes) dom.topoStatNodes.textContent = rawNodes.length;
+  if (dom.topoStatEdges) dom.topoStatEdges.textContent = edges.length;
+  if (dom.topoStatAgents) dom.topoStatAgents.textContent = distinctAgents;
+
+  if (filteredNodes.length === 0) {
+    dom.topoSvgLayer.innerHTML = '';
+    dom.topoNodesLayer.innerHTML = `
+      <div class="topo-empty-state">
+        <div class="topo-empty-icon">🌳</div>
+        <div style="font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 6px;">
+          ${rawNodes.length === 0 ? '暂无演进拓扑记录' : '没有匹配的节点'}
+        </div>
+        <div style="font-size: 12px; color: var(--text-faint);">
+          ${rawNodes.length === 0
+            ? '当各会话完成意图释放、上报里程碑或 Git 提交时，系统将自动按时间线绘制功能开发与问题解决拓扑图。'
+            : '尝试更换搜索关键词（支持按功能标题、Agent 名称或修改的文件路径筛选）。'
+          }
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // 1. 渲染卡片 HTML
+  dom.topoNodesLayer.innerHTML = filteredNodes.map((node, index) => {
+    const isMilestone = node.nodeType === 'milestone';
+    const isHandoff = node.nodeType === 'handoff';
+    const typeChipClass = isMilestone ? 'chip-topo-milestone' : isHandoff ? 'chip-topo-handoff' : 'chip-topo-completed';
+    const typeLabel = isMilestone ? '里程碑达成' : isHandoff ? '会话交接' : '功能完工释放';
+
+    const timeStr = new Date(node.createdAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const dateStr = new Date(node.createdAt).toLocaleDateString([], { month: '2-digit', day: '2-digit' });
+
+    // 文件标签
+    const claimsHtml = (node.claims && node.claims.length > 0) ? `
+      <div class="topo-claims-box">
+        ${node.claims.map(c => `
+          <span class="topo-claim-pill" title="${escapeHtml(c.target)}">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>${escapeHtml(c.target.split('/').pop() || c.target)}</span>
+          </span>
+        `).join('')}
+      </div>
+    ` : '';
+
+    return `
+      <div class="topo-card" id="card-${escapeHtml(node.id)}" data-node-id="${escapeHtml(node.id)}">
+        <div class="topo-card-head">
+          <div class="topo-card-agent-badge">
+            <span>🤖</span>
+            <span>${escapeHtml(node.agentName || node.agentId)}</span>
+          </div>
+          <span class="topo-card-type-chip ${typeChipClass}">${typeLabel}</span>
+        </div>
+        <div class="topo-card-title">${escapeHtml(node.title)}</div>
+        ${node.description ? `<div class="topo-card-desc">${escapeHtml(node.description)}</div>` : ''}
+        ${claimsHtml}
+        <div class="topo-card-foot">
+          <span style="font-family: var(--font-mono);">${dateStr} ${timeStr}</span>
+          <span>节点序列 #${index + 1}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 2. 动态计算并绘制平滑 SVG 贝塞尔曲线
+  // 等待 DOM 布局稳定后计算连线
+  requestAnimationFrame(() => {
+    drawTopologyEdges(filteredNodes, edges);
+    bindTopologyInteractions(filteredNodes, edges);
+  });
+}
+
+function drawTopologyEdges(nodes, edges) {
+  if (!dom.topoSvgLayer || !dom.topoCanvasInner) return;
+
+  const nodeMap = new Map();
+  nodes.forEach(n => nodeMap.set(n.id, n));
+
+  const canvasRect = dom.topoCanvasInner.getBoundingClientRect();
+  dom.topoSvgLayer.setAttribute('width', `${canvasRect.width}`);
+  dom.topoSvgLayer.setAttribute('height', `${canvasRect.height}`);
+
+  const pathsHtml = [];
+
+  for (const edge of edges) {
+    if (!nodeMap.has(edge.from) || !nodeMap.has(edge.to)) continue;
+
+    const fromEl = document.getElementById(`card-${edge.from}`);
+    const toEl = document.getElementById(`card-${edge.to}`);
+    if (!fromEl || !toEl) continue;
+
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+
+    // 锚点坐标相对 canvasRect
+    const x1 = fromRect.left - canvasRect.left + (fromRect.width / 2);
+    const y1 = fromRect.bottom - canvasRect.top;
+    const x2 = toRect.left - canvasRect.left + (toRect.width / 2);
+    const y2 = toRect.top - canvasRect.top;
+
+    // 平滑三次贝塞尔曲线
+    const midY = (y1 + y2) / 2;
+    const pathD = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+
+    pathsHtml.push(`
+      <path d="${pathD}"
+            class="topo-edge-line"
+            id="edge-${escapeHtml(edge.from)}-${escapeHtml(edge.to)}"
+            data-from="${escapeHtml(edge.from)}"
+            data-to="${escapeHtml(edge.to)}" />
+    `);
+  }
+
+  dom.topoSvgLayer.innerHTML = pathsHtml.join('');
+}
+
+function bindTopologyInteractions(nodes, edges) {
+  const cards = dom.topoNodesLayer.querySelectorAll('.topo-card');
+  const edgeLines = dom.topoSvgLayer.querySelectorAll('.topo-edge-line');
+
+  cards.forEach(card => {
+    const nodeId = card.getAttribute('data-node-id');
+
+    card.onmouseenter = () => {
+      // 找出所有前驱与后继
+      const relatedNodes = new Set([nodeId]);
+      const relatedEdges = new Set();
+
+      edges.forEach(e => {
+        if (e.from === nodeId || e.to === nodeId) {
+          relatedNodes.add(e.from);
+          relatedNodes.add(e.to);
+          relatedEdges.add(`edge-${e.from}-${e.to}`);
+        }
+      });
+
+      cards.forEach(c => {
+        const id = c.getAttribute('data-node-id');
+        if (relatedNodes.has(id)) {
+          c.classList.add('highlighted');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.add('dimmed');
+          c.classList.remove('highlighted');
+        }
+      });
+
+      edgeLines.forEach(l => {
+        const from = l.getAttribute('data-from');
+        const to = l.getAttribute('data-to');
+        if (from === nodeId || to === nodeId) {
+          l.classList.add('highlighted');
+          l.classList.remove('dimmed');
+        } else {
+          l.classList.add('dimmed');
+          l.classList.remove('highlighted');
+        }
+      });
+    };
+
+    card.onmouseleave = () => {
+      cards.forEach(c => {
+        c.classList.remove('highlighted', 'dimmed');
+      });
+      edgeLines.forEach(l => {
+        l.classList.remove('highlighted', 'dimmed');
+      });
+    };
+  });
+}
 
 // ==========================================
 // Magpie Elastic Gateway Controller
@@ -1063,12 +1309,16 @@ loadProjects();
 fetchDashboard();
 fetchMemories();
 fetchDialogues();
+fetchTopologyGraph();
 fetchGatewayStatus();
 
 // 定时保底轮询（2500ms 刷新频率完全符合 60 FPS 规约）
 setInterval(() => {
   fetchDashboard();
   fetchDialogues();
+  if (currentViewMode === 'topology' || currentViewMode === 'unified') {
+    fetchTopologyGraph();
+  }
   if (currentViewMode === 'gateway' || currentViewMode === 'unified') {
     fetchGatewayStatus();
   }
@@ -1093,6 +1343,8 @@ function connectWebSocket() {
         const payload = JSON.parse(event.data);
         if (payload.type && payload.type.startsWith('memory:')) {
           debouncedFetchMemories();
+        } else if (payload.type === 'topology:node_created') {
+          fetchTopologyGraph();
         } else if (payload.type === 'message:sent' || payload.type === 'messages:read') {
           debouncedFetchDialogues();
           debouncedFetchDashboard();

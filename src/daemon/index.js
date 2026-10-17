@@ -8,6 +8,7 @@ import { StateService } from '../domain/state.js';
 import { MessageService } from '../domain/messages.js';
 import { ProjectRegistry } from '../domain/project-registry.js';
 import { ProjectMemoryService } from '../domain/memory.js';
+import { TopologyService } from '../domain/topology.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
 import { TokenStore, generateToken, getSessionTokenPath } from '../transport/auth.js';
@@ -26,7 +27,10 @@ export function startDaemon(options = {}) {
   const stateService = new StateService(db, eventBus);
   const messageService = new MessageService(db, eventBus);
   const memoryService = new ProjectMemoryService(db, eventBus);
+  const topologyService = new TopologyService(db, eventBus);
+  coordinator.topologyService = topologyService;
   const projectRegistry = new ProjectRegistry(db, coordinator, eventBus, null, memoryService);
+  projectRegistry.topologyService = topologyService;
 
   messageService.agentResolver = (agentId) => coordinator.getAgent(agentId);
   coordinator.messageService = messageService;
@@ -40,7 +44,7 @@ export function startDaemon(options = {}) {
   const tokenStore = new TokenStore();
   const operator = tokenStore.issue(generateToken(null));
 
-  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService);
+  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService, topologyService);
   const server = createServer(handleRest);
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
@@ -76,7 +80,7 @@ export function startDaemon(options = {}) {
       }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, eventBus, db, tokenStore, cleanupTimer, port: boundPort, dbPath, writeSessionToken });
+      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, eventBus, db, tokenStore, cleanupTimer, port: boundPort, dbPath, writeSessionToken });
     });
   });
 }

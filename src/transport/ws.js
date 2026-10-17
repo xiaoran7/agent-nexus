@@ -97,6 +97,10 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
     broadcast(wss, { type: 'memory:deleted', data });
   });
 
+  eventBus.on('topology:node_created', (data) => {
+    broadcast(wss, { type: 'topology:node_created', data });
+  });
+
   return wss;
 }
 

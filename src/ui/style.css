@@ -1756,6 +1756,292 @@ header {
   margin-right: 6px;
 }
 
+/* =============================================================================
+   FUNCTIONAL TOPOLOGY VIEW (功能演进拓扑大屏 - Aozora UI)
+   ============================================================================= */
+.topo-head-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  margin-bottom: 12px;
+  backdrop-filter: blur(8px);
+}
+.topo-title-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topo-icon-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+.topo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topo-search-input {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: var(--radius-md);
+  width: 260px;
+  transition: all 0.2s ease;
+}
+.topo-search-input:focus {
+  outline: none;
+  border-color: #38bdf8;
+  background: rgba(15, 23, 42, 0.85);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+}
+.topo-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  color: #38bdf8;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.topo-refresh-btn:hover {
+  background: rgba(14, 165, 233, 0.28);
+  border-color: #38bdf8;
+}
+
+.topo-stats-banner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 20px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+.topo-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topo-stat-label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.topo-stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #38bdf8;
+}
+.topo-stat-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border-subtle);
+}
+
+.topo-canvas-viewport {
+  position: relative;
+  width: 100%;
+  min-height: 620px;
+  background: radial-gradient(circle at 50% 20%, rgba(14, 165, 233, 0.05) 0%, rgba(10, 15, 29, 0.95) 75%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+  overflow-y: auto;
+  padding: 40px 20px 80px 20px;
+}
+.topo-canvas-inner {
+  position: relative;
+  min-width: 100%;
+  min-height: 520px;
+}
+.topo-svg-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+.topo-nodes-layer {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  padding: 10px 40px;
+}
+
+/* 拓扑卡片样式 */
+.topo-card {
+  position: relative;
+  background: rgba(18, 25, 44, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 12px;
+  padding: 16px 20px;
+  max-width: 680px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+.topo-card:hover {
+  transform: translateY(-2px);
+  border-color: #38bdf8;
+  box-shadow: 0 8px 30px rgba(14, 165, 233, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+.topo-card.dimmed {
+  opacity: 0.25;
+  filter: grayscale(0.6);
+}
+.topo-card.highlighted {
+  border-color: #38bdf8;
+  box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);
+}
+
+.topo-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.topo-card-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #38bdf8;
+}
+.topo-card-type-chip {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.chip-topo-milestone {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.chip-topo-completed {
+  background: rgba(14, 165, 233, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+.chip-topo-handoff {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.topo-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.topo-card-desc {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.topo-claims-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.topo-claim-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #94a3b8;
+}
+.topo-claim-pill svg {
+  color: #38bdf8;
+}
+
+.topo-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* SVG 连线样式 */
+.topo-edge-line {
+  fill: none;
+  stroke: rgba(56, 189, 248, 0.35);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  animation: topoDashMove 25s linear infinite;
+  transition: all 0.3s ease;
+}
+.topo-edge-line.highlighted {
+  stroke: #38bdf8;
+  stroke-width: 3.5;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.8));
+}
+.topo-edge-line.dimmed {
+  opacity: 0.15;
+}
+
+@keyframes topoDashMove {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+/* 空状态 */
+.topo-empty-state {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--text-faint);
+}
+.topo-empty-icon {
+  font-size: 42px;
+  margin-bottom: 12px;
+  opacity: 0.8;
+}
+
 /* Footer */
 footer {
   padding: 16px 28px;

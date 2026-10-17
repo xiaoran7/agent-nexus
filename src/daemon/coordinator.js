@@ -402,15 +402,34 @@ export class CoordinatorEngine {
       SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
     `).all(lease.intent_id).map(c => ({ type: c.claim_type, target: c.claim_target }));
 
+    const intentRow = this.db.prepare('SELECT summary FROM intents WHERE id = ?').get(lease.intent_id);
+    const agentRow = this.db.prepare('SELECT name, provider FROM agents WHERE id = ?').get(agentId);
+    const releasedByName = agentRow?.name || agentId;
+
+    // 沉淀到演进拓扑服务
+    if (this.topologyService && releasedClaims.length > 0) {
+      try {
+        this.topologyService.recordNode({
+          projectId,
+          agentId,
+          agentName: releasedByName,
+          provider: agentRow?.provider || 'agent',
+          nodeType: 'completed',
+          title: intentRow?.summary ? `完成: ${intentRow.summary}` : `释放意图 ${lease.intent_id}`,
+          description: `任务闭环完成，释放了持有的 ${releasedClaims.length} 项资源锁`,
+          intentId: lease.intent_id,
+          claims: releasedClaims,
+          causalityType: 'sequence'
+        });
+      } catch {}
+    }
+
     this.db.prepare(`UPDATE intents SET status = 'completed', updated_at = ? WHERE id = ?`).run(now, lease.intent_id);
     this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
     this.db.prepare(`DELETE FROM claims WHERE intent_id = ?`).run(lease.intent_id);
 
     this._syncAgentRunningStatus(agentId, projectId, now);
     this.logActivity(agentId, 'lease:released', lease.id, `Agent released lease for intent ${lease.intent_id}`, projectId);
-
-    const agentRow = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(agentId);
-    const releasedByName = agentRow?.name || agentId;
 
     this.eventBus.emit('resource:freed', {
       project_id: projectId,
@@ -468,8 +487,27 @@ export class CoordinatorEngine {
         SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
       `).all(lease.intent_id).map(c => ({ type: c.claim_type, target: c.claim_target }));
 
+      const intentRow = this.db.prepare('SELECT summary FROM intents WHERE id = ?').get(lease.intent_id);
+
       allReleasedClaims.push(...claims);
       releasedLeaseIds.push(lease.id);
+
+      if (this.topologyService && claims.length > 0) {
+        try {
+          this.topologyService.recordNode({
+            projectId: finalProjectId,
+            agentId,
+            agentName: releasedByName,
+            provider: agentRow?.provider || 'agent',
+            nodeType: 'completed',
+            title: intentRow?.summary ? `提交完成: ${intentRow.summary}` : `Git 提交完工 (Intent ${lease.intent_id})`,
+            description: `生命周期自动感知完成 (${reason})，释放了 ${claims.length} 项资源锁`,
+            intentId: lease.intent_id,
+            claims,
+            causalityType: 'sequence'
+          });
+        } catch {}
+      }
 
       this.db.prepare(`UPDATE intents SET status = 'completed', updated_at = ? WHERE id = ?`).run(now, lease.intent_id);
       this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);

@@ -1,6 +1,6 @@
 {
   "name": "agent-nexus",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Passive Agent Coordinator - Multi-agent conflict detection, lease management, resilient AI gateway and real-time coordination dashboard",
   "main": "src/daemon/index.js",
   "type": "module",
@@ -9,8 +9,12 @@
   },
   "scripts": {
     "start": "node src/cli.js start",
+    "desktop": "electron desktop/main.cjs",
     "test": "node --test \"test/**/*.test.js\"",
     "ci": "npm ci && npm test"
+  },
+  "devDependencies": {
+    "electron": "^34.2.0"
   },
   "keywords": [
     "agent",
