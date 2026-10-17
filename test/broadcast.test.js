@@ -66,7 +66,7 @@ test('Master Command Broadcast: 全项目指令广播与信箱直达', async (t)
     req.method = 'POST';
     req.url = '/api/projects/proj-alpha/broadcast';
     req.headers = {
-      host: '127.0.0.1:4100',
+      host: '127.0.0.1:4300',
       authorization: `Bearer ${operatorToken}`
     };
 

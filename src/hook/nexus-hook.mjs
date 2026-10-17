@@ -9,7 +9,7 @@ import { basename, isAbsolute, join, relative } from 'node:path';
 import { resolveProject } from '../domain/project.js';
 import { readSessionToken } from '../transport/auth.js';
 
-const PORT = parseInt(process.env.NEXUS_PORT || '4100', 10);
+const PORT = parseInt(process.env.NEXUS_PORT || '4300', 10);
 const HOST = process.env.NEXUS_HOST || '127.0.0.1';
 // daemon 要求令牌。优先读取环境变量，缺省时自动回退读取本机活动会话令牌（~/.agent-nexus/session.token）
 const TOKEN = process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN || readSessionToken() || null;

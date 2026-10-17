@@ -38,7 +38,7 @@ export function capture(eventBus, event) {
 }
 
 // 起一个真实的 daemon（HTTP + WebSocket + 独立数据库），走网络栈而不是直接调 domain。
-// 端口传 0 让系统分配，避开并行用例抢 4100。close() 负责关库、停 server 和 WS。
+// 端口传 0 让系统分配，避开并行用例抢 4300。close() 负责关库、停 server 和 WS。
 export async function startTestDaemon(options = {}) {
   const ctx = await startDaemon({ port: 0, dbPath: ':memory:', isTest: true, writeSessionToken: false, ...options });
   const { port } = ctx.server.address();

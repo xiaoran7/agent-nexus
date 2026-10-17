@@ -89,7 +89,7 @@ async function issueToken() {
     console.error('Usage: nexus token <agent-id>\n');
     process.exit(1);
   }
-  const port = process.env.NEXUS_PORT || '4100';
+  const port = process.env.NEXUS_PORT || '4300';
   const adminToken = process.env.NEXUS_ADMIN_TOKEN || process.env.NEXUS_TOKEN || readSessionToken();
   if (!adminToken) {
     console.error(
@@ -114,7 +114,7 @@ async function issueToken() {
 }
 
 async function listProjects() {
-  const port = process.env.NEXUS_PORT || '4100';
+  const port = process.env.NEXUS_PORT || '4300';
   const token = process.env.NEXUS_ADMIN_TOKEN || process.env.NEXUS_TOKEN || readSessionToken();
   const res = await fetch(`http://127.0.0.1:${port}/api/projects`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}

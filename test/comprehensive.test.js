@@ -163,10 +163,10 @@ test('MCP 工具定义与分发', async (t) => {
   });
 
   await t.test('nexus_state 走同一套共享状态', () => {
-    mcp('nexus_state', { action: 'set', namespace: 'locks', key: 'port', value: '4100' });
+    mcp('nexus_state', { action: 'set', namespace: 'locks', key: 'port', value: '4300' });
 
     const res = mcp('nexus_state', { action: 'get', namespace: 'locks', key: 'port' });
-    assert.equal(res.value, '4100');
+    assert.equal(res.value, '4300');
   });
 
   await t.test('未知工具抛错而不是静默返回', () => {

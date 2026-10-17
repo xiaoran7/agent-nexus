@@ -15,7 +15,7 @@ if (!gotTheLock) {
   process.exit(0);
 }
 
-const PORT = parseInt(process.env.NEXUS_PORT || '4100', 10);
+const PORT = parseInt(process.env.NEXUS_PORT || '4300', 10);
 const daemon = new DaemonController(PORT);
 
 let mainWindow = null;

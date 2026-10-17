@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 
-const NEXUS_URL = 'http://127.0.0.1:4100';
+const NEXUS_URL = 'http://127.0.0.1:4300';
 const TOKEN = 'EFLW1b0wbnXCxZtmLj66xxTWklPR1o4robXoTvpD8oA';
 const PROJECT_ID = 'ed8291fbb6266268';
 const WORKSPACE = '/home/tanner/workspace/nexus-parallel-test';

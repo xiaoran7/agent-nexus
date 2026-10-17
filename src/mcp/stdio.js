@@ -13,7 +13,7 @@ export function startMcpStdio(options = {}) {
   const projectId = options.projectId || info.projectId;
   const projectRoot = options.projectRoot || info.projectRoot;
 
-  const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4100', 10);
+  const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4300', 10);
   const baseUrl = options.baseUrl || `http://127.0.0.1:${port}`;
   const token = options.token || process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN || readSessionToken() || '';
 

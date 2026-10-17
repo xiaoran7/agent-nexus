@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 
 class DaemonController {
-  constructor(port = 4100) {
+  constructor(port = 4300) {
     this.port = port;
     this.childProcess = null;
     this.isEmbedded = false;

@@ -23,7 +23,7 @@
 
 ## 边界
 
-- 默认连接 `127.0.0.1:4100`，由 `NEXUS_HOST` / `NEXUS_PORT` 覆盖，请求超时 1000ms。
+- 默认连接 `127.0.0.1:4300`，由 `NEXUS_HOST` / `NEXUS_PORT` 覆盖，请求超时 1000ms。
 - 离线、超时、响应无法解析或无目标文件均放行；不是强制文件访问控制。
 - daemon 明确拒绝请求（HTTP 4xx，如目标文件缺失）时**拦截**并退出码 2。协调库说"评估不了"不等于"没有冲突"，直接放行会把这类请求静默通过。
 - 身份优先取 `NEXUS_AGENT_PROVIDER` / `NEXUS_SESSION_ID`，再尝试载荷和各工具会话变量，最后使用 PID。
@@ -44,4 +44,4 @@
 
 matcher 只列 `Bash|Write|Edit|MultiEdit|NotebookEdit`，不是 `*`：每条命令都会起一次 node 进程，而 hook 单次预算只有 1000ms。
 
-daemon 地址写入时读 `NEXUS_URL`，默认 `http://127.0.0.1:4100`；与 daemon 实际监听端口（`NEXUS_PORT`）需保持一致。
+daemon 地址写入时读 `NEXUS_URL`，默认 `http://127.0.0.1:4300`；与 daemon 实际监听端口（`NEXUS_PORT`）需保持一致。

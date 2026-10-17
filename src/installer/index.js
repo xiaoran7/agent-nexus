@@ -123,7 +123,7 @@ export function installCodexHook() {
 
   Object.assign(config, {
     enabled: true,
-    nexus_daemon_url: process.env.NEXUS_URL || 'http://127.0.0.1:4100',
+    nexus_daemon_url: process.env.NEXUS_URL || 'http://127.0.0.1:4300',
     enforce_pre_edit: true,
     hook_script: hookPath
   });
@@ -150,7 +150,7 @@ export function installZCodeHook() {
 
   Object.assign(config, {
     enabled: true,
-    daemon_url: process.env.NEXUS_URL || 'http://127.0.0.1:4100',
+    daemon_url: process.env.NEXUS_URL || 'http://127.0.0.1:4300',
     pre_edit_hook: hookPath
   });
 
