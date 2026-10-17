@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-10-17 控制台界面全面人话化汉化与 Hook 写入正则误伤修复 (v0.2.5)
+
+### 改了什么
+
+- **控制台界面全面人话化汉化 (Plain-Language Localization & De-geekification)**
+  - **彻底去除技术黑话与生硬英文 (`src/ui/index.html`, `src/ui/app.js`)**：
+    - 顶栏与品牌："WAR ROOM" 改为 "协同大屏"，"Master Orchestration Core" 改为 "多会话防撞车中枢"，"Project Memory" 改为 "项目备忘录"，"Sensei Active" 改为 "调度服务在线"；
+    - 统计卡片："Active Agents" 改为 "在线 AI 助手"，"Running Leases" 改为 "正在改文件的助手"，"Waiting in Queue" 改为 "排队等待中"，"Project Memories" 改为 "已记录备忘"；
+    - 施工流水："Construction Lanes" 改为 "正在修改的文件与交接流水"，"[Exclusive Lock]" 改为 "[独占修改中]"，"TTL: Xs" 改为 "倒计时: Xs"，"(No queue backlog)" 改为 "(无其他助手排队)"；
+    - 状态矩阵："Agent Matrix & Claims" 改为 "各助手施工状态与持锁明细"，意图与进度展示人话化，助手状态精确映射为 "正在改文件"、"排队等待中"、"空闲就绪"、"已离开"；
+    - 架构师视窗："Embedded AI Tech Lead" 改为 "常驻架构师协同视窗"，"OBSERVING (SILENT SPRINT)" 改为 "静默守望（单人施工不打扰）"，"AWAKENED" 改为 "已唤醒（多会话协同避障）"；
+    - 模型网关大屏："Magpie Elastic Gateway Router" 改为 "多模型弹性智能网关"，分发策略、健康状态（"全部正常运行"、"部分节点避让中"、"全部休眠中"）、可用模型池与实时拨测控制台全链路人话化，Demo 轨迹输出完全本地化。
+- **通用 Hook 写入正则误伤修复 (`src/hook/nexus-hook.mjs`)**
+  - **排除箭头函数与比较符**：修复 `WRITE_COMMAND_RE` 正则表达式因误把 `=>`（ES6 箭头函数）、`->`（指针语法）中的 `>` 当作重定向符号而错误阻断 Node 代码执行与 Bash 检查的缺陷；
+  - **后台启动父目录自动创建 (`src/daemon/index.js`)**：在持久化当前活动 `session.token` 时自动检查并递归创建 `.agent-nexus` 目录，杜绝全新环境因目录缺失而静默丢失令牌；并在 Node 测试环境感知（`NODE_TEST_CONTEXT`）下禁止改写用户活动 `session.token`。
+
+---
+
 ## 2026-10-17 生产级并发协同优化：生命周期零感释放、大文件锚点锁与高信息诊断 (v0.2.4)
 
 ### 改了什么

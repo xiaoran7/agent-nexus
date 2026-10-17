@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent-Nexus War Room | S.C.H.A.L.E. Multi-Agent Coordinator</title>
+  <title>Agent-Nexus 协同监控大屏 | 多会话防撞车中枢</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -22,9 +22,9 @@
       <div class="brand-text-block">
         <div class="brand-title">
           <span>Agent-Nexus</span>
-          <span class="badge-schale">WAR ROOM</span>
+          <span class="badge-schale">协同大屏</span>
         </div>
-        <span class="brand-sub">Master Orchestration Core</span>
+        <span class="brand-sub">多会话防撞车中枢</span>
       </div>
     </div>
 
@@ -32,22 +32,22 @@
     <div class="view-tabs" id="view-tabs">
       <button id="tab-war-room" class="view-tab active">
         <span class="tab-icon">🏛️</span>
-        <span>War Room</span>
+        <span>协同看板</span>
       </button>
       <button id="tab-gateway" class="view-tab">
         <span class="tab-icon">⚡</span>
-        <span>Magpie Gateway</span>
-        <span id="gateway-tab-badge" class="badge-tab-healthy">ROUTING</span>
+        <span>模型网关调度</span>
+        <span id="gateway-tab-badge" class="badge-tab-healthy">正常路由</span>
       </button>
       <button id="tab-unified" class="view-tab">
         <span class="tab-icon">📊</span>
-        <span>Unified</span>
+        <span>综合全览</span>
       </button>
     </div>
 
     <div class="top-right-meta">
       <select id="project-selector" class="proj-select">
-        <option value="default">Project: default</option>
+        <option value="default">当前项目: default</option>
       </select>
 
       <button id="open-memory-drawer-btn" class="memory-btn">
@@ -55,13 +55,13 @@
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
         </svg>
-        <span>Project Memory</span>
+        <span>项目备忘录</span>
         <span id="memory-count-badge" style="font-size: 10px; background: rgba(255,255,255,0.2); padding: 1px 5px; border-radius: 8px;">0</span>
       </button>
 
       <div class="sensei-capsule">
         <span class="pulse-dot"></span>
-        <span style="font-weight: 600;">Sensei Active</span>
+        <span style="font-weight: 600;">调度服务在线</span>
         <span style="color: var(--text-faint);">|</span>
         <span id="daemon-status" style="color: #38bdf8;">127.0.0.1:4100</span>
       </div>
@@ -79,16 +79,16 @@
         <div class="lead-header-row">
           <div class="lead-title-box">
             <span style="font-size: 16px;">🏛️</span>
-            <span style="font-weight: 800; font-size: 14px; letter-spacing: -0.2px; color: #fff;">Embedded AI Tech Lead (项目常驻架构师视窗)</span>
-            <span id="lead-status-chip" class="lead-chip chip-silent">OBSERVING (SILENT SPRINT)</span>
+            <span style="font-weight: 800; font-size: 14px; letter-spacing: -0.2px; color: #fff;">常驻架构师协同视窗</span>
+            <span id="lead-status-chip" class="lead-chip chip-silent">静默守望（单人施工不打扰）</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span id="lead-session-stats" style="font-size: 11px; font-family: var(--font-mono); color: #38bdf8;">1 SESSION ACTIVE</span>
-            <span id="lead-last-activity" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">READY</span>
+            <span id="lead-session-stats" style="font-size: 11px; font-family: var(--font-mono); color: #38bdf8;">1 个会话正在干活</span>
+            <span id="lead-last-activity" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">就绪</span>
           </div>
         </div>
         <div id="lead-advice-container" class="lead-advice-text">
-          [Nexus 架构师静默保驾] 单会话施工中，架构师保持静默，绝不产生干扰。当检测到新 Session 带着并发计划加入时，将实时唤醒并提供避障重排与接力路线。
+          [Nexus 架构师静默保驾] 当前只有单会话独立施工，架构师保持静默，绝不产生干扰。当检测到新会话带着并发修改计划加入时，将实时唤醒并提供避让重排与交接路线。
         </div>
         <div id="lead-awakened-detail" class="lead-awakened-box" style="display: none;">
           <!-- 唤醒后的两会话任务交接与重排明细 -->
@@ -108,7 +108,7 @@
           </div>
           <div class="metric-data">
             <span class="metric-val" id="metric-total-agents">0</span>
-            <span class="metric-label">Active Agents</span>
+            <span class="metric-label">在线 AI 助手</span>
           </div>
         </div>
 
@@ -121,7 +121,7 @@
           </div>
           <div class="metric-data">
             <span class="metric-val" id="metric-running">0</span>
-            <span class="metric-label">Running Leases</span>
+            <span class="metric-label">正在改文件的助手</span>
           </div>
         </div>
 
@@ -136,7 +136,7 @@
           </div>
           <div class="metric-data">
             <span class="metric-val" id="metric-waiting">0</span>
-            <span class="metric-label">Waiting in Queue</span>
+            <span class="metric-label">排队等待中</span>
           </div>
         </div>
 
@@ -150,7 +150,7 @@
           </div>
           <div class="metric-data">
             <span class="metric-val" id="metric-memories">0</span>
-            <span class="metric-label">Project Memories</span>
+            <span class="metric-label">已记录备忘</span>
           </div>
         </div>
       </div>
@@ -163,9 +163,9 @@
               <rect x="3" y="4" width="18" height="16" rx="2"></rect>
               <line x1="9" y1="4" x2="9" y2="20"></line>
             </svg>
-            <span>Construction Lanes & Live Handoffs (施工泳道与交接矩阵)</span>
+            <span>正在修改的文件与交接流水</span>
           </div>
-          <span class="panel-meta" id="lanes-status" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">0 ACTIVE LANES</span>
+          <span class="panel-meta" id="lanes-status" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">0 个文件正在修改</span>
         </div>
         <div class="lanes-grid" id="lanes-container">
           <!-- 动态注入泳道与倒计时 -->
@@ -183,9 +183,9 @@
                 <polyline points="2 17 12 22 22 17"></polyline>
                 <polyline points="2 12 12 17 22 12"></polyline>
               </svg>
-              <span>Agent Matrix & Claims</span>
+              <span>各助手施工状态与持锁明细</span>
             </div>
-            <span class="panel-meta" id="matrix-last-updated">LIVE</span>
+            <span class="panel-meta" id="matrix-last-updated">实时同步</span>
           </div>
 
           <div class="agent-grid" id="agents-container">
@@ -201,9 +201,9 @@
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
-              <span>Activity Timeline</span>
+              <span>协作动态流水</span>
             </div>
-            <span class="panel-meta">REALTIME WS</span>
+            <span class="panel-meta">实时推送</span>
           </div>
 
           <div class="timeline-stream" id="timeline-container">
@@ -219,18 +219,18 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
-            <span>Inter-Session Dialogue & Handoffs (会话间双向对话网络)</span>
+            <span>助手跨会话对话与交接记录</span>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
-            <span class="panel-meta" id="dialogue-counter">0 DIALOGUES</span>
+            <span class="panel-meta" id="dialogue-counter">0 条对话</span>
             <button id="refresh-dialogue-btn" class="gw-action-btn" style="padding: 3px 8px; font-size: 11px;">
-              <span>Refresh</span>
+              <span>刷新对话</span>
             </button>
           </div>
         </div>
         <div class="dialogue-container" id="dialogue-stream">
           <!-- 动态注入会话对答流水 -->
-          <div class="dialogue-empty-hint">暂无跨 Session 对话，当多会话并发沟通接口、交接进度时将在此呈现。</div>
+          <div class="dialogue-empty-hint">暂无跨会话沟通记录，当多个助手互发消息确认接口或交接进度时将在此展示。</div>
         </div>
       </section>
     </div>
@@ -250,36 +250,36 @@
             </div>
             <div>
               <div class="gw-main-title">
-                <span>Magpie Elastic Gateway Router</span>
-                <span class="badge-gw-live">DYNAMIC FAULT-TOLERANT</span>
+                <span>多模型弹性智能网关</span>
+                <span class="badge-gw-live">自动容灾防超时</span>
               </div>
-              <div class="gw-sub-title">Heuristic Error Classification • Circuit Breaker & Cooldown • Affinity Routing</div>
+              <div class="gw-sub-title">智能错误识别 • 故障节点自动避让 • 会话缓存亲和保持</div>
             </div>
           </div>
 
           <div class="gw-controls-group">
             <div class="gw-strategy-capsule">
-              <span class="capsule-label">Strategy:</span>
+              <span class="capsule-label">分发策略:</span>
               <select id="gw-strategy-select" class="gw-select">
-                <option value="smart">Smart Affinity (Cache-First)</option>
-                <option value="ordered">Ordered Waterfall (Priority)</option>
-                <option value="rotate">Round Robin (Rotate)</option>
-                <option value="least-used">Least Used (Load-Balanced)</option>
+                <option value="smart">智能亲和优先（最大化命中提示词缓存）</option>
+                <option value="ordered">按优先级瀑布降级（首选失败换次选）</option>
+                <option value="rotate">轮流分担（平均分摊请求）</option>
+                <option value="least-used">最少使用优先（空闲节点优先）</option>
               </select>
             </div>
 
             <div class="gw-health-capsule">
               <span id="gw-health-dot" class="pulse-dot"></span>
-              <span id="gw-health-text" style="font-weight: 700;">HEALTHY</span>
+              <span id="gw-health-text" style="font-weight: 700;">全部正常</span>
               <span style="color: var(--text-faint);">|</span>
-              <span id="gw-candidate-count-text">0 Nodes</span>
+              <span id="gw-candidate-count-text">0 个模型节点</span>
             </div>
 
             <button id="gw-reset-all-btn" class="gw-action-btn" title="立即解除所有正在冷却休眠的候选节点">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
               </svg>
-              <span>Reset All (Unrest)</span>
+              <span>一键唤醒全部节点</span>
             </button>
           </div>
         </div>
@@ -288,19 +288,19 @@
         <div class="gw-metric-grid">
           <div class="gw-metric-box">
             <span class="gw-metric-num" id="gw-total-requests">0</span>
-            <span class="gw-metric-desc">Total Routed Requests</span>
+            <span class="gw-metric-desc">累计调度请求数</span>
           </div>
           <div class="gw-metric-box">
             <span class="gw-metric-num" id="gw-active-nodes" style="color: #34d399;">0</span>
-            <span class="gw-metric-desc">Active Candidates</span>
+            <span class="gw-metric-desc">可用模型节点</span>
           </div>
           <div class="gw-metric-box">
             <span class="gw-metric-num" id="gw-resting-nodes" style="color: #fbbf24;">0</span>
-            <span class="gw-metric-desc">Resting / Cooling</span>
+            <span class="gw-metric-desc">休息/冷却中节点</span>
           </div>
           <div class="gw-metric-box">
             <span class="gw-metric-num" id="gw-avg-latency" style="color: #38bdf8;">0ms</span>
-            <span class="gw-metric-desc">Last Latency</span>
+            <span class="gw-metric-desc">最近耗时</span>
           </div>
         </div>
       </section>
@@ -316,35 +316,35 @@
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
               <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
             </svg>
-            <span>Visual Dispatch Pipeline & Failover Topology (调度拓扑流水线)</span>
+            <span>请求调度与故障自动转移流水线</span>
           </div>
-          <span class="panel-meta" id="topology-flow-status">DETERMINISTIC CACHE-AFFINITY ACTIVE</span>
+          <span class="panel-meta" id="topology-flow-status">缓存亲和路由生效中</span>
         </div>
 
         <div class="topology-canvas" id="topology-canvas">
           <!-- 拓扑节点 -->
           <div class="topo-node inbound">
-            <div class="topo-node-badge">INBOUND</div>
+            <div class="topo-node-badge">接入端</div>
             <div class="topo-node-icon">📥</div>
-            <div class="topo-node-title">Agent Request</div>
-            <div class="topo-node-sub">Tech Lead / Tool Runner</div>
+            <div class="topo-node-title">助手提问请求</div>
+            <div class="topo-node-sub">本地终端 / 工具调用</div>
           </div>
 
           <div class="topo-beam-connector">
             <div class="beam-line"></div>
-            <span class="beam-label">affinityKey: <code id="topo-affinity-key">default</code></span>
+            <span class="beam-label">项目缓存键: <code id="topo-affinity-key">default</code></span>
           </div>
 
           <div class="topo-node router">
-            <div class="topo-node-badge">ROUTER</div>
+            <div class="topo-node-badge">智能网关</div>
             <div class="topo-node-icon">🔀</div>
-            <div class="topo-node-title">Magpie Core</div>
-            <div class="topo-node-sub" id="topo-strategy-display">Strategy: Smart</div>
+            <div class="topo-node-title">Magpie 智能路由</div>
+            <div class="topo-node-sub" id="topo-strategy-display">分发策略: 智能亲和</div>
           </div>
 
           <div class="topo-beam-connector">
             <div class="beam-line"></div>
-            <span class="beam-label">zero-loss failover</span>
+            <span class="beam-label">零丢包故障自愈</span>
           </div>
 
           <div class="topo-cluster" id="topo-candidates-cluster">
@@ -353,14 +353,14 @@
 
           <div class="topo-beam-connector">
             <div class="beam-line"></div>
-            <span class="beam-label">stream</span>
+            <span class="beam-label">实时流式返回</span>
           </div>
 
           <div class="topo-node output">
-            <div class="topo-node-badge">OUTBOUND</div>
+            <div class="topo-node-badge">输出端</div>
             <div class="topo-node-icon">📤</div>
-            <div class="topo-node-title">Resilient Output</div>
-            <div class="topo-node-sub">High Availability</div>
+            <div class="topo-node-title">可靠回答交付</div>
+            <div class="topo-node-sub">高可用保障</div>
           </div>
         </div>
       </section>
@@ -375,13 +375,13 @@
               <line x1="6" y1="6" x2="6.01" y2="6"></line>
               <line x1="6" y1="18" x2="6.01" y2="18"></line>
             </svg>
-            <span>Upstream Candidate Pool & Circuit Breakers (候选上游节点与断路器看板)</span>
+            <span>可用模型池与防封防限流看板</span>
           </div>
           <div class="panel-meta-actions">
             <button id="gw-demo-load-btn" class="gw-mini-btn" title="载入双通道演示候选节点以体验可视化调度">
-              <span>✨ 载入演练拓扑 (Demo Mode)</span>
+              <span>✨ 载入双模型演示（体验自动换路线）</span>
             </button>
-            <span class="panel-meta" id="candidates-pool-meta">HEURISTIC COOLDOWN MONITORED</span>
+            <span class="panel-meta" id="candidates-pool-meta">限流错误自动休眠监控中</span>
           </div>
         </div>
 
@@ -398,7 +398,7 @@
               <polyline points="4 17 10 11 4 5"></polyline>
               <line x1="12" y1="19" x2="20" y2="19"></line>
             </svg>
-            <span>Live Route Dispatch Console (实时路由拨测与故障转移控制台)</span>
+            <span>模型调用实时测试与容灾体验</span>
           </div>
           <span class="panel-meta">REST API /api/gateway/chat</span>
         </div>
@@ -406,19 +406,19 @@
         <div class="probe-body">
           <div class="probe-input-col">
             <div class="probe-row">
-              <input type="text" id="probe-user-message" class="probe-input" placeholder="输入测试消息测试多候选节点调度（例如：Analyze project architecture contract）..." value="Echo test for Magpie visual gateway router" />
+              <input type="text" id="probe-user-message" class="probe-input" placeholder="输入一段测试内容，体验多模型调度（例如：请帮我检查项目接口规范）..." value="测试模型网关：你好，请做个自我介绍" />
               <button id="probe-dispatch-btn" class="probe-btn">
-                <span>🚀 Dispatch Request</span>
+                <span>🚀 发送测试请求</span>
               </button>
             </div>
             <div class="probe-hint">
-              <span>💡 提示：在此处拨测验证。若首选节点发生 429 或 5xx，网关将毫秒级熔断并无感降级到备用候选节点。</span>
+              <span>💡 提示：在此处拨测验证。若首选节点发生 429 限流或 5xx 故障，网关将毫秒级熔断并无感降级到备用候选节点。</span>
             </div>
           </div>
 
           <div class="probe-output-col" id="probe-output-container">
             <div class="probe-output-placeholder">
-              Ready to dispatch. Responses and failover traces will appear here.
+              准备就绪。模型回复和故障转移轨迹将在这里显示。
             </div>
           </div>
         </div>
@@ -431,19 +431,19 @@
     <div class="master-inner">
       <div class="master-badge">
         <span>📢</span>
-        <span>MASTER BROADCAST</span>
+        <span>全员广播通知</span>
       </div>
       <input type="text" id="master-broadcast-input" class="master-input" placeholder="输入调度指令，一键广播至当前项目全员会话信箱（例如：🚨 立即暂停写入 database.js，先完成 auth 重构）..." />
       <label class="master-urgency">
         <input type="checkbox" id="master-broadcast-urgent" />
-        <span>Urgent Priority</span>
+        <span>紧急插话</span>
       </label>
       <button id="master-broadcast-btn" class="master-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="22" y1="2" x2="11" y2="13"></line>
           <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
         </svg>
-        <span>Broadcast</span>
+        <span>发送广播</span>
       </button>
     </div>
   </div>
@@ -454,12 +454,12 @@
     <div class="drawer-head">
       <h3>
         <span>🧠</span>
-        <span>Project Memory Engine</span>
+        <span>项目知识备忘录</span>
       </h3>
       <button id="close-memory-drawer-btn" class="drawer-close">&times;</button>
     </div>
     <div class="drawer-search-bar">
-      <input type="text" id="memory-search-input" class="drawer-search-input" placeholder="搜索架构决策、规约或避坑经验..." />
+      <input type="text" id="memory-search-input" class="drawer-search-input" placeholder="搜索架构规约、业务约定或踩坑经验..." />
     </div>
     <div class="memory-list" id="memory-items-container">
       <!-- 动态注入记忆 -->
@@ -467,28 +467,28 @@
     <div class="drawer-add-box">
       <div class="add-row">
         <select id="new-mem-cat" class="add-select">
-          <option value="architecture">Architecture</option>
-          <option value="rule">Rule</option>
-          <option value="gotcha">Gotcha</option>
-          <option value="milestone">Milestone</option>
-          <option value="general">General</option>
+          <option value="architecture">架构设计 (Architecture)</option>
+          <option value="rule">开发铁律 (Rule)</option>
+          <option value="gotcha">踩坑排雷 (Gotcha)</option>
+          <option value="milestone">重要节点 (Milestone)</option>
+          <option value="general">常规备忘 (General)</option>
         </select>
-        <input type="text" id="new-mem-key" class="add-key-input" placeholder="Key (e.g. auth_protocol)" style="flex: 1;" />
+        <input type="text" id="new-mem-key" class="add-key-input" placeholder="关键词/标识（例如：auth_protocol）" style="flex: 1;" />
       </div>
-      <textarea id="new-mem-content" class="add-content-input" placeholder="记录架构契约、代码规约或避坑经验..."></textarea>
-      <button id="save-mem-btn" class="add-save-btn">保存到项目长期记忆</button>
+      <textarea id="new-mem-content" class="add-content-input" placeholder="记录架构规约、代码规范或踩坑经验..."></textarea>
+      <button id="save-mem-btn" class="add-save-btn">保存到项目备忘录</button>
     </div>
   </div>
 
   <!-- Footer -->
   <footer>
     <div class="footer-left">
-      <span>Agent-Nexus Coordinator v0.2.1 (War Room & Magpie Edition)</span>
+      <span>Agent-Nexus 协同调度中枢 v0.2.4</span>
       <span>•</span>
-      <span>Passive Traffic Control Engine for Claude Code, Codex, and ZCode</span>
+      <span>为 Claude Code、Codex 等多 AI 助手提供防撞车防覆盖保驾护航</span>
     </div>
     <div class="footer-right">
-      S.C.H.A.L.E. General Support Bureau
+      本地高可用工程协同引擎
     </div>
   </footer>
 

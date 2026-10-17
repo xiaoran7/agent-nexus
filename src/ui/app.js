@@ -200,14 +200,14 @@ function renderLanes(claims, agents) {
       <div class="lane-card">
         <div class="lane-top">
           <span class="lane-target" title="${fullTarget}">[${claimType}] ${shortTarget}</span>
-          <span class="lane-badge busy">TTL: ${remainingSec}s</span>
+          <span class="lane-badge busy">倒计时: ${remainingSec}s</span>
         </div>
         <div class="lane-flow">
           <span class="lane-holder">${holderName}</span>
-          <span class="lane-arrow">➔ [Exclusive Lock]</span>
+          <span class="lane-arrow">➔ [独占修改中]</span>
           ${waitingAgents.length > 0
-            ? `<span class="lane-waiter">⏳ Next: ${waitingAgents.map(w => escapeHtml(w.name)).join(', ')}</span>`
-            : `<span style="color: var(--text-faint); font-size: 11px;">(No queue backlog)</span>`}
+            ? `<span class="lane-waiter">⏳ 下一位接力: ${waitingAgents.map(w => escapeHtml(w.name)).join(', ')}</span>`
+            : `<span style="color: var(--text-faint); font-size: 11px;">(无其他助手排队)</span>`}
         </div>
         <div class="lane-countdown-bar">
           <div class="lane-progress" style="width: ${progressPct}%;"></div>
@@ -232,25 +232,25 @@ function updateLeadConsole(agents) {
   const activeCount = agents.filter(a => a.status !== 'departed').length;
 
   if (dom.leadSessionStats) {
-    dom.leadSessionStats.textContent = `${activeCount} SESSION${activeCount === 1 ? '' : 'S'} ACTIVE`;
+    dom.leadSessionStats.textContent = `${activeCount} 个会话正在干活`;
   }
 
   if (activeCount <= 1) {
     dom.leadStatusChip.className = 'lead-chip chip-silent';
-    dom.leadStatusChip.textContent = 'OBSERVING (SILENT SPRINT)';
+    dom.leadStatusChip.textContent = '静默守望（单人施工不打扰）';
     if (dom.leadAdviceContainer && !dom.leadAdviceContainer.getAttribute('data-sticky')) {
-      dom.leadAdviceContainer.innerHTML = `[Nexus 架构师静默保驾] 当前只有单 Session 独立施工，架构师保持静默，绝不产生干扰。当检测到新 Session 带着并发计划加入时，将实时唤醒并提供避障重排与接力路线。`;
+      dom.leadAdviceContainer.innerHTML = `[Nexus 架构师静默保驾] 当前只有单会话独立施工，架构师保持静默，绝不产生干扰。当检测到新会话带着并发修改计划加入时，将实时唤醒并提供避让重排与交接路线。`;
     }
   } else {
     dom.leadStatusChip.className = 'lead-chip chip-awakened';
-    dom.leadStatusChip.textContent = 'AWAKENED (MULTI-SESSION COORDINATION)';
+    dom.leadStatusChip.textContent = '已唤醒（多会话协同避障）';
   }
 }
 
 function handleLeadAwakened(data) {
   if (!dom.leadStatusChip || !dom.leadAdviceContainer) return;
   dom.leadStatusChip.className = 'lead-chip chip-awakened';
-  dom.leadStatusChip.textContent = 'AWAKENED (MULTI-SESSION COORDINATION)';
+  dom.leadStatusChip.textContent = '已唤醒（多会话协同避障）';
 
   const joiningId = escapeHtml(data.joining_agent_id);
   const activeCount = data.active_peer_count || 1;
@@ -258,15 +258,15 @@ function handleLeadAwakened(data) {
 
   dom.leadAdviceContainer.setAttribute('data-sticky', 'true');
   dom.leadAdviceContainer.innerHTML = `
-    <strong>[Tech Lead 架构师实时唤醒]</strong>
-    检测到新 Session <strong>${joiningId}</strong> 加入工作区（在席活跃施工 Session: ${activeCount} 个，潜在写冲突: ${conflictsCount} 项）。
-    已完成全景信息聚合（A 施工进度、持有的排他锁与长期工程记忆），避障重排指引已就绪！
+    <strong>[架构师实时唤醒提醒]</strong>
+    检测到新会话 <strong>${joiningId}</strong> 加入工作区（在席活跃施工会话: ${activeCount} 个，潜在写冲突: ${conflictsCount} 项）。
+    已完成全景信息聚合（各方施工进度、持有的文件锁与长期备忘），避让重排指引已就绪！
   `;
 
   if (dom.leadAwakenedDetail && data.peer_sessions && data.peer_sessions.length > 0) {
     dom.leadAwakenedDetail.style.display = 'block';
     dom.leadAwakenedDetail.innerHTML = `
-      <div style="font-weight: 700; color: #38bdf8; margin-bottom: 6px;">【在席 Session 施工现场快照】</div>
+      <div style="font-weight: 700; color: #38bdf8; margin-bottom: 6px;">【在席会话施工现场快照】</div>
       ${data.peer_sessions.map(p => `
         <div style="padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 4px; font-size: 11px;">
           • 会话 [${escapeHtml(p.name)}]: 意图 "${escapeHtml(p.currentIntent || '无')}" | 进度 "${escapeHtml(p.progressSummary || '进行中')}" | 独占锁 ${p.activeLeasesCount || 0} 个
@@ -281,15 +281,23 @@ function renderAgents(agents, activeClaims) {
   if (!agents || agents.length === 0) {
     dom.agentsContainer.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 14px;">
-        No active agents registered in this project.
+        当前项目暂无活跃的 AI 助手。
       </div>
     `;
     return;
   }
 
+  const statusMap = {
+    running: '正在改文件',
+    waiting: '排队等待中',
+    idle: '空闲就绪',
+    departed: '已离开'
+  };
+
   dom.agentsContainer.innerHTML = agents.map(a => {
     const status = a.status || 'idle';
     const statusSafe = escapeHtml(status);
+    const statusLabel = escapeHtml(statusMap[status] || status);
     const nameSafe = escapeHtml(a.name);
     const claims = (activeClaims || []).filter(c => c.agent_id === a.id);
     const providerShort = escapeHtml((a.provider || 'A').toUpperCase().slice(0, 2));
@@ -301,14 +309,14 @@ function renderAgents(agents, activeClaims) {
             <div class="agent-icon">${providerShort}</div>
             <div class="agent-title-text" title="${nameSafe}">${nameSafe}</div>
           </div>
-          <span class="status-tag ${statusSafe}">${statusSafe}</span>
+          <span class="status-tag ${statusSafe}">${statusLabel}</span>
         </div>
         <div class="intent-box">
-          ${a.current_intent ? `<strong>Intent:</strong> ${escapeHtml(a.current_intent)}` : '<span style="color: var(--text-faint);">No active declared intent</span>'}
+          ${a.current_intent ? `<strong>当前意图:</strong> ${escapeHtml(a.current_intent)}` : '<span style="color: var(--text-faint);">暂未声明修改意图</span>'}
         </div>
         ${a.progress_summary ? `
           <div class="progress-box" style="margin-top: 8px; padding: 6px 10px; background: rgba(14, 165, 233, 0.08); border-left: 2px solid #0ea5e9; border-radius: 4px; font-size: 11px;">
-            <strong style="color: #38bdf8;">Progress:</strong> ${escapeHtml(a.progress_summary)}
+            <strong style="color: #38bdf8;">施工进度:</strong> ${escapeHtml(a.progress_summary)}
           </div>
         ` : ''}
         ${a.blocked_reason ? `
@@ -319,7 +327,7 @@ function renderAgents(agents, activeClaims) {
         ` : ''}
         ${claims.length > 0 ? `
           <div class="claims-zone">
-            <span class="claims-label">Locked Resources (${claims.length})</span>
+            <span class="claims-label">已独占锁定的文件/资源 (${claims.length})</span>
             <div class="claims-flex">
               ${claims.map(c => `
                 <span class="claim-pill" title="${escapeHtml(c.claim_target)}">[${escapeHtml(c.claim_type)}] ${escapeHtml(c.claim_target.split('/').pop())}</span>
@@ -335,7 +343,7 @@ function renderAgents(agents, activeClaims) {
 function renderTimeline(timeline) {
   if (!dom.timelineContainer) return;
   if (!timeline || timeline.length === 0) {
-    dom.timelineContainer.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-faint); font-size: 12px;">No events recorded.</div>';
+    dom.timelineContainer.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-faint); font-size: 12px;">暂无动态记录。</div>';
     return;
   }
 
@@ -595,12 +603,12 @@ function renderGateway(data) {
   }
   if (dom.topoStrategyDisplay) {
     const stratNames = {
-      smart: 'Strategy: Smart (Affinity)',
-      ordered: 'Strategy: Ordered Waterfall',
-      rotate: 'Strategy: Round Robin',
-      'least-used': 'Strategy: Least Used'
+      smart: '策略: 智能亲和（优先缓存）',
+      ordered: '策略: 按优先级瀑布降级',
+      rotate: '策略: 轮流分担',
+      'least-used': '策略: 最少使用优先'
     };
-    dom.topoStrategyDisplay.textContent = stratNames[strategy] || `Strategy: ${strategy}`;
+    dom.topoStrategyDisplay.textContent = stratNames[strategy] || `策略: ${strategy}`;
   }
   if (dom.topoAffinityKey) {
     dom.topoAffinityKey.textContent = escapeHtml(currentProjectId || 'default');
@@ -630,26 +638,26 @@ function renderGateway(data) {
   if (dom.gwAvgLatency) dom.gwAvgLatency.textContent = `${lastLatency}ms`;
 
   if (dom.gwCandidateCountText) {
-    dom.gwCandidateCountText.textContent = `${candidateCount} Node${candidateCount === 1 ? '' : 's'}`;
+    dom.gwCandidateCountText.textContent = `${candidateCount} 个模型节点`;
   }
 
   // 顶部健康胶囊与标签 Badge
   const allDead = candidateCount > 0 && activeNodes === 0;
   if (dom.gwHealthDot && dom.gwHealthText) {
     if (candidateCount === 0) {
-      dom.gwHealthText.textContent = 'STANDBY';
+      dom.gwHealthText.textContent = '等待配置';
       dom.gwHealthDot.style.background = '#64748b';
       dom.gwHealthDot.style.boxShadow = '0 0 8px #64748b';
     } else if (allDead) {
-      dom.gwHealthText.textContent = 'ALL RESTING';
+      dom.gwHealthText.textContent = '全部休眠中';
       dom.gwHealthDot.style.background = '#ef4444';
       dom.gwHealthDot.style.boxShadow = '0 0 8px #ef4444';
     } else if (restingNodes > 0) {
-      dom.gwHealthText.textContent = 'DEGRADED';
+      dom.gwHealthText.textContent = '部分节点避让中';
       dom.gwHealthDot.style.background = '#f59e0b';
       dom.gwHealthDot.style.boxShadow = '0 0 8px #f59e0b';
     } else {
-      dom.gwHealthText.textContent = 'HEALTHY';
+      dom.gwHealthText.textContent = '全部正常运行';
       dom.gwHealthDot.style.background = '#10b981';
       dom.gwHealthDot.style.boxShadow = '0 0 8px #10b981';
     }
@@ -660,7 +668,7 @@ function renderGateway(data) {
     if (candidates.length === 0) {
       dom.topoCandidatesCluster.innerHTML = `
         <div class="topo-channel-row" style="color: var(--text-faint); font-size: 11px; justify-content: center;">
-          No upstream candidates configured.
+          当前未配置上游模型节点。
         </div>
       `;
     } else {
@@ -669,8 +677,8 @@ function renderGateway(data) {
         const channelClass = isResting ? 'resting' : 'active';
         const statusClass = isResting ? 'cooldown' : 'healthy';
         const statusLabel = isResting
-          ? `Cooldown (${c.remainingRestSeconds || 0}s)`
-          : `Active (P:${c.priority})`;
+          ? `冷却休眠 (${c.remainingRestSeconds || 0}秒)`
+          : `正常服务 (优先级:${c.priority})`;
         return `
           <div class="topo-channel-row ${channelClass}">
             <span class="topo-channel-name">
@@ -694,21 +702,33 @@ function renderCandidatesGrid(candidates) {
   if (!candidates || candidates.length === 0) {
     dom.gwCandidatesContainer.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 16px;">
-        <div>No upstream candidates registered in current daemon.</div>
-        <div style="margin-top: 8px; font-size: 11px;">💡 点击上方 "✨ 载入演练拓扑 (Demo Mode)" 可即刻体验双通道故障转移与断路器调度！</div>
+        <div>当前后台未配置上游模型节点。</div>
+        <div style="margin-top: 8px; font-size: 11px;">💡 点击上方 "✨ 载入双模型演示（体验自动换路线）" 可立刻体验当主力模型 429 报错时，系统如何毫秒级自动切换到备用模型！</div>
       </div>
     `;
     return;
   }
+
+  const errorTypeMap = {
+    'rate-limit': '429 频率限流',
+    'overloaded': '上游过载拥堵',
+    'auth': '认证鉴权失败',
+    'billing': '账户余额不足',
+    'timeout': '响应超时',
+    'bad-request': '请求格式非法',
+    'server-error': '5xx 服务端故障',
+    'none': '无异常'
+  };
 
   dom.gwCandidatesContainer.innerHTML = candidates.map(c => {
     const isResting = !!c.resting;
     const isDead = c.consecutiveFailures >= 5;
     const cardClass = isDead ? 'dead' : (isResting ? 'resting' : '');
     const badgeClass = isDead ? 'dead' : (isResting ? 'resting' : 'active');
-    const badgeText = isDead ? 'DEAD' : (isResting ? 'RESTING' : 'HEALTHY');
+    const badgeText = isDead ? '已停用' : (isResting ? '冷却休眠中' : '正常服务中');
 
     const lastFailureType = c.lastFailureType || 'none';
+    const failureLabel = errorTypeMap[lastFailureType] || lastFailureType;
     const pillClass = `pill-${lastFailureType}`;
 
     const remainingSec = c.remainingRestSeconds || 0;
@@ -730,33 +750,33 @@ function renderCandidatesGrid(candidates) {
 
         <div class="cand-stats-grid">
           <div class="cand-stat-item">
-            <span class="cand-stat-label">Priority / Wt</span>
+            <span class="cand-stat-label">优先级 / 权重</span>
             <span class="cand-stat-val">P${c.priority || 0} / W${c.weight || 1}</span>
           </div>
           <div class="cand-stat-item">
-            <span class="cand-stat-label">Success Rate</span>
+            <span class="cand-stat-label">成功请求率</span>
             <span class="cand-stat-val" style="color: #34d399;">${c.successCount || 0} / ${c.totalRequests || 0}</span>
           </div>
           <div class="cand-stat-item">
-            <span class="cand-stat-label">Last Latency</span>
+            <span class="cand-stat-label">最近耗时</span>
             <span class="cand-stat-val" style="color: #38bdf8;">${c.lastLatencyMs || 0}ms</span>
           </div>
         </div>
 
         <div class="cand-breaker-box">
           <div class="cand-breaker-row">
-            <span style="color: var(--text-faint);">Heuristic Error Type:</span>
+            <span style="color: var(--text-faint);">最近错误归因:</span>
             ${lastFailureType !== 'none'
-              ? `<span class="cand-error-pill ${pillClass}">${escapeHtml(lastFailureType)}</span>`
-              : `<span style="color: var(--text-faint); font-family: var(--font-mono); font-size: 10px;">NONE (0 Faults)</span>`
+              ? `<span class="cand-error-pill ${pillClass}">${escapeHtml(failureLabel)}</span>`
+              : `<span style="color: var(--text-faint); font-family: var(--font-mono); font-size: 10px;">无异常 (0 故障)</span>`
             }
           </div>
 
           ${isResting ? `
             <div class="cooldown-wrap">
               <div class="cooldown-meta">
-                <span>Circuit Breaker Active</span>
-                <span>${remainingSec}s remaining</span>
+                <span>防频繁冲击保护中</span>
+                <span>还剩 ${remainingSec} 秒恢复</span>
               </div>
               <div class="cooldown-track">
                 <div class="cooldown-progress" style="width: ${progressPct}%;"></div>
@@ -766,10 +786,10 @@ function renderCandidatesGrid(candidates) {
 
           <div class="cand-footer-row">
             <span style="font-size: 10px; color: var(--text-faint); font-family: var(--font-mono);">
-              Failures: ${c.failureCount || 0} (Consecutive: ${c.consecutiveFailures || 0})
+              累计失败: ${c.failureCount || 0} (连续失败: ${c.consecutiveFailures || 0})
             </span>
             <button class="cand-unrest-btn" data-unrest-id="${escapeHtml(c.id)}">
-              ${isResting ? '⚡ Reset (Unrest)' : 'Reset Stats'}
+              ${isResting ? '⚡ 立即唤醒' : '重置统计'}
             </button>
           </div>
         </div>
@@ -875,7 +895,7 @@ if (dom.probeDispatchBtn && dom.probeUserMessage) {
     if (dom.probeOutputContainer) {
       dom.probeOutputContainer.innerHTML = `
         <div style="color: #38bdf8; font-style: italic;">
-          ⏳ Routing request through Magpie gateway topology with affinityKey="${escapeHtml(currentProjectId)}"...
+          ⏳ 正在通过智能网关调度请求（当前项目缓存键="${escapeHtml(currentProjectId)}")...
         </div>
       `;
     }
@@ -892,13 +912,13 @@ if (dom.probeDispatchBtn && dom.probeUserMessage) {
         if (dom.probeOutputContainer) {
           dom.probeOutputContainer.innerHTML = `
             <div class="probe-res-line">
-              <span class="probe-res-badge ok">HTTP 200 OK</span>
-              <span class="probe-res-meta">Routed to: <strong>backup-deepseek-v3</strong> | Latency: ${latency}ms | Strategy: ${escapeHtml(currentGatewayData.strategy)}</span>
+              <span class="probe-res-badge ok">HTTP 200 成功</span>
+              <span class="probe-res-meta">实际服务节点: <strong>备用模型 (DeepSeek-V3)</strong> | 耗时: ${latency}ms | 策略: ${escapeHtml(currentGatewayData.strategy)}</span>
             </div>
-            <div class="probe-res-body">[Magpie Resilient Failover Trace]
-• Primary "primary-anthropic-claude" was RESTING (429 Rate Limit Cooldown).
-• Zero-loss instant fallback engaged ➔ "backup-deepseek-v3" served request.
-Response: Successfully processed: "${escapeHtml(text)}"</div>
+            <div class="probe-res-body">【故障自动转移轨迹】
+• 主力模型 "Claude 3.7 Sonnet" 当前处于 429 频率限流休眠状态。
+• 系统触发零丢包快速降级 ➔ 自动切换至备用模型 "DeepSeek-V3" 完成回答。
+回答内容: 已成功处理您的测试请求："${escapeHtml(text)}"</div>
           `;
         }
         if (currentGatewayData) {
@@ -930,8 +950,8 @@ Response: Successfully processed: "${escapeHtml(text)}"</div>
         if (dom.probeOutputContainer) {
           dom.probeOutputContainer.innerHTML = `
             <div class="probe-res-line">
-              <span class="probe-res-badge ok">HTTP 200 OK</span>
-              <span class="probe-res-meta">Routed to: <strong>${escapeHtml(json.candidateId || 'gateway')}</strong> | Latency: ${latency}ms</span>
+              <span class="probe-res-badge ok">HTTP 200 成功</span>
+              <span class="probe-res-meta">服务节点: <strong>${escapeHtml(json.candidateId || 'gateway')}</strong> | 耗时: ${latency}ms</span>
             </div>
             <div class="probe-res-body">${escapeHtml(json.content || JSON.stringify(json, null, 2))}</div>
           `;
@@ -940,10 +960,10 @@ Response: Successfully processed: "${escapeHtml(text)}"</div>
         if (dom.probeOutputContainer) {
           dom.probeOutputContainer.innerHTML = `
             <div class="probe-res-line">
-              <span class="probe-res-badge fail">HTTP ${res.status} ERROR</span>
-              <span class="probe-res-meta">Time: ${latency}ms</span>
+              <span class="probe-res-badge fail">HTTP ${res.status} 错误</span>
+              <span class="probe-res-meta">耗时: ${latency}ms</span>
             </div>
-            <div class="probe-res-body" style="color: #f87171;">${escapeHtml(json.error || 'All candidate nodes exhausted')}</div>
+            <div class="probe-res-body" style="color: #f87171;">${escapeHtml(json.error || '所有可用模型节点均已耗尽')}</div>
           `;
         }
       }
@@ -952,7 +972,7 @@ Response: Successfully processed: "${escapeHtml(text)}"</div>
       if (dom.probeOutputContainer) {
         dom.probeOutputContainer.innerHTML = `
           <div class="probe-res-line">
-            <span class="probe-res-badge fail">NETWORK ERROR</span>
+            <span class="probe-res-badge fail">网络连接异常</span>
           </div>
           <div class="probe-res-body" style="color: #f87171;">${escapeHtml(err.message)}</div>
         `;
@@ -979,7 +999,7 @@ if (dom.gwDemoLoadBtn) {
       candidates: [
         {
           id: 'primary-anthropic-claude',
-          name: 'Primary Claude 3.7 Sonnet',
+          name: '主力模型 Claude 3.7 Sonnet',
           provider: 'anthropic',
           model: 'claude-3-7-sonnet-20250219',
           priority: 0,
@@ -991,11 +1011,11 @@ if (dom.gwDemoLoadBtn) {
           lastLatencyMs: 380,
           resting: true,
           remainingRestSeconds: 48,
-          lastFailureType: 'rate'
+          lastFailureType: 'rate-limit'
         },
         {
           id: 'backup-deepseek-v3',
-          name: 'Backup DeepSeek V3 (Failover)',
+          name: '备用模型 DeepSeek V3 (容灾备选)',
           provider: 'openai',
           model: 'deepseek-chat',
           priority: 1,
@@ -1012,7 +1032,7 @@ if (dom.gwDemoLoadBtn) {
       ]
     };
     if (dom.candidatesPoolMeta) {
-      dom.candidatesPoolMeta.textContent = 'DEMO TOPOLOGY SIMULATION ACTIVE';
+      dom.candidatesPoolMeta.textContent = '双模型自动容灾演练运行中';
     }
     renderGateway(currentGatewayData);
   };

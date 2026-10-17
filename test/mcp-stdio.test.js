@@ -5,6 +5,16 @@ import { startMcpStdio } from '../src/mcp/stdio.js';
 import { startTestDaemon } from './helpers.js';
 import { ALL_NEXUS_TOOLS } from '../src/mcp/server.js';
 
+async function waitForCount(arr, count, timeoutMs = 3000) {
+  const start = Date.now();
+  while (arr.length < count) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timeout waiting for response count ${count}, got ${arr.length}`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
   const daemon = await startTestDaemon();
 
@@ -36,7 +46,7 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
       params: { protocolVersion: '2024-11-05' }
     }) + '\n');
 
-    await new Promise((r) => setTimeout(r, 50));
+    await waitForCount(responses, 1);
     assert.equal(responses.length, 1);
     assert.equal(responses[0].id, 1);
     assert.equal(responses[0].result.serverInfo.name, 'agent-nexus');
@@ -49,7 +59,7 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
       method: 'tools/list'
     }) + '\n');
 
-    await new Promise((r) => setTimeout(r, 50));
+    await waitForCount(responses, 2);
     assert.equal(responses.length, 2);
     assert.equal(responses[1].id, 2);
     const tools = responses[1].result.tools;
@@ -104,7 +114,7 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
       }
     }) + '\n');
 
-    await new Promise((r) => setTimeout(r, 60));
+    await waitForCount(responses, 1);
     assert.equal(responses.length, 1);
     assert.equal(responses[0].id, 10);
     assert.ok(!responses[0].result.isError);
@@ -123,7 +133,7 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
       }
     }) + '\n');
 
-    await new Promise((r) => setTimeout(r, 60));
+    await waitForCount(responses, 2);
     assert.equal(responses.length, 2);
     assert.equal(responses[1].id, 11);
     assert.ok(!responses[1].result.isError);
@@ -184,7 +194,7 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
       }
     }) + '\n');
 
-    await new Promise((r) => setTimeout(r, 60));
+    await waitForCount(responses, 1);
     assert.equal(responses.length, 1);
     assert.equal(responses[0].id, 20);
     assert.ok(!responses[0].result.isError);

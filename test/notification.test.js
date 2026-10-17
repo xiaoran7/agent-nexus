@@ -4,7 +4,7 @@ import { startDaemon, stopDaemon } from '../src/daemon/index.js';
 import { request } from 'node:http';
 
 test('主动通知总线与 SSE 实时事件流', async (t) => {
-  const daemon = await startDaemon({ port: 0, dbPath: ':memory:' });
+  const daemon = await startDaemon({ port: 0, dbPath: ':memory:', isTest: true, writeSessionToken: false });
   const port = daemon.port;
   const token = Array.from(daemon.tokenStore.bySecret.keys())[0];
 
@@ -106,7 +106,7 @@ test('主动通知总线与 SSE 实时事件流', async (t) => {
     const htmlRes = await fetchPath('/');
     assert.equal(htmlRes.status, 200);
     assert.match(htmlRes.headers['content-type'], /text\/html/);
-    assert.match(htmlRes.body, /Agent-Nexus War Room/);
+    assert.match(htmlRes.body, /Agent-Nexus/);
 
     const cssRes = await fetchPath('/style.css');
     assert.equal(cssRes.status, 200);

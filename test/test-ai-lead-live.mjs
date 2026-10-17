@@ -19,7 +19,9 @@ async function run() {
   console.log('【步骤 1】启动配置了真实大模型 (CPA) 的 Nexus 守护进程...');
   const daemon = await startDaemon({
     port: PORT,
-    dbPath: ':memory:'
+    dbPath: ':memory:',
+    isTest: true,
+    writeSessionToken: false
   });
 
   const lead = daemon.projectRegistry.getOrCreateLead('nexus-real-project');

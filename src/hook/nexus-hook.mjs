@@ -106,11 +106,12 @@ function extractBashResource(payload) {
 //
 // 两个条件都必须满足，缺一不可：
 //   1. 命令是写入动作（>、tee、sed -i、cp/mv 目的端、截断重定向……）。
+//      注意：必须排除箭头函数 (=>)、指针箭头 (->) 与比较符。
 //      否则 `cat src/a.js` 也会被当成写入，把只读操作误判成冲突。
 //   2. 路径能解析到本仓库工作目录之下。装到全局的 hook 会收到别处的调用，
 //      拿 /etc/hosts、别个项目的文件去判冲只会平白阻断。
 const WRITE_COMMAND_RE =
-  /(?:^|[^>])>{1,2}\s*|(?:^|\s)(?:tee|truncate)\s|(?:^|\s)(?:sed|perl)\s[^|;]*\s-i(?:\s|$)|(?:\bcp\b|\bmv\b|\binstall\b)\s/;
+  /(?:^|[^>=\-\s])\s*>{1,2}\s+[^\s;&|]+|(?:^|\s)(?:tee|truncate)\s|(?:^|\s)(?:sed|perl)\s[^|;]*\s-i(?:\s|$)|(?:\bcp\b|\bmv\b|\binstall\b)\s/;
 
 // cp/mv/install 改写的是目的端，不是源。取最后一个路径参数才是真正被写入的文件。
 const COPY_COMMAND_RE = /(?:\bcp\b|\bmv\b|\binstall\b)\s/;
@@ -127,8 +128,8 @@ function extractBashTarget(payload, workspaceDir) {
 
   if (!cleanCmd || !WRITE_COMMAND_RE.test(cleanCmd)) return null;
 
-  // 2. 如果包含重定向写入 (> 或 >>)
-  const redirectMatch = cleanCmd.match(/(?:^|[^>&0-9])>>?\s*([^\s;&|]+)/);
+  // 2. 如果包含重定向写入 (> 或 >>)，排除 => 和 ->
+  const redirectMatch = cleanCmd.match(/(?:^|[^>=\-0-9])>>?\s*([^\s;&|]+)/);
   if (redirectMatch) {
     const target = redirectMatch[1].replace(/^["']|["']$/g, '');
     if (target && !/[`$()]/.test(target)) {

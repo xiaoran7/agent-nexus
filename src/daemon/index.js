@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
-import { join } from 'node:path';
-import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { createDatabase } from '../storage/database.js';
 import { CoordinatorEngine } from './coordinator.js';
 import { StateService } from '../domain/state.js';
@@ -16,6 +16,8 @@ export function startDaemon(options = {}) {
   const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4100', 10);
   const dbPath = options.dbPath || null;
   const uiPath = options.uiPath || join(import.meta.dirname, '../ui/index.html');
+  const isRunningInTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT);
+  const writeSessionToken = options.writeSessionToken ?? (dbPath !== ':memory:' && !isRunningInTest);
 
   const eventBus = new EventEmitter();
   const db = createDatabase(dbPath);
@@ -64,14 +66,17 @@ export function startDaemon(options = {}) {
         console.log(`[Agent-Nexus] AI Gateway: DISABLED`);
         console.log(`[Agent-Nexus] AI Project Lead: DISABLED (deterministic scheduler only)`);
       }
-      if (dbPath !== ':memory:') {
+      if (writeSessionToken) {
         try {
-          writeFileSync(getSessionTokenPath(), operator.secret, { encoding: 'utf8', mode: 0o600 });
+          const tokenPath = getSessionTokenPath();
+          const tokenDir = dirname(tokenPath);
+          if (!existsSync(tokenDir)) mkdirSync(tokenDir, { recursive: true });
+          writeFileSync(tokenPath, operator.secret, { encoding: 'utf8', mode: 0o600 });
         } catch {}
       }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, eventBus, db, tokenStore, cleanupTimer, port: boundPort });
+      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, eventBus, db, tokenStore, cleanupTimer, port: boundPort, dbPath, writeSessionToken });
     });
   });
 }
@@ -94,12 +99,14 @@ function describeListenError(err, port) {
   return err;
 }
 
-export async function stopDaemon({ server, wss, db, cleanupTimer }) {
+export async function stopDaemon({ server, wss, db, cleanupTimer, writeSessionToken }) {
   if (cleanupTimer) clearInterval(cleanupTimer);
-  try {
-    const tokenPath = getSessionTokenPath();
-    if (existsSync(tokenPath)) unlinkSync(tokenPath);
-  } catch {}
+  if (writeSessionToken) {
+    try {
+      const tokenPath = getSessionTokenPath();
+      if (existsSync(tokenPath)) unlinkSync(tokenPath);
+    } catch {}
+  }
   for (const client of wss.clients) client.terminate();
   await new Promise((resolve) => wss.close(resolve));
   for (const socket of server.closeAllConnections?.() || []) socket.destroy();
