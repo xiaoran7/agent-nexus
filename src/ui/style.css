@@ -233,6 +233,8 @@ header {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .proj-select {
@@ -247,6 +249,7 @@ header {
   cursor: pointer;
   outline: none;
   transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .proj-select:focus {
@@ -268,6 +271,8 @@ header {
   font-family: var(--font-sans);
   cursor: pointer;
   transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .memory-btn:hover {
@@ -294,6 +299,8 @@ header {
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .pulse-dot {

@@ -1328,6 +1328,11 @@ setInterval(() => {
 }, 1000);
 
 // 初始化
+const urlTab = new URLSearchParams(window.location.search).get('tab') || (window.location.hash ? window.location.hash.slice(1) : null);
+if (urlTab && ['war-room', 'topology', 'gateway', 'unified'].includes(urlTab)) {
+  setViewMode(urlTab);
+}
+
 loadProjects();
 fetchDashboard();
 fetchMemories();

@@ -12,6 +12,8 @@ node_modules/
 
 # 临时产物
 _scratch/
+Deliverables/
+scripts/
 
 # 编辑器 / 系统
 .DS_Store
@@ -40,6 +42,7 @@ CLAUDE.local.md
 AGENTS.local.md
 
 # Claude 本地临时运行态
+.claude/
 .claude/worktrees/
 .claude/settings.json
 .claude/settings.local.json
