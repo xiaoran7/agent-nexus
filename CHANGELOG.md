@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-10-17 修复 MCP Stdio 客户端 Token 热重试与自愈机制
+
+### 改了什么
+
+- **常驻 MCP 进程 Token 动态感知与 401 自动热重试 (`src/mcp/stdio.js`)**：
+  - **根因消除**：过去 `startMcpStdio` 在进程初始化时静态读取一次 `session.token`，当 Nexus 守护进程重启生成新令牌后，常驻 MCP 仍持旧令牌导致请求报 `[Nexus 401]`；
+  - **动态获取与无感重试**：封装 `getActiveToken` 动态函数，并在收到 401 时强制重读磁盘 `~/.agent-nexus/session.token` 自动热重试一次；
+  - **测试与协同保障**：全量 230 项单元测试全部通过，保证跨 Session 协同与 MCP 工具调用平滑自愈。
+
+---
+
 ## 2026-10-17 补齐 package-lock.json 恢复 GitHub Actions CI 干净构建
 
 ### 改了什么

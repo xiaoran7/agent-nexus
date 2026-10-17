@@ -15,7 +15,17 @@ export function startMcpStdio(options = {}) {
 
   const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4300', 10);
   const baseUrl = options.baseUrl || `http://127.0.0.1:${port}`;
-  const token = options.token || process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN || readSessionToken() || '';
+  let cachedToken = options.token || process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN || readSessionToken() || '';
+
+  function getActiveToken(forceRefresh = false) {
+    if (options.token) return options.token;
+    if (process.env.NEXUS_TOKEN) return process.env.NEXUS_TOKEN;
+    if (process.env.NEXUS_ADMIN_TOKEN) return process.env.NEXUS_ADMIN_TOKEN;
+    if (forceRefresh || !cachedToken) {
+      cachedToken = readSessionToken() || '';
+    }
+    return cachedToken;
+  }
 
   const input = options.input || process.stdin;
   const output = options.output || process.stdout;
@@ -37,14 +47,13 @@ export function startMcpStdio(options = {}) {
     if (!args.project_id) args.project_id = projectId;
     if (!args.agent_id) args.agent_id = defaultAgentId;
 
-    const headers = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+    const apiFetch = async (endpoint, method = 'GET', body = null, isRetry = false) => {
+      const currentToken = getActiveToken(isRetry);
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(currentToken ? { 'Authorization': `Bearer ${currentToken}` } : {})
+      };
 
-    const apiFetch = async (endpoint, method = 'GET', body = null) => {
       let res;
       try {
         res = await fetch(`${baseUrl}${endpoint}`, {
@@ -57,6 +66,14 @@ export function startMcpStdio(options = {}) {
           `Agent-Nexus daemon is not reachable at ${baseUrl}. ` +
           `Run "nexus start" in a separate terminal to start coordination.\n(${err.message})`
         );
+      }
+
+      // 如果遇到 401 且未重试过，强制从磁盘重新读取 session.token 热重试一次
+      if (res.status === 401 && !isRetry) {
+        const refreshedToken = getActiveToken(true);
+        if (refreshedToken) {
+          return apiFetch(endpoint, method, body, true);
+        }
       }
 
       if (!res.ok) {
