@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-10-17 默认端口避让迁移至 4300（彻底避开 AgentHub 4100）
+
+### 改了什么
+
+- **默认监听端口整体迁移至 4300 (`src/`, `desktop/`, `docs/`)**：
+  - **避让 AgentHub 冲突**：由于 AgentHub 默认占用 `4100` 端口，Agent-Nexus 将全套系统默认端口从 `4100` 优雅迁移到 `4300`；
+  - **全链路无感同步**：
+    - 后台守护进程 `src/daemon/index.js` 与 CLI `src/cli.js` 默认监听 `4300`，会话凭据按 4300 判定；
+    - 通用钩子 `src/hook/nexus-hook.mjs` 与 MCP Stdio `src/mcp/stdio.js` 默认直连 `4300`；
+    - 桌面端托盘 `desktop/main.cjs` 与守护探测器 `desktop/daemon-runner.cjs` 默认探活 `4300`；
+    - 前端控制台顶栏动态绑定 `window.location.host`，文档与安装器配置全面对齐 `4300`；
+  - **全量测试通过**：230 个单元与集成测试全部 100% 通过。
+
+---
+
 ## 2026-10-17 nexus-setup 零感自检闭环与全局 Skill 热同步
 
 ### 改了什么
