@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-10-17 实现 Windows 独立图标 EXE 打包与多分辨率 ICO 资产构建 (Windows Standalone Packaging)
+
+### 改了什么
+
+- **Windows 独立 EXE 桌面打包工具链 (`scripts/build-exe.cjs`, `package.json`)**：
+  - **打包脚本与流程自动化**：基于 `@electron/packager` 构建纯净的 `win32 x64` 生产级打包管道，支持一键命令 `npm run package:win`；
+  - **PE 资源元数据深度注入**：自动注入 `ProductName: Agent-Nexus`、`OriginalFilename: Agent-Nexus.exe`、`CompanyName: TannerLab` 及版权信息；
+  - **嵌入式 Daemon 启动修复 (`desktop/daemon-runner.cjs`)**：为托管子进程注入 `ELECTRON_RUN_AS_NODE: '1'`，彻底解决打包后独立主程序调用自身拉起后台守护服务时引发递归启动 GUI 界面的死循环问题；
+  - **交付铁律严格归档 (`D:\Claudespace\Deliverables\Agent-Nexus\`)**：打新包自动清理旧包，统一产出并归档解压即用的免安装发布文件夹 `Agent-Nexus-v0.2.6-win32-x64/` 及单文件便携分发包 `Agent-Nexus-v0.2.6-win32-x64.zip`。
+- **青空品牌多分辨率 Windows ICO 与托盘微晶图标构建器 (`scripts/generate-icons.cjs`, `desktop/assets/icon.ico`)**：
+  - **CDP 离线光栅化**：调用 Headless Edge 浏览器 CDP（Chrome DevTools Protocol）以纯透明底无损渲染 SVG 青空圆角三层等距立方体主标识；
+  - **标准 Windows ICO 二进制生成**：原生实现 Windows `ICONDIR` 与 `ICONDIRENTRY` 结构体，聚合 256x256、128x128、64x64、48x48、32x32、16x16 全规格嵌入式 PNG，生成标准 `icon.ico`（58,559 字节）；
+  - **多状态系统托盘图标**：输出 32x32 规格的就绪绿（`tray-active.png`）、冲突橙（`tray-busy.png`）与空闲青（`tray-idle.png`）。
+- **工程构建配置优化 (`.gitignore`)**：
+  - 放行 `scripts/` 构建工具目录入库，将 `.build-temp/` 与 `dist/` 列入忽略清单。
+- **全量测试通过**：235 项核心单元与集成测试全部 100% 通过。
+
+---
+
 ## 2026-10-17 增加 Agent 宿主 PID 绑定与死亡会话租约提前回收 (Early Lease Reclamation)
 
 ### 改了什么

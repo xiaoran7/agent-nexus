@@ -12,6 +12,11 @@ npm.cmd start
 npm.cmd test
 ```
 
+### 桌面端常驻与 Windows 独立 EXE 打包
+
+- **开发态桌面托盘启动**：`npm run desktop`（启动 Electron 桌面托盘常驻，自动探测/拉起后台服务并无感注入免密 Token）；
+- **Windows 独立图标 EXE 打包**：`npm run package:win`（自动编译多分辨率青空微晶 `icon.ico`，打包为 Windows Standalone `Agent-Nexus.exe`，并遵循归档铁律归档至工作区 `Deliverables/Agent-Nexus/`）。
+
 默认面板为 `http://127.0.0.1:4300`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`，`NEXUS_DB_PATH` 的父目录不存在时会自动创建。必须用 `npm ci`（或 `npm install`）安装依赖后再启动：唯一运行时依赖是 `ws`，缺失时 daemon 会在 `src/transport/ws.js` 直接报 `ERR_MODULE_NOT_FOUND`。端口被占用时启动会失败并提示改用 `NEXUS_PORT`，不会带原始堆栈崩溃。
 
 前端控制台支持 **三态视图切换**：

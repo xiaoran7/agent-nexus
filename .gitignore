@@ -13,7 +13,8 @@ node_modules/
 # 临时产物
 _scratch/
 Deliverables/
-scripts/
+.build-temp/
+dist/
 
 # 编辑器 / 系统
 .DS_Store

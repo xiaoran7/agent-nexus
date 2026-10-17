@@ -50,6 +50,7 @@ class DaemonController {
       detached: false,
       env: {
         ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
         NEXUS_PORT: String(this.port)
       }
     });
