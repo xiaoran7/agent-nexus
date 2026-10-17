@@ -16,6 +16,10 @@
     - 状态矩阵："Agent Matrix & Claims" 改为 "各助手施工状态与持锁明细"，意图与进度展示人话化，助手状态精确映射为 "正在改文件"、"排队等待中"、"空闲就绪"、"已离开"；
     - 架构师视窗："Embedded AI Tech Lead" 改为 "常驻架构师协同视窗"，"OBSERVING (SILENT SPRINT)" 改为 "静默守望（单人施工不打扰）"，"AWAKENED" 改为 "已唤醒（多会话协同避障）"；
     - 模型网关大屏："Magpie Elastic Gateway Router" 改为 "多模型弹性智能网关"，分发策略、健康状态（"全部正常运行"、"部分节点避让中"、"全部休眠中"）、可用模型池与实时拨测控制台全链路人话化，Demo 轨迹输出完全本地化。
+- **Skill 零负担重构与项目零污染准则 (`skills/nexus-setup/SKILL.md`, `README.md`)**
+  - **确立“绝不给业务项目产生任何一点负担”最高准则**：彻底废除过去要求业务项目修改 `.gitignore`、并在 `AGENTS.md` 强塞样板规章的侵入式做法；
+  - **主推全局零感静默防护**：开发机全局只装一次 Hook，所有业务项目无需创建任何文件、无需改动任何配置、无任何 Git 痕迹，零侵入享受文件防撞车、Git 提交自动释放与跨 Worktree 对齐；
+  - **接入说明通俗人话化**：剔除学术黑话，清晰说明常见问题与防撞机制。
 - **通用 Hook 写入正则误伤修复 (`src/hook/nexus-hook.mjs`)**
   - **排除箭头函数与比较符**：修复 `WRITE_COMMAND_RE` 正则表达式因误把 `=>`（ES6 箭头函数）、`->`（指针语法）中的 `>` 当作重定向符号而错误阻断 Node 代码执行与 Bash 检查的缺陷；
   - **后台启动父目录自动创建与令牌隔离 (`src/daemon/index.js`, `test/helpers.js`)**：在持久化当前活动 `session.token` 时自动检查并递归创建 `.agent-nexus` 目录，杜绝全新环境因目录缺失而静默丢失令牌；新增 `writeSessionToken` 守卫参数，并在 Node 测试环境感知（`isTest || NODE_TEST_CONTEXT`）下禁止改写或销毁用户当前会话的 `session.token`，避免自动化测试影响开发者正在使用的活跃 Hook 门禁；
