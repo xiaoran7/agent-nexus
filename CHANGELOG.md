@@ -8,11 +8,12 @@
 
 ### 改了什么
 
-- **Agent 进程级存活感知与自动解阻 (`src/daemon/coordinator.js`, `src/storage/database.js`, `src/hook/nexus-hook.mjs`, `src/ui/app.js`)**：
+- **Agent 进程级存活感知与自动解阻 (`src/daemon/coordinator.js`, `src/storage/database.js`, `src/hook/nexus-hook.mjs`, `src/ui/app.js`, `src/transport/rest.js`)**：
   - **数据库字段平滑迁移**：在 `agents` 表新增 `pid INTEGER` 列并注入启动热迁移检查；
   - **注册与快速判冲联动**：`registerAgent` 与 `fastCheckAndAutoClaim` 接收并维护会话的宿主 `pid`，并在前端 Agent 卡片中实时呈现 PID 标识；
   - **死亡检测与提前回收 (`reapDeadAgentLeases`)**：利用 `process.kill(pid, 0)` 无破坏性探测持有者系统进程存活状态，一旦捕获目标 Agent 意外退场（ESRCH 死亡），自动标记其状态为 `departed` 并立即提前释放其名下全部排他锁，无缝唤醒后续等待队列，无需被动苦等租约超时；
   - **意图声明即时解阻**：新进 Agent 声明意图时前置触发存活探测与提前回收，杜绝已死进程阻断正常施工；
+  - **接口版本对齐**：REST 端点 `/health` 响应版本号对齐至当前发布版本 `0.2.6`；
   - **专项测试套件覆盖 (`test/process-liveness.test.js`)**：覆盖 PID 绑定、死锁检测、存活保护、HTTP Hook 端到端自动认领等 5 项核心验证场景。
 - **全量测试通过**：235 项测试用例保持 100% 绿色通过。
 

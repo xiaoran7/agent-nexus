@@ -90,7 +90,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
     try {
       // 1. Health
       if (url.pathname === '/health') {
-        return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: '0.2.5' });
+        return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: '0.2.6' });
       }
 
       // 1.1 SSE 实时通知流 (GET /api/events)
