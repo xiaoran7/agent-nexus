@@ -8,6 +8,16 @@
 
 ### 改了什么
 
+- **现代卡片风与圆润大字体体系重构 (Modern Card & Rounded UI - `src/ui/`)**
+  - **无死黑边框与全透光微渐变卡片 (`src/ui/style.css`)**：
+    - 彻底告别传统深色死黑硬边框设计，全站改用通透柔和微晶磨砂玻璃卡片（`rgba(23, 32, 51, 0.65)`）配合细腻半透明高斯模糊；
+    - 边框采用极细浅色光感边缘（`rgba(255, 255, 255, 0.08)`）配合多层柔和漫反射阴影（`0 12px 36px -8px rgba(0, 0, 0, 0.35)`），营造悬浮空间层次感；
+  - **全面剔除 Emoji 与全量精细内嵌矢量 SVG 替换 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+    - 彻底移除导航 Tab、看板指标、广播条、时间线徽章、拓扑大屏、Agent 详情卡片和空状态等各处的系统 Emoji；
+    - 统一换装高质感现代线条式 SVG 图标（如协同看板网格、拓扑连通图分支、广播天线、网络网关、记忆芯片、对勾校验等），在各种 DPI 下锐利一致；
+  - **圆润大号字体系统与现代组件规范 (`src/ui/style.css`)**：
+    - 采用现代大号圆润字族栈（`'Plus Jakarta Sans'`, `-apple-system`, `Quicksand`, `PingFang SC`）；正文字号提升至 15px，核心度量提升至 32px，大圆角体系（14px / 18px / 24px / 9999px 胶囊）；
+    - 胶囊型药丸切换器、微光点状呼吸灯、磨砂半透明输入框与通透投影按键全面落地，保持 60 FPS 无卡顿流畅渲染。
 - **桌面端系统托盘常驻与 Daemon 托管绑定 (Desktop Tray & Daemon Binding - `desktop/`)**
   - **基于 Electron 的无感桌面端封装 (`desktop/main.cjs`, `desktop/daemon-runner.cjs`, `desktop/preload.cjs`)**：
     - **系统单实例锁 (`app.requestSingleInstanceLock`)**：多开应用时自动唤醒并激活已有窗口，防止多实例冲突；

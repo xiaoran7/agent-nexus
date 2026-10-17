@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent-Nexus 协同监控大屏 | 多会话防撞车中枢</title>
+  <title>Agent-Nexus 协同控制台 | 多会话协同防撞车中枢</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -13,39 +13,55 @@
   <!-- Topbar -->
   <header>
     <div class="brand-container">
-      <div class="schale-logo-mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <div class="brand-logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
-        <span class="schale-halo"></span>
       </div>
       <div class="brand-text-block">
         <div class="brand-title">
           <span>Agent-Nexus</span>
-          <span class="badge-schale">协同大屏</span>
+          <span class="badge-schale">协同中枢</span>
         </div>
-        <span class="brand-sub">多会话防撞车中枢</span>
+        <span class="brand-sub">多会话防撞车控制台</span>
       </div>
     </div>
 
-    <!-- View Mode Switcher -->
+    <!-- View Mode Switcher: 现代圆润胶囊 Tabs -->
     <div class="view-tabs" id="view-tabs">
       <button id="tab-war-room" class="view-tab active">
-        <span class="tab-icon">🏛️</span>
+        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="2"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="2"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="2"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="2"></rect>
+        </svg>
         <span>协同看板</span>
       </button>
       <button id="tab-topology" class="view-tab">
-        <span class="tab-icon">🌳</span>
-        <span>功能演进拓扑</span>
-        <span id="topology-tab-badge" class="badge-tab-healthy" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3);">全景</span>
+        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="18" cy="5" r="3"></circle>
+          <circle cx="6" cy="12" r="3"></circle>
+          <circle cx="18" cy="19" r="3"></circle>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+        </svg>
+        <span>演进拓扑</span>
+        <span id="topology-tab-badge" class="badge-tab-tag">全景</span>
       </button>
       <button id="tab-gateway" class="view-tab">
-        <span class="tab-icon">⚡</span>
-        <span>模型网关调度</span>
-        <span id="gateway-tab-badge" class="badge-tab-healthy">正常路由</span>
+        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+        <span>模型网关</span>
+        <span id="gateway-tab-badge" class="badge-tab-healthy">就绪</span>
       </button>
       <button id="tab-unified" class="view-tab">
-        <span class="tab-icon">📊</span>
+        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="20" x2="18" y2="10"></line>
+          <line x1="12" y1="20" x2="12" y2="4"></line>
+          <line x1="6" y1="20" x2="6" y2="14"></line>
+        </svg>
         <span>综合全览</span>
       </button>
     </div>
@@ -56,19 +72,19 @@
       </select>
 
       <button id="open-memory-drawer-btn" class="memory-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
         </svg>
-        <span>项目备忘录</span>
-        <span id="memory-count-badge" style="font-size: 10px; background: rgba(255,255,255,0.2); padding: 1px 5px; border-radius: 8px;">0</span>
+        <span>备忘录</span>
+        <span id="memory-count-badge" class="memory-badge-count">0</span>
       </button>
 
       <div class="sensei-capsule">
         <span class="pulse-dot"></span>
-        <span style="font-weight: 600;">调度服务在线</span>
-        <span style="color: var(--text-faint);">|</span>
-        <span id="daemon-status" style="color: #38bdf8;">127.0.0.1:4100</span>
+        <span class="capsule-text">守护就绪</span>
+        <span class="capsule-divider"></span>
+        <span id="daemon-status" class="capsule-port">127.0.0.1:4100</span>
       </div>
     </div>
   </header>
@@ -79,34 +95,36 @@
     <!-- VIEW 1: War Room (多 Agent 协同与泳道)      -->
     <!-- ========================================== -->
     <div id="view-war-room" class="view-pane active">
-      <!-- 0. Tech Lead Status Banner (内嵌项目级常驻架构师 Session 视窗) -->
+      <!-- 0. Tech Lead Status Banner (常驻架构师协同视窗) -->
       <div class="lead-banner">
         <div class="lead-header-row">
           <div class="lead-title-box">
-            <span style="font-size: 16px;">🏛️</span>
-            <span style="font-weight: 800; font-size: 14px; letter-spacing: -0.2px; color: #fff;">常驻架构师协同视窗</span>
+            <div class="lead-icon-wrap">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              </svg>
+            </div>
+            <span class="lead-title-text">常驻架构师协同视窗</span>
             <span id="lead-status-chip" class="lead-chip chip-silent">静默守望（单人施工不打扰）</span>
           </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span id="lead-session-stats" style="font-size: 11px; font-family: var(--font-mono); color: #38bdf8;">1 个会话正在干活</span>
-            <span id="lead-last-activity" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">就绪</span>
+          <div class="lead-meta-row">
+            <span id="lead-session-stats" class="lead-session-stats">1 个会话施工中</span>
+            <span id="lead-last-activity" class="lead-last-activity">就绪</span>
           </div>
         </div>
         <div id="lead-advice-container" class="lead-advice-text">
           [Nexus 架构师静默保驾] 当前只有单会话独立施工，架构师保持静默，绝不产生干扰。当检测到新会话带着并发修改计划加入时，将实时唤醒并提供避让重排与交接路线。
         </div>
-        <div id="lead-awakened-detail" class="lead-awakened-box" style="display: none;">
-          <!-- 唤醒后的两会话任务交接与重排明细 -->
-        </div>
+        <div id="lead-awakened-detail" class="lead-awakened-box" style="display: none;"></div>
       </div>
 
-      <!-- 4 Summary Metric Cards -->
+      <!-- 4 Summary Metric Cards (圆润卡片风格) -->
       <div class="metric-grid">
         <!-- 1. Total Agents -->
-        <div class="metric-card" style="--card-accent: #0ea5e9;">
+        <div class="metric-card" style="--card-accent: #38bdf8;">
           <div class="metric-icon-box">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="3" ry="3"></rect>
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
             </svg>
@@ -118,10 +136,11 @@
         </div>
 
         <!-- 2. Running -->
-        <div class="metric-card" style="--card-accent: #10b981;">
+        <div class="metric-card" style="--card-accent: #34d399;">
           <div class="metric-icon-box green">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
             </svg>
           </div>
           <div class="metric-data">
@@ -131,9 +150,9 @@
         </div>
 
         <!-- 3. Waiting / Blocked -->
-        <div class="metric-card" style="--card-accent: #f59e0b;">
+        <div class="metric-card" style="--card-accent: #fbbf24;">
           <div class="metric-icon-box amber">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"></circle>
               <line x1="12" y1="8" x2="12" y2="12"></line>
               <line x1="12" y1="16" x2="12.01" y2="16"></line>
@@ -148,9 +167,12 @@
         <!-- 4. Long-term Memories -->
         <div class="metric-card" style="--card-accent: #c084fc;">
           <div class="metric-icon-box purple">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
-              <path d="M12 2a10 10 0 0 1 10 10h-10V2z" opacity="0.4"></path>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
             </svg>
           </div>
           <div class="metric-data">
@@ -164,30 +186,35 @@
       <section class="lanes-panel">
         <div class="panel-header">
           <div class="panel-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <rect x="3" y="4" width="18" height="16" rx="2"></rect>
-              <line x1="9" y1="4" x2="9" y2="20"></line>
-            </svg>
+            <div class="panel-title-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="16" rx="3"></rect>
+                <line x1="9" y1="4" x2="9" y2="20"></line>
+              </svg>
+            </div>
             <span>正在修改的文件与交接流水</span>
           </div>
-          <span class="panel-meta" id="lanes-status" style="font-size: 11px; font-family: var(--font-mono); color: var(--text-faint);">0 个文件正在修改</span>
+          <span class="panel-meta" id="lanes-status">0 个文件正在修改</span>
         </div>
         <div class="lanes-grid" id="lanes-container">
-          <!-- 动态注入泳道与倒计时 -->
+          <!-- 动态注入泳道卡片 -->
         </div>
       </section>
 
       <!-- 2-Column Dashboard Workspace -->
       <div class="dashboard-body">
         <!-- Left Panel: Agent Matrix & Claims -->
-        <section class="glass-panel">
+        <section class="modern-card">
           <div class="panel-header">
             <div class="panel-title">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-                <polyline points="2 17 12 22 22 17"></polyline>
-                <polyline points="2 12 12 17 22 12"></polyline>
-              </svg>
+              <div class="panel-title-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="9" cy="7" r="4"></circle>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+              </div>
               <span>各助手施工状态与持锁明细</span>
             </div>
             <span class="panel-meta" id="matrix-last-updated">实时同步</span>
@@ -199,13 +226,15 @@
         </section>
 
         <!-- Right Panel: Activity Timeline Stream -->
-        <section class="glass-panel">
+        <section class="modern-card">
           <div class="panel-header">
             <div class="panel-title">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
-              </svg>
+              <div class="panel-title-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+              </div>
               <span>协作动态流水</span>
             </div>
             <span class="panel-meta">实时推送</span>
@@ -217,18 +246,20 @@
         </section>
       </div>
 
-      <!-- 3. Inter-Session Dialogue & Cross-Session Q&A (Session 间结构化对话与交接抽屉) -->
-      <section class="glass-panel" style="margin-top: 18px;">
+      <!-- 3. Inter-Session Dialogue & Cross-Session Q&A -->
+      <section class="modern-card" style="margin-top: 20px;">
         <div class="panel-header">
           <div class="panel-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
+            <div class="panel-title-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+            </div>
             <span>助手跨会话对话与交接记录</span>
           </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
+          <div style="display: flex; gap: 10px; align-items: center;">
             <span class="panel-meta" id="dialogue-counter">0 条对话</span>
-            <button id="refresh-dialogue-btn" class="gw-action-btn" style="padding: 3px 8px; font-size: 11px;">
+            <button id="refresh-dialogue-btn" class="modern-btn-subtle">
               <span>刷新对话</span>
             </button>
           </div>
@@ -276,12 +307,12 @@
             <div class="gw-health-capsule">
               <span id="gw-health-dot" class="pulse-dot"></span>
               <span id="gw-health-text" style="font-weight: 700;">全部正常</span>
-              <span style="color: var(--text-faint);">|</span>
+              <span class="capsule-divider"></span>
               <span id="gw-candidate-count-text">0 个模型节点</span>
             </div>
 
-            <button id="gw-reset-all-btn" class="gw-action-btn" title="立即解除所有正在冷却休眠的候选节点">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <button id="gw-reset-all-btn" class="modern-btn-primary" title="立即解除所有正在冷却休眠的候选节点">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
               </svg>
               <span>一键唤醒全部节点</span>
@@ -310,27 +341,33 @@
         </div>
       </section>
 
-      <!-- 2. Visual Dispatch Pipeline Topology (可视化调度流水线) -->
-      <section class="gw-topology-panel">
+      <!-- 2. Visual Dispatch Pipeline Topology -->
+      <section class="modern-card" style="margin-top: 20px;">
         <div class="panel-header">
           <div class="panel-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <circle cx="18" cy="5" r="3"></circle>
-              <circle cx="6" cy="12" r="3"></circle>
-              <circle cx="18" cy="19" r="3"></circle>
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-            </svg>
+            <div class="panel-title-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="18" cy="5" r="3"></circle>
+                <circle cx="6" cy="12" r="3"></circle>
+                <circle cx="18" cy="19" r="3"></circle>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+              </svg>
+            </div>
             <span>请求调度与故障自动转移流水线</span>
           </div>
           <span class="panel-meta" id="topology-flow-status">缓存亲和路由生效中</span>
         </div>
 
         <div class="topology-canvas" id="topology-canvas">
-          <!-- 拓扑节点 -->
           <div class="topo-node inbound">
             <div class="topo-node-badge">接入端</div>
-            <div class="topo-node-icon">📥</div>
+            <div class="topo-node-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </div>
             <div class="topo-node-title">助手提问请求</div>
             <div class="topo-node-sub">本地终端 / 工具调用</div>
           </div>
@@ -342,7 +379,15 @@
 
           <div class="topo-node router">
             <div class="topo-node-badge">智能网关</div>
-            <div class="topo-node-icon">🔀</div>
+            <div class="topo-node-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="16 3 21 3 21 8"></polyline>
+                <line x1="4" y1="20" x2="21" y2="3"></line>
+                <polyline points="21 16 21 21 16 21"></polyline>
+                <line x1="15" y1="15" x2="21" y2="21"></line>
+                <line x1="4" y1="4" x2="9" y2="9"></line>
+              </svg>
+            </div>
             <div class="topo-node-title">Magpie 智能路由</div>
             <div class="topo-node-sub" id="topo-strategy-display">分发策略: 智能亲和</div>
           </div>
@@ -352,9 +397,7 @@
             <span class="beam-label">零丢包故障自愈</span>
           </div>
 
-          <div class="topo-cluster" id="topo-candidates-cluster">
-            <!-- 动态渲染候选集群通道 -->
-          </div>
+          <div class="topo-cluster" id="topo-candidates-cluster"></div>
 
           <div class="topo-beam-connector">
             <div class="beam-line"></div>
@@ -363,46 +406,53 @@
 
           <div class="topo-node output">
             <div class="topo-node-badge">输出端</div>
-            <div class="topo-node-icon">📤</div>
+            <div class="topo-node-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+            </div>
             <div class="topo-node-title">可靠回答交付</div>
             <div class="topo-node-sub">高可用保障</div>
           </div>
         </div>
       </section>
 
-      <!-- 3. Candidate Nodes Grid & Circuit Breaker State -->
-      <section class="gw-candidates-section">
+      <!-- 3. Candidate Nodes Grid -->
+      <section class="modern-card" style="margin-top: 20px;">
         <div class="panel-header">
           <div class="panel-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-              <line x1="6" y1="6" x2="6.01" y2="6"></line>
-              <line x1="6" y1="18" x2="6.01" y2="18"></line>
-            </svg>
+            <div class="panel-title-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="8" rx="2"></rect>
+                <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                <line x1="6" y1="18" x2="6.01" y2="18"></line>
+              </svg>
+            </div>
             <span>可用模型池与防封防限流看板</span>
           </div>
           <div class="panel-meta-actions">
-            <button id="gw-demo-load-btn" class="gw-mini-btn" title="载入双通道演示候选节点以体验可视化调度">
-              <span>✨ 载入双模型演示（体验自动换路线）</span>
+            <button id="gw-demo-load-btn" class="modern-btn-subtle" title="载入双通道演示候选节点以体验可视化调度">
+              <span>载入双模型演示（体验自动换路线）</span>
             </button>
             <span class="panel-meta" id="candidates-pool-meta">限流错误自动休眠监控中</span>
           </div>
         </div>
 
-        <div class="candidates-grid" id="gw-candidates-container">
-          <!-- 动态注入 Candidate 卡片 -->
-        </div>
+        <div class="candidates-grid" id="gw-candidates-container"></div>
       </section>
 
-      <!-- 4. Live Gateway Probe & Route Dispatch Console -->
-      <section class="gw-probe-section">
+      <!-- 4. Live Gateway Probe -->
+      <section class="modern-card" style="margin-top: 20px;">
         <div class="panel-header">
           <div class="panel-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <polyline points="4 17 10 11 4 5"></polyline>
-              <line x1="12" y1="19" x2="20" y2="19"></line>
-            </svg>
+            <div class="panel-title-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+            </div>
             <span>模型调用实时测试与容灾体验</span>
           </div>
           <span class="panel-meta">REST API /api/gateway/chat</span>
@@ -412,12 +462,12 @@
           <div class="probe-input-col">
             <div class="probe-row">
               <input type="text" id="probe-user-message" class="probe-input" placeholder="输入一段测试内容，体验多模型调度（例如：请帮我检查项目接口规范）..." value="测试模型网关：你好，请做个自我介绍" />
-              <button id="probe-dispatch-btn" class="probe-btn">
-                <span>🚀 发送测试请求</span>
+              <button id="probe-dispatch-btn" class="modern-btn-primary">
+                <span>发送测试请求</span>
               </button>
             </div>
             <div class="probe-hint">
-              <span>💡 提示：在此处拨测验证。若首选节点发生 429 限流或 5xx 故障，网关将毫秒级熔断并无感降级到备用候选节点。</span>
+              <span>提示：在此处拨测验证。若首选节点发生 429 限流或 5xx 故障，网关将毫秒级熔断并无感降级到备用候选节点。</span>
             </div>
           </div>
 
@@ -436,16 +486,24 @@
     <div id="view-topology" class="view-pane">
       <div class="topo-head-bar">
         <div class="topo-title-box">
-          <div class="topo-icon-badge">🌳</div>
+          <div class="topo-icon-badge">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+          </div>
           <div>
-            <div style="font-weight: 700; font-size: 15px; color: #fff;">功能开发与问题解决拓扑全景</div>
-            <div style="font-size: 12px; color: var(--text-faint);">按时间序串联演进脉络，呈现哪个 Agent 解决了什么问题、触达哪些核心文件与交接因果</div>
+            <div class="topo-main-heading">功能开发与问题解决拓扑全景</div>
+            <div class="topo-sub-heading">按时间序串联演进脉络，呈现哪个 Agent 解决了什么问题、触达哪些核心文件与交接因果</div>
           </div>
         </div>
         <div class="topo-toolbar">
           <input type="text" id="topo-search-input" class="topo-search-input" placeholder="按功能、Agent、或文件路径筛选..." />
-          <button id="topo-refresh-btn" class="topo-refresh-btn">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button id="topo-refresh-btn" class="modern-btn-subtle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M23 4v6h-6"></path>
               <path d="M1 20v-6h6"></path>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -471,17 +529,15 @@
           <span class="topo-stat-val" id="topo-stat-agents">0</span>
         </div>
         <div class="topo-stat-divider"></div>
-        <div class="topo-stat-item" style="flex: 1; text-align: right; color: var(--text-faint); font-size: 11px;">
-          <span>💡 悬停节点卡片高亮因果链路，点击查看解决问题与改动文件快照</span>
+        <div class="topo-stat-item" style="flex: 1; text-align: right; color: var(--text-faint); font-size: 13px;">
+          <span>悬停节点卡片高亮因果链路，点击查看解决问题与改动文件快照</span>
         </div>
       </div>
 
       <div class="topo-canvas-viewport" id="topo-viewport">
         <div class="topo-canvas-inner" id="topo-canvas-inner">
           <svg class="topo-svg-layer" id="topo-svg-layer"></svg>
-          <div class="topo-nodes-layer" id="topo-nodes-layer">
-            <!-- 动态生成拓扑节点卡片 -->
-          </div>
+          <div class="topo-nodes-layer" id="topo-nodes-layer"></div>
         </div>
       </div>
     </div>
@@ -491,16 +547,19 @@
   <div class="master-bar">
     <div class="master-inner">
       <div class="master-badge">
-        <span>📢</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
         <span>全员广播通知</span>
       </div>
-      <input type="text" id="master-broadcast-input" class="master-input" placeholder="输入调度指令，一键广播至当前项目全员会话信箱（例如：🚨 立即暂停写入 database.js，先完成 auth 重构）..." />
+      <input type="text" id="master-broadcast-input" class="master-input" placeholder="输入调度指令，一键广播至当前项目全员会话信箱（例如：立即暂停写入 database.js，先完成 auth 重构）..." />
       <label class="master-urgency">
         <input type="checkbox" id="master-broadcast-urgent" />
         <span>紧急插话</span>
       </label>
       <button id="master-broadcast-btn" class="master-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="22" y1="2" x2="11" y2="13"></line>
           <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
         </svg>
@@ -513,18 +572,19 @@
   <div id="drawer-overlay" class="drawer-overlay"></div>
   <div id="memory-drawer" class="memory-drawer">
     <div class="drawer-head">
-      <h3>
-        <span>🧠</span>
-        <span>项目知识备忘录</span>
-      </h3>
+      <div class="drawer-title-group">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span class="drawer-title-text">项目知识备忘录</span>
+      </div>
       <button id="close-memory-drawer-btn" class="drawer-close">&times;</button>
     </div>
     <div class="drawer-search-bar">
       <input type="text" id="memory-search-input" class="drawer-search-input" placeholder="搜索架构规约、业务约定或踩坑经验..." />
     </div>
-    <div class="memory-list" id="memory-items-container">
-      <!-- 动态注入记忆 -->
-    </div>
+    <div class="memory-list" id="memory-items-container"></div>
     <div class="drawer-add-box">
       <div class="add-row">
         <select id="new-mem-cat" class="add-select">
@@ -544,7 +604,7 @@
   <!-- Footer -->
   <footer>
     <div class="footer-left">
-      <span>Agent-Nexus 协同调度中枢 v0.2.4</span>
+      <span>Agent-Nexus 协同调度中枢 v0.2.6</span>
       <span>•</span>
       <span>为 Claude Code、Codex 等多 AI 助手提供防撞车防覆盖保驾护航</span>
     </div>

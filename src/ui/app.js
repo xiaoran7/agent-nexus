@@ -212,19 +212,19 @@ function renderLanes(claims, agents) {
 
     return `
       <div class="lane-card">
-        <div class="lane-top">
+        <div class="lane-header">
           <span class="lane-target" title="${fullTarget}">[${claimType}] ${shortTarget}</span>
-          <span class="lane-badge busy">倒计时: ${remainingSec}s</span>
+          <span class="lane-tag busy">倒计时: ${remainingSec}s</span>
         </div>
         <div class="lane-flow">
           <span class="lane-holder">${holderName}</span>
-          <span class="lane-arrow">➔ [独占修改中]</span>
+          <span class="lane-arrow">[独占修改中]</span>
           ${waitingAgents.length > 0
-            ? `<span class="lane-waiter">⏳ 下一位接力: ${waitingAgents.map(w => escapeHtml(w.name)).join(', ')}</span>`
-            : `<span style="color: var(--text-faint); font-size: 11px;">(无其他助手排队)</span>`}
+            ? `<span class="lane-waiter">下一位接力: ${waitingAgents.map(w => escapeHtml(w.name)).join(', ')}</span>`
+            : `<span style="color: var(--text-faint); font-size: 12px;">(无其他助手排队)</span>`}
         </div>
-        <div class="lane-countdown-bar">
-          <div class="lane-progress" style="width: ${progressPct}%;"></div>
+        <div class="lane-countdown-bar" style="height: 4px; background: rgba(255,255,255,0.06); border-radius: 9999px; margin-top: 10px; overflow: hidden;">
+          <div class="lane-progress" style="width: ${progressPct}%; height: 100%; background: #38bdf8; border-radius: 9999px;"></div>
         </div>
       </div>
     `;
@@ -334,8 +334,8 @@ function renderAgents(agents, activeClaims) {
           </div>
         ` : ''}
         ${a.blocked_reason ? `
-          <div class="blocked-callout">
-            <span>⚠️</span>
+          <div class="blocked-callout" style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 12px; background: rgba(251, 113, 133, 0.12); border-radius: 10px; color: #fecdd3; font-size: 13px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
             <span>${escapeHtml(a.blocked_reason)}</span>
           </div>
         ` : ''}
@@ -364,25 +364,35 @@ function renderTimeline(timeline) {
   dom.timelineContainer.innerHTML = timeline.map(item => {
     const timeStr = escapeHtml(new Date(item.created_at).toTimeString().split(' ')[0]);
     let typeClass = 'granted';
-    let badgeIcon = '✓';
-    if (item.event_type.includes('blocked')) { typeClass = 'blocked'; badgeIcon = '✕'; }
-    else if (item.event_type.includes('released')) { typeClass = 'released'; badgeIcon = '○'; }
-    else if (item.event_type.includes('woken')) { typeClass = 'woken'; badgeIcon = '⚡'; }
-    else if (item.event_type.includes('broadcast')) { typeClass = 'broadcast'; badgeIcon = '📢'; }
+    let badgeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+    if (item.event_type.includes('blocked')) {
+      typeClass = 'blocked';
+      badgeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+    } else if (item.event_type.includes('released')) {
+      typeClass = 'released';
+      badgeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle></svg>';
+    } else if (item.event_type.includes('woken')) {
+      typeClass = 'woken';
+      badgeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>';
+    } else if (item.event_type.includes('broadcast')) {
+      typeClass = 'broadcast';
+      badgeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 5L6 9H2v6h4l5 4V5z"></path></svg>';
+    }
 
     const actor = escapeHtml(item.agent_name || item.agent_id);
     const eventType = escapeHtml(item.event_type);
     const desc = escapeHtml(item.description);
 
     return `
-      <div class="timeline-card">
-        <div class="timeline-time-col">${timeStr}</div>
-        <div class="timeline-body-col">
-          <div class="timeline-action-tag ${typeClass}">
-            <span>${badgeIcon}</span>
-            <span>[${actor}] ${eventType}</span>
+      <div class="timeline-item">
+        <div class="timeline-badge ${typeClass}">${badgeSvg}</div>
+        <div class="timeline-content-box">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px;">
+            <span style="font-size: 13px; font-weight: 700; color: #fff;">[${actor}] ${eventType}</span>
+            <span class="timeline-time">${timeStr}</span>
           </div>
-          <div class="timeline-text">${desc}</div>
+          <div class="timeline-desc">${desc}</div>
         </div>
       </div>
     `;
@@ -537,7 +547,7 @@ async function fetchDialogues() {
             <span class="dialogue-time">${timeStr}</span>
           </div>
           <div class="dialogue-body-content">
-            <span class="dialogue-route">[${fromSafe} ➔ ${toSafe}]:</span>
+            <span class="dialogue-route">[${fromSafe} → ${toSafe}]:</span>
             <span class="dialogue-text">${contentSafe}</span>
           </div>
         </div>
@@ -646,12 +656,20 @@ function renderTopologyView(data) {
   if (filteredNodes.length === 0) {
     dom.topoSvgLayer.innerHTML = '';
     dom.topoNodesLayer.innerHTML = `
-      <div class="topo-empty-state">
-        <div class="topo-empty-icon">🌳</div>
-        <div style="font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 6px;">
+      <div class="topo-empty-state" style="text-align: center; padding: 60px 20px;">
+        <div class="topo-empty-icon" style="width: 48px; height: 48px; margin: 0 auto 16px auto; border-radius: 14px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; display: flex; align-items: center; justify-content: center;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+        </div>
+        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 6px;">
           ${rawNodes.length === 0 ? '暂无演进拓扑记录' : '没有匹配的节点'}
         </div>
-        <div style="font-size: 12px; color: var(--text-faint);">
+        <div style="font-size: 13px; color: var(--text-faint);">
           ${rawNodes.length === 0
             ? '当各会话完成意图释放、上报里程碑或 Git 提交时，系统将自动按时间线绘制功能开发与问题解决拓扑图。'
             : '尝试更换搜索关键词（支持按功能标题、Agent 名称或修改的文件路径筛选）。'
@@ -689,19 +707,24 @@ function renderTopologyView(data) {
 
     return `
       <div class="topo-card" id="card-${escapeHtml(node.id)}" data-node-id="${escapeHtml(node.id)}">
-        <div class="topo-card-head">
-          <div class="topo-card-agent-badge">
-            <span>🤖</span>
+        <div class="topo-card-header">
+          <div class="topo-agent-badge">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+              <circle cx="12" cy="5" r="2"></circle>
+              <path d="M12 7v4"></path>
+              <line x1="8" y1="16" x2="8.01" y2="16"></line>
+              <line x1="16" y1="16" x2="16.01" y2="16"></line>
+            </svg>
             <span>${escapeHtml(node.agentName || node.agentId)}</span>
           </div>
-          <span class="topo-card-type-chip ${typeChipClass}">${typeLabel}</span>
+          <span class="topo-type-chip ${typeChipClass}">${typeLabel}</span>
         </div>
         <div class="topo-card-title">${escapeHtml(node.title)}</div>
         ${node.description ? `<div class="topo-card-desc">${escapeHtml(node.description)}</div>` : ''}
         ${claimsHtml}
-        <div class="topo-card-foot">
-          <span style="font-family: var(--font-mono);">${dateStr} ${timeStr}</span>
-          <span>节点序列 #${index + 1}</span>
+        <div class="topo-time-footer">
+          <span>${dateStr} ${timeStr} • 节点 #${index + 1}</span>
         </div>
       </div>
     `;
@@ -928,7 +951,7 @@ function renderGateway(data) {
         return `
           <div class="topo-channel-row ${channelClass}">
             <span class="topo-channel-name">
-              <span>${isResting ? '⚠️' : '⚡'}</span>
+              <span class="topo-channel-dot ${statusClass}"></span>
               <span>[#${idx + 1}] ${escapeHtml(c.name || c.id)}</span>
             </span>
             <span class="topo-channel-status ${statusClass}">${statusLabel}</span>
@@ -949,7 +972,7 @@ function renderCandidatesGrid(candidates) {
     dom.gwCandidatesContainer.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 16px;">
         <div>当前后台未配置上游模型节点。</div>
-        <div style="margin-top: 8px; font-size: 11px;">💡 点击上方 "✨ 载入双模型演示（体验自动换路线）" 可立刻体验当主力模型 429 报错时，系统如何毫秒级自动切换到备用模型！</div>
+        <div style="margin-top: 8px; font-size: 12px;">提示：点击上方“载入双模型演示（体验自动换路线）”可立刻体验当主力模型 429 报错时，系统如何毫秒级自动切换到备用模型！</div>
       </div>
     `;
     return;
@@ -1035,7 +1058,7 @@ function renderCandidatesGrid(candidates) {
               累计失败: ${c.failureCount || 0} (连续失败: ${c.consecutiveFailures || 0})
             </span>
             <button class="cand-unrest-btn" data-unrest-id="${escapeHtml(c.id)}">
-              ${isResting ? '⚡ 立即唤醒' : '重置统计'}
+              ${isResting ? '立即唤醒' : '重置统计'}
             </button>
           </div>
         </div>
@@ -1141,7 +1164,7 @@ if (dom.probeDispatchBtn && dom.probeUserMessage) {
     if (dom.probeOutputContainer) {
       dom.probeOutputContainer.innerHTML = `
         <div style="color: #38bdf8; font-style: italic;">
-          ⏳ 正在通过智能网关调度请求（当前项目缓存键="${escapeHtml(currentProjectId)}")...
+          正在通过智能网关调度请求（当前项目缓存键="${escapeHtml(currentProjectId)}")...
         </div>
       `;
     }
@@ -1163,7 +1186,7 @@ if (dom.probeDispatchBtn && dom.probeUserMessage) {
             </div>
             <div class="probe-res-body">【故障自动转移轨迹】
 • 主力模型 "Claude 3.7 Sonnet" 当前处于 429 频率限流休眠状态。
-• 系统触发零丢包快速降级 ➔ 自动切换至备用模型 "DeepSeek-V3" 完成回答。
+• 系统触发零丢包快速降级 → 自动切换至备用模型 "DeepSeek-V3" 完成回答。
 回答内容: 已成功处理您的测试请求："${escapeHtml(text)}"</div>
           `;
         }
