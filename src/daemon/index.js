@@ -16,8 +16,8 @@ export function startDaemon(options = {}) {
   const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4100', 10);
   const dbPath = options.dbPath || null;
   const uiPath = options.uiPath || join(import.meta.dirname, '../ui/index.html');
-  const isRunningInTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT);
-  const writeSessionToken = options.writeSessionToken ?? (dbPath !== ':memory:' && !isRunningInTest);
+  const isRunningInTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
+  const writeSessionToken = options.writeSessionToken ?? (dbPath !== ':memory:' && !isRunningInTest && port === 4100);
 
   const eventBus = new EventEmitter();
   const db = createDatabase(dbPath);

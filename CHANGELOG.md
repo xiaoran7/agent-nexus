@@ -18,7 +18,8 @@
     - 模型网关大屏："Magpie Elastic Gateway Router" 改为 "多模型弹性智能网关"，分发策略、健康状态（"全部正常运行"、"部分节点避让中"、"全部休眠中"）、可用模型池与实时拨测控制台全链路人话化，Demo 轨迹输出完全本地化。
 - **通用 Hook 写入正则误伤修复 (`src/hook/nexus-hook.mjs`)**
   - **排除箭头函数与比较符**：修复 `WRITE_COMMAND_RE` 正则表达式因误把 `=>`（ES6 箭头函数）、`->`（指针语法）中的 `>` 当作重定向符号而错误阻断 Node 代码执行与 Bash 检查的缺陷；
-  - **后台启动父目录自动创建 (`src/daemon/index.js`)**：在持久化当前活动 `session.token` 时自动检查并递归创建 `.agent-nexus` 目录，杜绝全新环境因目录缺失而静默丢失令牌；并在 Node 测试环境感知（`NODE_TEST_CONTEXT`）下禁止改写用户活动 `session.token`。
+  - **后台启动父目录自动创建与令牌隔离 (`src/daemon/index.js`, `test/helpers.js`)**：在持久化当前活动 `session.token` 时自动检查并递归创建 `.agent-nexus` 目录，杜绝全新环境因目录缺失而静默丢失令牌；新增 `writeSessionToken` 守卫参数，并在 Node 测试环境感知（`isTest || NODE_TEST_CONTEXT`）下禁止改写或销毁用户当前会话的 `session.token`，避免自动化测试影响开发者正在使用的活跃 Hook 门禁；
+  - **自动化测试断言健壮性优化 (`test/mcp-stdio.test.js`, `test/notification.test.js`)**：在 MCP Stdio 测试中采用动态轮询条件 `waitForCount` 替代脆弱的固定等待 `setTimeout`，避免高并发测试调度下 0 !== 1 误报；同步放宽监控大屏页面标题断言以兼容全面汉化后的中文标题。
 
 ---
 

@@ -719,7 +719,7 @@ test('启动失败给出可操作提示而不是崩溃', async (t) => {
 // 用一个已被占用的端口再起一次 daemon，复现真实的端口冲突。
 async function startDaemonLike(port) {
   const { startDaemon } = await import('../src/daemon/index.js');
-  return startDaemon({ port, dbPath: ':memory:' });
+  return startDaemon({ port, dbPath: ':memory:', isTest: true, writeSessionToken: false });
 }
 
 // 认证与身份：daemon 只监听本机挡不住本机进程。绑定 127.0.0.1 + CORS
