@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ValidationError } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken } from './auth.js';
@@ -573,20 +573,23 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       if (staticFiles[url.pathname]) {
         const target = staticFiles[url.pathname];
-        let cached = staticCache.get(target.name);
-        if (!cached) {
-          const uiDir = dirname(uiPath);
-          const filePath = join(uiDir, target.name);
-          if (existsSync(filePath)) {
+        const uiDir = dirname(uiPath);
+        const filePath = join(uiDir, target.name);
+        if (existsSync(filePath)) {
+          const stat = statSync(filePath);
+          let cached = staticCache.get(target.name);
+          if (!cached || cached.mtime !== stat.mtimeMs) {
             cached = {
               buffer: readFileSync(filePath),
-              mime: target.mime
+              mime: target.mime,
+              mtime: stat.mtimeMs
             };
             staticCache.set(target.name, cached);
           }
-        }
-        if (cached) {
-          res.writeHead(200, { 'Content-Type': cached.mime });
+          res.writeHead(200, {
+            'Content-Type': cached.mime,
+            'Cache-Control': 'no-cache'
+          });
           res.end(cached.buffer);
           return;
         }

@@ -1,20 +1,21 @@
 // Agent-Nexus War Room UI Controller
 
-const NEXUS_TOKEN = (() => {
+function getNexusToken() {
   const fromQuery = new URLSearchParams(location.search).get('token');
   if (fromQuery) {
     sessionStorage.setItem('nexusToken', fromQuery);
     return fromQuery;
   }
   return sessionStorage.getItem('nexusToken') || '';
-})();
+}
 
 let currentProjectId = 'default';
-const authHeaders = () => (
-  NEXUS_TOKEN
-    ? { Authorization: `Bearer ${NEXUS_TOKEN}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' }
-);
+const authHeaders = () => {
+  const token = getNexusToken();
+  return token
+    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    : { 'Content-Type': 'application/json' };
+};
 
 // HTML 安全转义函数，杜绝存储型与反射型 XSS
 function escapeHtml(str) {
@@ -117,8 +118,59 @@ const dom = {
   // Live Probe Console
   probeUserMessage: document.getElementById('probe-user-message'),
   probeDispatchBtn: document.getElementById('probe-dispatch-btn'),
-  probeOutputContainer: document.getElementById('probe-output-container')
+  probeOutputContainer: document.getElementById('probe-output-container'),
+
+  // Theme Toggle Button
+  themeToggleBtn: document.getElementById('theme-toggle-btn'),
+  themeToggleLabel: document.getElementById('theme-toggle-label')
 };
+
+// ==========================================
+// Theme Management (亮色 / 暗色两套主题无缝切换与持久化)
+// ==========================================
+function getPreferredTheme() {
+  const saved = localStorage.getItem('nexusTheme');
+  if (saved === 'dark' || saved === 'light') return saved;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function updateThemeUI(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  if (dom.themeToggleLabel) {
+    dom.themeToggleLabel.textContent = theme === 'dark' ? '暗色' : '亮色';
+  }
+  if (dom.themeToggleBtn) {
+    dom.themeToggleBtn.setAttribute('title', theme === 'dark' ? '当前暗色模式，点击切换至亮色模式' : '当前亮色模式，点击切换至暗色模式');
+    dom.themeToggleBtn.setAttribute('aria-label', theme === 'dark' ? '切换至亮色模式' : '切换至暗色模式');
+  }
+}
+
+function applyTheme(theme) {
+  localStorage.setItem('nexusTheme', theme);
+  updateThemeUI(theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || getPreferredTheme();
+  const next = current === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+}
+
+if (dom.themeToggleBtn) {
+  dom.themeToggleBtn.onclick = toggleTheme;
+}
+
+// 监听系统级颜色变化（未手动覆盖时自动同步）
+try {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('nexusTheme')) {
+      updateThemeUI(e.matches ? 'dark' : 'light');
+    }
+  });
+} catch {}
+
+// 初始化当前主题 UI 状态
+updateThemeUI(getPreferredTheme());
 
 // 抽屉与项目交互
 if (dom.openMemoryDrawerBtn) {
@@ -223,8 +275,8 @@ function renderLanes(claims, agents) {
             ? `<span class="lane-waiter">下一位接力: ${waitingAgents.map(w => escapeHtml(w.name)).join(', ')}</span>`
             : `<span style="color: var(--text-faint); font-size: 12px;">(无其他助手排队)</span>`}
         </div>
-        <div class="lane-countdown-bar" style="height: 4px; background: rgba(255,255,255,0.06); border-radius: 9999px; margin-top: 10px; overflow: hidden;">
-          <div class="lane-progress" style="width: ${progressPct}%; height: 100%; background: #38bdf8; border-radius: 9999px;"></div>
+        <div class="lane-countdown-bar" style="height: 4px; background: var(--border-subtle); border-radius: 9999px; margin-top: 10px; overflow: hidden;">
+          <div class="lane-progress" style="width: ${progressPct}%; height: 100%; background: var(--sky-primary); border-radius: 9999px;"></div>
         </div>
       </div>
     `;
@@ -280,9 +332,9 @@ function handleLeadAwakened(data) {
   if (dom.leadAwakenedDetail && data.peer_sessions && data.peer_sessions.length > 0) {
     dom.leadAwakenedDetail.style.display = 'block';
     dom.leadAwakenedDetail.innerHTML = `
-      <div style="font-weight: 700; color: #38bdf8; margin-bottom: 6px;">【在席会话施工现场快照】</div>
+      <div style="font-weight: 700; color: var(--sky-primary); margin-bottom: 6px;">【在席会话施工现场快照】</div>
       ${data.peer_sessions.map(p => `
-        <div style="padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 4px; font-size: 11px;">
+        <div style="padding: 6px 10px; background: var(--card-nested); border: 1px solid var(--border-subtle); border-radius: 6px; margin-bottom: 4px; font-size: 12px; color: var(--text-main);">
           • 会话 [${escapeHtml(p.name)}]: 意图 "${escapeHtml(p.currentIntent || '无')}" | 进度 "${escapeHtml(p.progressSummary || '进行中')}" | 独占锁 ${p.activeLeasesCount || 0} 个
         </div>
       `).join('')}
@@ -334,7 +386,7 @@ function renderAgents(agents, activeClaims) {
           </div>
         ` : ''}
         ${a.blocked_reason ? `
-          <div class="blocked-callout" style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 12px; background: rgba(251, 113, 133, 0.12); border-radius: 10px; color: #fecdd3; font-size: 13px;">
+          <div class="blocked-callout" style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 12px; background: var(--status-blocked-bg); border: 1px solid var(--status-blocked-border); border-radius: 10px; color: var(--status-blocked); font-size: 13px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
             <span>${escapeHtml(a.blocked_reason)}</span>
           </div>
@@ -389,7 +441,7 @@ function renderTimeline(timeline) {
         <div class="timeline-badge ${typeClass}">${badgeSvg}</div>
         <div class="timeline-content-box">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px;">
-            <span style="font-size: 13px; font-weight: 700; color: #fff;">[${actor}] ${eventType}</span>
+            <span style="font-size: 13px; font-weight: 700; color: var(--text-title);">[${actor}] ${eventType}</span>
             <span class="timeline-time">${timeStr}</span>
           </div>
           <div class="timeline-desc">${desc}</div>
@@ -643,7 +695,10 @@ function renderTopologyView(data) {
     const matchTitle = (n.title || '').toLowerCase().includes(topoSearchQuery);
     const matchDesc = (n.description || '').toLowerCase().includes(topoSearchQuery);
     const matchAgent = (n.agentName || n.agentId || '').toLowerCase().includes(topoSearchQuery);
-    const matchFiles = (n.claims || []).some(c => (c.target || '').toLowerCase().includes(topoSearchQuery));
+    const matchFiles = (n.claims || []).some(c => {
+      const targetStr = typeof c === 'string' ? c : (c?.target || '');
+      return targetStr.toLowerCase().includes(topoSearchQuery);
+    });
     return matchTitle || matchDesc || matchAgent || matchFiles;
   });
 
@@ -666,7 +721,7 @@ function renderTopologyView(data) {
             <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
           </svg>
         </div>
-        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 6px;">
+        <div style="font-size: 15px; font-weight: 700; color: var(--text-title); margin-bottom: 6px;">
           ${rawNodes.length === 0 ? '暂无演进拓扑记录' : '没有匹配的节点'}
         </div>
         <div style="font-size: 13px; color: var(--text-faint);">
@@ -693,15 +748,19 @@ function renderTopologyView(data) {
     // 文件标签
     const claimsHtml = (node.claims && node.claims.length > 0) ? `
       <div class="topo-claims-box">
-        ${node.claims.map(c => `
-          <span class="topo-claim-pill" title="${escapeHtml(c.target)}">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-            </svg>
-            <span>${escapeHtml(c.target.split('/').pop() || c.target)}</span>
-          </span>
-        `).join('')}
+        ${node.claims.map(c => {
+          const targetStr = typeof c === 'string' ? c : (c?.target || '');
+          if (!targetStr) return '';
+          return `
+            <span class="topo-claim-pill" title="${escapeHtml(targetStr)}">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+              <span>${escapeHtml(targetStr.split('/').pop() || targetStr)}</span>
+            </span>
+          `;
+        }).join('')}
       </div>
     ` : '';
 
@@ -1361,8 +1420,9 @@ setInterval(() => {
 function connectWebSocket() {
   try {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = NEXUS_TOKEN
-      ? `${protocol}//${location.host}/?token=${encodeURIComponent(NEXUS_TOKEN)}`
+    const token = getNexusToken();
+    const wsUrl = token
+      ? `${protocol}//${location.host}/?token=${encodeURIComponent(token)}`
       : `${protocol}//${location.host}`;
 
     const ws = new WebSocket(wsUrl);
