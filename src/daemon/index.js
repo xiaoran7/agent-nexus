@@ -36,6 +36,7 @@ export function startDaemon(options = {}) {
   coordinator.messageService = messageService;
 
   const cleanupTimer = setInterval(() => {
+    coordinator.reapDeadAgentLeases();
     coordinator.expireLeases();
     stateService.expireSweep(true);
   }, 5000);

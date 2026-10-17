@@ -40,8 +40,9 @@ function resolveAgentIdentity(payload) {
 
   const agentId = `${provider}-${sessionId}`;
   const promptHint = process.env.NEXUS_AGENT_PROMPT || payload.prompt || null;
+  const pid = payload.pid || process.ppid || process.pid;
 
-  return { provider, sessionId, agentId, promptHint };
+  return { provider, sessionId, agentId, promptHint, pid };
 }
 
 // 只有真正改文件的工具才值得去问协调库。Read/Grep/Glob/LS 之类拿到 file_path
@@ -302,7 +303,8 @@ async function main() {
       resource_name: targetResource,
       project_id: projectInfo.projectId,
       project_root: projectInfo.projectRoot,
-      workspace_dir: workspaceDir
+      workspace_dir: workspaceDir,
+      pid: identity.pid
     });
 
     if (resourceRes.allow === false) {
@@ -338,7 +340,8 @@ async function main() {
     file_path: targetFile,
     project_id: projectInfo.projectId,
     project_root: projectInfo.projectRoot,
-    workspace_dir: workspaceDir
+    workspace_dir: workspaceDir,
+    pid: identity.pid
   });
 
   if (res.allow === false) {

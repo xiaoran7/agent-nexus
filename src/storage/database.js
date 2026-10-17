@@ -31,7 +31,7 @@ export function createDatabase(customPath = null) {
     INSERT OR IGNORE INTO projects (id, root_path, display_name, created_at, last_activity)
     VALUES ('default', '', 'Default Project', 0, 0);
 
-    -- 1. Agent 注册表 (带项目作用域)
+    -- 1. Agent 注册表 (带项目作用域与进程号)
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default',
@@ -43,7 +43,8 @@ export function createDatabase(customPath = null) {
       last_heartbeat INTEGER NOT NULL,
       registered_at INTEGER NOT NULL,
       current_intent TEXT,
-      progress_summary TEXT
+      progress_summary TEXT,
+      pid INTEGER
     );
 
     -- 2. 意图总账 (Intent Ledger)
@@ -197,10 +198,11 @@ function migrateOldSchemaIfNeeded(db) {
     }
   }
 
-  // 针对 agents 表的进度追踪字段平滑补列
+  // 针对 agents 表的进度追踪与进程监控字段平滑补列
   const agentColumns = [
     { name: 'current_intent', type: 'TEXT' },
     { name: 'progress_summary', type: 'TEXT' },
+    { name: 'pid', type: 'INTEGER' },
   ];
   for (const col of agentColumns) {
     try {

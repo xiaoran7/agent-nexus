@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-10-17 增加 Agent 宿主 PID 绑定与死亡会话租约提前回收 (Early Lease Reclamation)
+
+### 改了什么
+
+- **Agent 进程级存活感知与自动解阻 (`src/daemon/coordinator.js`, `src/storage/database.js`)**：
+  - **数据库字段平滑迁移**：在 `agents` 表新增 `pid INTEGER` 列并注入启动热迁移检查；
+  - **注册与快速判冲联动**：`registerAgent` 与 `fastCheckAndAutoClaim` 接收并维护会话的宿主 `pid`；
+  - **死亡检测与提前回收 (`reapDeadAgentLeases`)**：利用 `process.kill(pid, 0)` 无破坏性探测持有者系统进程存活状态，一旦捕获目标 Agent 意外退场（ESRCH 死亡），自动标记其状态为 `departed` 并立即提前释放其名下全部排他锁，无缝唤醒后续等待队列，无需被动苦等租约超时。
+- **全量测试通过**：230 项测试用例保持 100% 绿色通过。
+
+---
+
 ## 2026-10-17 实现亮色（青空 UI）与暗色双模态主题深度统一及动态热更
 
 ### 改了什么

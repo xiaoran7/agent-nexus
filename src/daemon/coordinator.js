@@ -208,7 +208,7 @@ export class CoordinatorEngine {
   }
 
   // 1. Agent 注册或心跳续期
-  registerAgent({ id, name, provider, sessionId, workspaceDir, projectId = 'default' }) {
+  registerAgent({ id, name, provider, sessionId, workspaceDir, projectId = 'default', pid = null }) {
     requireAgentId(id);
 
     const now = Date.now();
@@ -216,17 +216,20 @@ export class CoordinatorEngine {
     const finalProvider = provider == null ? 'unknown' : String(provider);
     const finalName = name || `${finalProvider}-${finalSessionId.slice(0, 6)}`;
     const finalProjectId = projectId || 'default';
+    const parsedPid = pid ? parseInt(pid, 10) : null;
+    const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
 
     const stmt = this.db.prepare(`
-      INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'idle', ?, ?)
+      INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid)
+      VALUES (?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         name = excluded.name,
         workspace_dir = excluded.workspace_dir,
-        last_heartbeat = excluded.last_heartbeat
+        last_heartbeat = excluded.last_heartbeat,
+        pid = CASE WHEN excluded.pid IS NOT NULL THEN excluded.pid ELSE agents.pid END
     `);
-    stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now);
+    stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid);
 
     if (workspaceDir && finalProjectId) {
       try {
@@ -708,8 +711,73 @@ export class CoordinatorEngine {
     }
   }
 
+  // 4.1 进程存活监测与死亡 Agent 租约提前回收 (Early Lease Reclamation)
+  reapDeadAgentLeases() {
+    const now = Date.now();
+    // 查找所有持有活跃未过期租约且登记了 pid 的 Agent
+    const activeHolders = this.db.prepare(`
+      SELECT DISTINCT a.id, a.name, a.pid, l.project_id
+      FROM agents a
+      JOIN leases l ON a.id = l.agent_id
+      WHERE a.pid IS NOT NULL AND a.pid > 0 AND l.expires_at > ?
+    `).all(now);
+
+    if (activeHolders.length === 0) return { reapedCount: 0, deadAgents: [] };
+
+    let totalReaped = 0;
+    const deadAgents = [];
+
+    for (const holder of activeHolders) {
+      let isAlive = true;
+      try {
+        // 在 POSIX 与 Windows 上，process.kill(pid, 0) 不发送终止信号，
+        // 仅检测进程是否存在。如果进程已死，抛出 ESRCH。
+        process.kill(holder.pid, 0);
+      } catch (err) {
+        if (err.code === 'ESRCH') {
+          isAlive = false;
+        } else if (err.code === 'EPERM') {
+          // 进程存在但无权限探测，表明进程依然活跃存活
+          isAlive = true;
+        }
+      }
+
+      if (!isAlive) {
+        // 标记 agent 状态为 departed
+        this.updateAgentStatus(holder.id, 'departed');
+
+        // 立即提前回收该死亡 Agent 在对应项目下的所有租约，并唤醒所有等待会话
+        const releaseRes = this.releaseAgentLeases({
+          agentId: holder.id,
+          projectId: holder.project_id,
+          reason: 'process_exit',
+          scope: 'all'
+        });
+
+        this.logActivity(
+          holder.id,
+          'process:dead',
+          String(holder.pid),
+          `Detected agent process exit (PID ${holder.pid}). Reclaimed ${releaseRes.releasedCount} lease(s) early.`,
+          holder.project_id
+        );
+
+        if (releaseRes.releasedCount > 0) {
+          totalReaped += releaseRes.releasedCount;
+          deadAgents.push({
+            agentId: holder.id,
+            pid: holder.pid,
+            releasedCount: releaseRes.releasedCount
+          });
+        }
+      }
+    }
+
+    return { reapedCount: totalReaped, deadAgents };
+  }
+
   // 5. 极速权限检查与自动补报 (针对通用 Hook 与资源锁)
-  fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null }) {
+  fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null }) {
     requireAgentId(agentId);
     const finalProjectId = projectId || 'default';
     const now = Date.now();
@@ -729,9 +797,11 @@ export class CoordinatorEngine {
       provider,
       sessionId,
       workspaceDir: workspaceDir || '',
-      projectId: finalProjectId
+      projectId: finalProjectId,
+      pid
     });
 
+    this.reapDeadAgentLeases();
     this.expireLeases();
 
     // 5.1 命名资源锁快速检查 (例如命令推导出的 tests, dev-server, build 等)

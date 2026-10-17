@@ -469,7 +469,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           promptHint: data.prompt_hint,
           projectId: data.project_id || 'default',
           workspaceDir: data.workspace_dir || '',
-          projectRoot: data.project_root || null
+          projectRoot: data.project_root || null,
+          pid: data.pid || null
         });
         return sendJson(200, checkResult);
       }
