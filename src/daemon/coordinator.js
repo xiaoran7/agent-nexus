@@ -50,6 +50,45 @@ export function sanitizeAgentName(name, agentId, provider, sessionId) {
   return trimmed;
 }
 
+/**
+ * 通用 UTF-8 字符串净洗器：
+ * 1. 彻底剔除 Unicode 替换符 (� / ) 与各类损坏字节碎片
+ * 2. 剥离不可见 ASCII 控制字符（保留正常标点、换行与空格）
+ * 3. 拦截类似 "????" 的无效占位符，返回安全兜底描述
+ */
+export function cleanUtf8String(str, fallback = '') {
+  if (str == null) return fallback;
+  if (typeof str !== 'string') return String(str);
+  let s = str.trim();
+  if (!s) return fallback;
+  if (s.includes('�') || s.includes('')) {
+    s = s.replace(/[�]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  if (!s) return fallback;
+  if (/^[?\s.\-=_]+$/.test(s) && s.length > 2) {
+    return fallback;
+  }
+  return s;
+}
+
+/**
+ * 操作系统进程存活无感探针：
+ * 使用 process.kill(pid, 0) 发送探测信号（不终止进程）
+ * ESRCH 表明进程已消亡；EPERM 表明进程依然存活运行
+ */
+export function isPidAlive(pid) {
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err.code === 'ESRCH') return false;
+    if (err.code === 'EPERM') return true;
+    return false;
+  }
+}
+
 const CLAIM_TYPES = new Set(['file', 'module', 'symbol', 'resource']);
 
 const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
@@ -253,28 +292,37 @@ export class CoordinatorEngine {
   }
 
   // 1. Agent 注册或心跳续期
-  registerAgent({ id, name, provider, sessionId, workspaceDir, projectId = 'default', pid = null }) {
+  registerAgent(params = {}) {
+    const id = params.id || params.agentId || params.agent_id;
     requireAgentId(id);
 
     const now = Date.now();
-    const finalSessionId = sessionId == null ? 'default' : String(sessionId);
-    const finalProvider = provider == null ? 'unknown' : String(provider);
-    const finalName = sanitizeAgentName(name, id, finalProvider, finalSessionId);
-    const finalProjectId = projectId || 'default';
-    const parsedPid = pid ? parseInt(pid, 10) : null;
+    const finalSessionId = (params.sessionId ?? params.session_id) == null ? 'default' : String(params.sessionId ?? params.session_id);
+    const finalProvider = (params.provider ?? 'unknown') == null ? 'unknown' : String(params.provider);
+    const finalName = sanitizeAgentName(params.name, id, finalProvider, finalSessionId);
+    const finalProjectId = params.projectId || params.project_id || 'default';
+    const workspaceDir = params.workspaceDir || params.workspace_dir || '';
+    const rawPid = params.pid;
+    const parsedPid = rawPid ? parseInt(rawPid, 10) : null;
     const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
+    const cleanTool = cleanUtf8String(params.lastTool || params.tool || params.toolName, null);
+    const cleanAction = cleanUtf8String(params.lastAction || params.action || params.toolAction, null);
+    const cleanTarget = cleanUtf8String(params.lastTarget || params.target || params.toolTarget, null);
 
     const stmt = this.db.prepare(`
-      INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid)
-      VALUES (?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)
+      INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, last_tool, last_action, last_target)
+      VALUES (?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         name = excluded.name,
         workspace_dir = excluded.workspace_dir,
         last_heartbeat = excluded.last_heartbeat,
-        pid = CASE WHEN excluded.pid IS NOT NULL THEN excluded.pid ELSE agents.pid END
+        pid = CASE WHEN excluded.pid IS NOT NULL THEN excluded.pid ELSE agents.pid END,
+        last_tool = CASE WHEN excluded.last_tool IS NOT NULL THEN excluded.last_tool ELSE agents.last_tool END,
+        last_action = CASE WHEN excluded.last_action IS NOT NULL THEN excluded.last_action ELSE agents.last_action END,
+        last_target = CASE WHEN excluded.last_target IS NOT NULL THEN excluded.last_target ELSE agents.last_target END
     `);
-    stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid);
+    stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid, cleanTool, cleanAction, cleanTarget);
 
     if (workspaceDir && finalProjectId) {
       try {
@@ -305,6 +353,56 @@ export class CoordinatorEngine {
     return this.getAgent(id);
   }
 
+  // 1.1 实时工具与调用态势上报 (Tool Telemetry)
+  recordTelemetry(params = {}) {
+    const agentId = params.agentId || params.agent_id || params.id;
+    requireAgentId(agentId);
+    const now = Date.now();
+    const finalProjectId = params.projectId || params.project_id || 'default';
+    const cleanTool = cleanUtf8String(params.toolName || params.tool || params.lastTool, null);
+    const cleanAction = cleanUtf8String(params.toolAction || params.action || params.lastAction, cleanTool);
+    const cleanTarget = cleanUtf8String(params.toolTarget || params.target || params.lastTarget, null);
+    const rawPid = params.pid;
+    const parsedPid = rawPid ? parseInt(rawPid, 10) : null;
+    const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
+
+    let agent = this.getAgent(agentId, finalProjectId);
+    if (!agent) {
+      this.registerAgent({
+        id: agentId,
+        provider: params.provider,
+        sessionId: params.sessionId || params.session_id,
+        workspaceDir: params.workspaceDir || params.workspace_dir,
+        projectId: finalProjectId,
+        pid: finalPid,
+        lastTool: cleanTool,
+        lastAction: cleanAction,
+        lastTarget: cleanTarget
+      });
+    } else {
+      this.db.prepare(`
+        UPDATE agents
+        SET last_heartbeat = ?,
+            last_tool = COALESCE(?, last_tool),
+            last_action = COALESCE(?, last_action),
+            last_target = COALESCE(?, last_target),
+            pid = CASE WHEN ? IS NOT NULL THEN ? ELSE pid END
+        WHERE id = ?
+      `).run(now, cleanTool, cleanAction, cleanTarget, finalPid, finalPid, agentId);
+    }
+
+    this.eventBus.emit('agent:telemetry', {
+      agent_id: agentId,
+      project_id: finalProjectId,
+      tool: cleanTool,
+      action: cleanAction,
+      target: cleanTarget,
+      timestamp: now
+    });
+
+    return { success: true };
+  }
+
   getAgent(id, projectId = null) {
     if (projectId) {
       return this.db.prepare('SELECT * FROM agents WHERE id = ? AND project_id = ?').get(id, projectId);
@@ -327,7 +425,8 @@ export class CoordinatorEngine {
   // 2. 意图声明与确定性冲突检查 (Core Algorithm)
   declareIntent({ agentId, intentSummary, claims = [], ttlSeconds = 300, projectId = 'default', projectRoot = null }) {
     requireAgentId(agentId);
-    const summary = requireString(intentSummary, 'summary');
+    const rawSummary = requireString(intentSummary, 'summary');
+    const summary = cleanUtf8String(rawSummary, 'Coordinated Task');
     const finalProjectId = projectId || 'default';
 
     if (!Array.isArray(claims)) {
@@ -356,6 +455,7 @@ export class CoordinatorEngine {
     this.reapDeadAgentLeases();
     this.expireLeases();
     const now = Date.now();
+    this.reapStaleIntentsAndAgents(now);
     const intentId = `intent_${randomUUID().slice(0, 8)}`;
 
     if (!agent) {
@@ -407,10 +507,13 @@ export class CoordinatorEngine {
         claims: normalizedClaims
       };
     } else {
+      const safeReason = cleanUtf8String(conflict.reason, 'Resource is locked by another agent');
+      const safeBlockedByName = sanitizeAgentName(conflict.blockedByAgentName, conflict.blockedByAgentId);
+
       this.db.prepare(`
         INSERT INTO intents (id, project_id, agent_id, summary, status, blocked_by_agent_id, blocked_reason, created_at, updated_at)
         VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?)
-      `).run(intentId, finalProjectId, agentId, summary, conflict.blockedByAgentId, conflict.reason, now, now);
+      `).run(intentId, finalProjectId, agentId, summary, conflict.blockedByAgentId, safeReason, now, now);
 
       const claimInsert = this.db.prepare(`
         INSERT INTO claims (project_id, intent_id, agent_id, claim_type, claim_target, created_at)
@@ -426,17 +529,17 @@ export class CoordinatorEngine {
       `).run(finalProjectId, intentId, agentId, now);
 
       this.updateAgentStatus(agentId, 'waiting');
-      this.logActivity(agentId, 'intent:blocked', claims.map(c => c.target).join(', '), `Blocked by ${conflict.blockedByAgentName}: ${conflict.reason}`, finalProjectId);
+      this.logActivity(agentId, 'intent:blocked', claims.map(c => c.target).join(', '), `Blocked by ${safeBlockedByName}: ${safeReason}`, finalProjectId);
 
       return {
         status: 'WAITING',
         intentId,
         blockedBy: conflict.blockedByAgentId,
-        blockedByName: conflict.blockedByAgentName,
+        blockedByName: safeBlockedByName,
         holderWorkspace: conflict.holderWorkspace || '',
         expiresAt: conflict.expiresAt,
         remainingSec: conflict.remainingSec,
-        reason: conflict.reason,
+        reason: safeReason,
         claims: normalizedClaims
       };
     }
@@ -845,6 +948,62 @@ export class CoordinatorEngine {
     return { reapedCount: totalReaped, deadAgents };
   }
 
+  // 4.2 僵尸等待者与超时会话收割器 (Stale Waiter & Agent Reaper)
+  reapStaleIntentsAndAgents(now = Date.now()) {
+    try {
+      // 1. 清理超过 5 分钟的陈旧等待队列记录
+      this.db.prepare('DELETE FROM wait_queue WHERE (? - created_at) > 300000').run(now);
+
+      // 2. 将超过 10 分钟无心跳且依然处于 waiting/running 的意图标记为 aborted
+      this.db.prepare(`
+        UPDATE intents
+        SET status = 'aborted', updated_at = ?
+        WHERE status IN ('waiting', 'running') AND (? - updated_at) > 600000
+      `).run(now, now);
+
+      // 3. 检查所有处于 waiting 的意图，若其等待的 agent 已经超时或者 blocker 已经不再持有任何租约，解除阻塞
+      const waitingIntents = this.db.prepare(`
+        SELECT i.id, i.agent_id, i.project_id, i.blocked_by_agent_id
+        FROM intents i
+        WHERE i.status = 'waiting'
+      `).all();
+
+      for (const wi of waitingIntents) {
+        const waiterAgent = this.db.prepare('SELECT last_heartbeat, pid FROM agents WHERE id = ?').get(wi.agent_id);
+        const isWaiterAlive = waiterAgent && (((now - waiterAgent.last_heartbeat) <= 120000) || (waiterAgent.pid && isPidAlive(waiterAgent.pid)));
+        if (!isWaiterAlive) {
+          this.db.prepare(`UPDATE intents SET status = 'aborted', updated_at = ? WHERE id = ?`).run(now, wi.id);
+          this.db.prepare('DELETE FROM wait_queue WHERE intent_id = ?').run(wi.id);
+          continue;
+        }
+
+        if (wi.blocked_by_agent_id) {
+          const blockerLease = this.db.prepare(`
+            SELECT count(*) as count FROM leases WHERE agent_id = ? AND expires_at > ?
+          `).get(wi.blocked_by_agent_id, now);
+          if (!blockerLease || blockerLease.count === 0) {
+            this._wakeNextEligibleWaiter(wi.project_id, now);
+          }
+        }
+      }
+
+      // 4. 将超过 2 分钟无心跳且无存活 PID 的会话同步为 departed
+      const unconfirmedAgents = this.db.prepare(`
+        SELECT id, pid, last_heartbeat FROM agents
+        WHERE status IN ('running', 'waiting') AND (? - last_heartbeat) > 120000
+      `).all(now);
+
+      for (const ag of unconfirmedAgents) {
+        const alive = ag.pid && isPidAlive(ag.pid);
+        if (!alive) {
+          this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
+        }
+      }
+    } catch {
+      // 容错处理
+    }
+  }
+
   // 5. 极速权限检查与自动补报 (针对通用 Hook 与资源锁)
   fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null }) {
     requireAgentId(agentId);
@@ -1116,22 +1275,27 @@ export class CoordinatorEngine {
 
   getDashboardSnapshot(projectId = null) {
     const now = Date.now();
-    let agents;
-    let activeClaims;
-    let timeline;
+    this.reapStaleIntentsAndAgents(now);
+    this.reapDeadAgentLeases();
+    this.expireLeases();
+
+    let rawAgents;
+    let rawActiveClaims;
+    let rawTimeline;
 
     if (projectId) {
-      agents = this.db.prepare(`
+      rawAgents = this.db.prepare(`
         SELECT a.*,
           (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
           (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent,
           (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
-          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason
+          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
+          (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
         FROM agents a
         WHERE a.project_id = ?
       `).all(now, projectId);
 
-      activeClaims = this.db.prepare(`
+      rawActiveClaims = this.db.prepare(`
         SELECT c.*, a.name as agent_name, l.expires_at
         FROM claims c
         JOIN leases l ON c.intent_id = l.intent_id
@@ -1139,7 +1303,7 @@ export class CoordinatorEngine {
         WHERE l.expires_at > ? AND c.project_id = ?
       `).all(now, projectId);
 
-      timeline = this.db.prepare(`
+      rawTimeline = this.db.prepare(`
         SELECT al.*, a.name as agent_name, a.provider
         FROM activity_log al
         LEFT JOIN agents a ON al.agent_id = a.id
@@ -1147,16 +1311,17 @@ export class CoordinatorEngine {
         ORDER BY al.id DESC LIMIT 50
       `).all(projectId);
     } else {
-      agents = this.db.prepare(`
+      rawAgents = this.db.prepare(`
         SELECT a.*,
           (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
           (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent,
           (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
-          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason
+          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
+          (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
         FROM agents a
       `).all(now);
 
-      activeClaims = this.db.prepare(`
+      rawActiveClaims = this.db.prepare(`
         SELECT c.*, a.name as agent_name, l.expires_at
         FROM claims c
         JOIN leases l ON c.intent_id = l.intent_id
@@ -1164,7 +1329,7 @@ export class CoordinatorEngine {
         WHERE l.expires_at > ?
       `).all(now);
 
-      timeline = this.db.prepare(`
+      rawTimeline = this.db.prepare(`
         SELECT al.*, a.name as agent_name, a.provider
         FROM activity_log al
         LEFT JOIN agents a ON al.agent_id = a.id
@@ -1172,10 +1337,209 @@ export class CoordinatorEngine {
       `).all();
     }
 
+    const agents = rawAgents.map((a) => {
+      const isPidActive = a.pid ? isPidAlive(a.pid) : false;
+      const isHeartbeatFresh = (now - a.last_heartbeat) <= 120000;
+      const isOnline = isPidActive || isHeartbeatFresh;
+
+      let lifecycleState = 'departed';
+      if (isOnline) {
+        if ((a.active_leases_count || 0) > 0) {
+          lifecycleState = 'working';
+        } else if (a.current_intent_status === 'waiting') {
+          lifecycleState = 'waiting';
+        } else {
+          lifecycleState = 'idle';
+        }
+      }
+
+      return {
+        ...a,
+        name: sanitizeAgentName(a.name, a.id, a.provider, a.session_id),
+        current_intent: cleanUtf8String(a.current_intent, ''),
+        blocked_reason: cleanUtf8String(a.blocked_reason, null),
+        last_tool: cleanUtf8String(a.last_tool, null),
+        last_action: cleanUtf8String(a.last_action, a.last_tool || null),
+        last_target: cleanUtf8String(a.last_target, null),
+        lifecycle_state: lifecycleState,
+        is_online: isOnline
+      };
+    });
+
+    const activeClaims = rawActiveClaims.map((c) => ({
+      ...c,
+      agent_name: sanitizeAgentName(c.agent_name, c.agent_id),
+      claim_target: cleanUtf8String(c.claim_target, c.claim_target)
+    }));
+
+    const timeline = rawTimeline.map((t) => ({
+      ...t,
+      agent_name: sanitizeAgentName(t.agent_name, t.agent_id, t.provider),
+      description: cleanUtf8String(t.description, ''),
+      target: cleanUtf8String(t.target, '')
+    }));
+
     return {
       agents,
       activeClaims,
       timeline
+    };
+  }
+
+  // 7. 实时多 Session 协同图谱 (Live Collaboration Graph)
+  getCollaborationGraph(projectId = null) {
+    const now = Date.now();
+    this.reapStaleIntentsAndAgents(now);
+    this.reapDeadAgentLeases();
+    this.expireLeases();
+
+    const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
+
+    let agentsQuery = `
+      SELECT a.*,
+        (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
+        (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_summary,
+        (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
+        (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
+        (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
+      FROM agents a
+    `;
+    const params = [now];
+    if (finalProjectId) {
+      agentsQuery += ' WHERE a.project_id = ?';
+      params.push(finalProjectId);
+    }
+    const rawAgents = this.db.prepare(agentsQuery).all(...params);
+
+    let claimsQuery = `
+      SELECT c.*, l.expires_at, l.id as lease_id, i.status as intent_status, i.summary as intent_summary, a.name as agent_name
+      FROM claims c
+      JOIN intents i ON c.intent_id = i.id
+      JOIN agents a ON c.agent_id = a.id
+      LEFT JOIN leases l ON c.intent_id = l.intent_id
+      WHERE (l.expires_at > ? OR i.status = 'waiting')
+    `;
+    const claimParams = [now];
+    if (finalProjectId) {
+      claimsQuery += ' AND c.project_id = ?';
+      claimParams.push(finalProjectId);
+    }
+    const rawClaims = this.db.prepare(claimsQuery).all(...claimParams);
+
+    const nodes = [];
+    const edges = [];
+    const resourceNodeMap = new Map();
+
+    let workingCount = 0;
+    let waitingCount = 0;
+    let idleCount = 0;
+    let departedCount = 0;
+
+    for (const a of rawAgents) {
+      const isPidActive = a.pid ? isPidAlive(a.pid) : false;
+      const isHeartbeatFresh = (now - a.last_heartbeat) <= 120000;
+      const isOnline = isPidActive || isHeartbeatFresh;
+
+      let lifecycleState = 'departed';
+      if (isOnline) {
+        if ((a.active_leases_count || 0) > 0) {
+          lifecycleState = 'working';
+          workingCount++;
+        } else if (a.current_intent_status === 'waiting') {
+          lifecycleState = 'waiting';
+          waitingCount++;
+        } else {
+          lifecycleState = 'idle';
+          idleCount++;
+        }
+      } else {
+        departedCount++;
+      }
+
+      const safeName = sanitizeAgentName(a.name, a.id, a.provider, a.session_id);
+      const safeIntent = cleanUtf8String(a.current_intent_summary, a.current_intent || (lifecycleState === 'idle' ? '待命中' : ''));
+      const safeTool = cleanUtf8String(a.last_tool, null);
+      const safeAction = cleanUtf8String(a.last_action, safeTool);
+      const safeTarget = cleanUtf8String(a.last_target, null);
+
+      nodes.push({
+        id: a.id,
+        node_type: 'session',
+        name: safeName,
+        provider: a.provider || 'agent',
+        session_id: a.session_id,
+        project_id: a.project_id,
+        lifecycle_state: lifecycleState,
+        is_online: isOnline,
+        pid: a.pid,
+        current_intent: safeIntent,
+        current_intent_status: a.current_intent_status,
+        last_tool: safeTool,
+        last_action: safeAction,
+        last_target: safeTarget,
+        last_heartbeat: a.last_heartbeat,
+        active_leases_count: a.active_leases_count || 0
+      });
+
+      if (lifecycleState === 'waiting' && a.blocked_by_agent_id) {
+        edges.push({
+          source: a.id,
+          target: a.blocked_by_agent_id,
+          type: 'conflict',
+          label: cleanUtf8String(a.blocked_reason, '等待锁释放')
+        });
+      }
+    }
+
+    for (const c of rawClaims) {
+      const cleanTarget = cleanUtf8String(c.claim_target, c.claim_target);
+      const resKey = `res:${c.claim_type}:${cleanTarget}`;
+      if (!resourceNodeMap.has(resKey)) {
+        const resNode = {
+          id: resKey,
+          node_type: 'resource',
+          claim_type: c.claim_type,
+          target: cleanTarget,
+          project_id: c.project_id,
+          status: c.expires_at && c.expires_at > now ? 'locked' : 'contended',
+          expires_at: c.expires_at || null,
+          remaining_sec: c.expires_at ? Math.max(0, Math.ceil((c.expires_at - now) / 1000)) : 0
+        };
+        resourceNodeMap.set(resKey, resNode);
+        nodes.push(resNode);
+      }
+
+      if (c.expires_at && c.expires_at > now) {
+        edges.push({
+          source: c.agent_id,
+          target: resKey,
+          type: 'holds_lease',
+          label: `持有租约 (~${Math.max(0, Math.ceil((c.expires_at - now) / 1000))}s)`
+        });
+      } else if (c.intent_status === 'waiting') {
+        edges.push({
+          source: c.agent_id,
+          target: resKey,
+          type: 'waiting_for',
+          label: '排队请求'
+        });
+      }
+    }
+
+    return {
+      project_id: finalProjectId || 'all',
+      timestamp: now,
+      stats: {
+        total_sessions: rawAgents.length,
+        working_sessions: workingCount,
+        waiting_sessions: waitingCount,
+        idle_sessions: idleCount,
+        departed_sessions: departedCount,
+        locked_resources: resourceNodeMap.size,
+        active_edges: edges.length
+      },
+      nodes,
+      edges
     };
   }
 }

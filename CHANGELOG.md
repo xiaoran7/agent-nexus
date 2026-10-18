@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-10-19 数据库乱码彻底清洗、Session 4-Tier 状态机与多会话实时协同防撞车图谱 (Collaboration Graph & Lifecycle Clean)
+
+### 改了什么
+
+- **数据库启动自愈清洗与历史脏数据净化 (`src/storage/database.js`, `src/daemon/coordinator.js`)**：
+  - 核心模块引入 `cleanUtf8String`，强力剥离 `�` 替代字符与 ASCII 控制字符（`\x00-\x1F`），彻底过滤无效标点占位；
+  - SQLite 启动时自动执行 `selfHealDatabase`：清理超期无心跳孤儿等待队列、熔断超时未释放的僵尸意图、自愈清洗 `intents` 与 `activity_log` 中残存的历史乱码；
+  - 根除协同看板上长达 30 小时残留的乱码文件冲突死锁（如 `...whole file is locked by ϵͳ̳פй`）。
+- **会话 4-Tier 严格生命周期状态机与 War Room 阶梯排版 (`src/daemon/coordinator.js`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - 将所有接入会话严格划分四层状态梯队：
+    1. **在线施工中 (`working`)**：持有文件/资源修改租约或处于运行态，正在调用工具改写代码或执行指令；
+    2. **排队等待中 (`waiting`)**：正在等待被其他会话占用的冲突文件锁释放，明确展示被谁阻塞；
+    3. **在线待命 / 没有工作 (`idle`)**：心跳在线存活，当前持有 0 个锁且未在排队（正在提示符待命或思考分析中）；
+    4. **历史离线 (`departed`)**：心跳超时且操作系统进程已死亡，默认折叠收起于 `<details>` 区域，绝不污染活跃协同工作流。
+- **下线模型网关，上线多 Session 实时协同防撞车图谱 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - 彻底移除过剩的“模型网关”视图与导航标签，替换为专为多会话防撞车定制的“协同图谱”(`tab-collab` / `#view-collab`)；
+  - 呈现左右双列实时二分拓扑：左侧为会话卡片（显示 Provider、状态、持锁数、当前调用工具 `Edit`/`Write`/`Read`/`Bash`/`Grep`、正在操作的文件路径），右侧为受保护锁资源卡片；
+  - 中间通过高帧率平滑贝塞尔曲线（三次贝塞尔）动态连接，以不同发光特效区分租约占用 (`holds_lease`)、排队等待 (`waiting_for`) 与潜在冲突 (`conflict`)，支持鼠标悬浮联动聚焦；底部配备实时协作明细流水表。
+- **工具调用态势全量遥测上报 (`src/hook/nexus-hook.mjs`, `src/transport/rest.js`, `src/daemon/coordinator.js`)**：
+  - Universal PreToolUse Hook 在拦截判断前，通过非阻塞 HTTP 异步上报会话执行的工具名称、操作目标与动作摘要（支持 `Edit`, `Write`, `Read`, `Bash`, `Grep` 等）；
+  - 即使在只读分析或终端执行阶段，中枢也能实时捕捉会话动态并刷新活跃心跳。
+- **真实后端状态打通与响应式自适应屏幕**：
+  - 前端项目加载逻辑优化，优先自动选中具备真实活跃拓扑节点（180+ 节点）的工程，消除“纯硬编码无后端”假象，并通过 `localStorage` 持久化记忆；
+  - 严格遵循 Aozora UI 与 60 FPS 性能铁律，优化多终端（包括宽屏与移动端）流式自适应排版，去除高频全屏重绘。
+- **自动化测试拓展与产物发布闭环 (`test/collaboration-lifecycle.test.js`, `scripts/build-exe.cjs`)**：
+  - 新增全链路生命周期与协同图谱单元测试，全套 242 项测试 100% 通过；
+  - 执行 Windows 平台可执行程序打包，严格遵守产物归档铁律，清理历史构建包，产出唯一的最新发布文件夹与 ZIP 归档于 `Deliverables/Agent-Nexus/`。
+
+---
+
 ## 2026-10-18 全面清除硬编码版本号与多端版本对齐 (Version Sync & Hardcode Elimination)
 
 ### 改了什么

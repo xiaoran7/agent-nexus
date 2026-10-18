@@ -388,6 +388,12 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, graph);
       }
 
+      // 1.5 Real-time Collaboration Graph (多 Session 实时协同图谱)
+      if (url.pathname === '/api/collaboration-graph' && req.method === 'GET') {
+        const pid = url.searchParams.get('project_id');
+        return sendJson(200, coordinator.getCollaborationGraph(pid));
+      }
+
       // 2. Agents
       if (url.pathname === '/api/agents' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
@@ -480,6 +486,23 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           pid: data.pid || null
         });
         return sendJson(200, checkResult);
+      }
+
+      // 6.01 Tool Telemetry 实时工具调用与活跃态势上报
+      if (url.pathname === '/api/hook/telemetry' && req.method === 'POST') {
+        const data = await readJson();
+        const result = coordinator.recordTelemetry({
+          agentId: data.agent_id,
+          provider: data.provider || 'unknown',
+          sessionId: data.session_id || 'default',
+          toolName: data.tool || data.tool_name,
+          toolAction: data.action || data.tool_action,
+          toolTarget: data.target || data.tool_target || data.file_path,
+          workspaceDir: data.workspace_dir || '',
+          projectId: data.project_id || 'default',
+          pid: data.pid || null
+        });
+        return sendJson(200, result);
       }
 
       // 6.1 显式命名资源锁接口 (Resource Locks)

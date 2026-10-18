@@ -103,12 +103,12 @@ const dom = {
   // View Switcher Tabs & Panes
   tabWarRoom: document.getElementById('tab-war-room'),
   tabTopology: document.getElementById('tab-topology'),
-  tabGateway: document.getElementById('tab-gateway'),
+  tabCollab: document.getElementById('tab-collab'),
   tabUnified: document.getElementById('tab-unified'),
   viewWarRoom: document.getElementById('view-war-room'),
   viewTopology: document.getElementById('view-topology'),
-  viewGateway: document.getElementById('view-gateway'),
-  gatewayTabBadge: document.getElementById('gateway-tab-badge'),
+  viewCollab: document.getElementById('view-collab'),
+  collabTabBadge: document.getElementById('collab-tab-badge'),
   topologyTabBadge: document.getElementById('topology-tab-badge'),
 
   // Functional Topology DOM Elements
@@ -122,31 +122,22 @@ const dom = {
   topoSvgLayer: document.getElementById('topo-svg-layer'),
   topoNodesLayer: document.getElementById('topo-nodes-layer'),
 
-  // Gateway Controls & Metric Cards
-  gwStrategySelect: document.getElementById('gw-strategy-select'),
-  gwHealthDot: document.getElementById('gw-health-dot'),
-  gwHealthText: document.getElementById('gw-health-text'),
-  gwCandidateCountText: document.getElementById('gw-candidate-count-text'),
-  gwResetAllBtn: document.getElementById('gw-reset-all-btn'),
-  gwTotalRequests: document.getElementById('gw-total-requests'),
-  gwActiveNodes: document.getElementById('gw-active-nodes'),
-  gwRestingNodes: document.getElementById('gw-resting-nodes'),
-  gwAvgLatency: document.getElementById('gw-avg-latency'),
-
-  // Topology Elements
-  topoAffinityKey: document.getElementById('topo-affinity-key'),
-  topoStrategyDisplay: document.getElementById('topo-strategy-display'),
-  topoCandidatesCluster: document.getElementById('topo-candidates-cluster'),
-  topologyFlowStatus: document.getElementById('topology-flow-status'),
-
-  // Upstream Candidate Pool Grid
-  gwCandidatesContainer: document.getElementById('gw-candidates-container'),
-  candidatesPoolMeta: document.getElementById('candidates-pool-meta'),
-
-  // Live Probe Console
-  probeUserMessage: document.getElementById('probe-user-message'),
-  probeDispatchBtn: document.getElementById('probe-dispatch-btn'),
-  probeOutputContainer: document.getElementById('probe-output-container'),
+  // Multi-Session Collaboration Graph DOM Elements
+  collabLiveDot: document.getElementById('collab-live-dot'),
+  collabLiveStatus: document.getElementById('collab-live-status'),
+  collabLastUpdatedText: document.getElementById('collab-last-updated-text'),
+  collabRefreshBtn: document.getElementById('collab-refresh-btn'),
+  collabStatWorking: document.getElementById('collab-stat-working'),
+  collabStatWaiting: document.getElementById('collab-stat-waiting'),
+  collabStatIdle: document.getElementById('collab-stat-idle'),
+  collabStatLockedRes: document.getElementById('collab-stat-locked-res'),
+  collabStatConflicts: document.getElementById('collab-stat-conflicts'),
+  collabViewport: document.getElementById('collab-viewport'),
+  collabCanvasInner: document.getElementById('collab-canvas-inner'),
+  collabSvgLayer: document.getElementById('collab-svg-layer'),
+  collabNodesLayer: document.getElementById('collab-nodes-layer'),
+  collabTableBody: document.getElementById('collab-table-body'),
+  collabTableMeta: document.getElementById('collab-table-meta'),
 
   // Theme Toggle Button
   themeToggleBtn: document.getElementById('theme-toggle-btn'),
@@ -219,26 +210,62 @@ if (dom.closeMemoryDrawerBtn && dom.drawerOverlay) {
 if (dom.projectSelector) {
   dom.projectSelector.onchange = () => {
     currentProjectId = dom.projectSelector.value;
+    localStorage.setItem('nexusProjectId', currentProjectId);
     fetchDashboard();
     fetchMemories();
+    fetchDialogues();
+    if (currentViewMode === 'topology' || currentViewMode === 'unified') {
+      fetchTopologyGraph();
+    }
+    if (currentViewMode === 'collab' || currentViewMode === 'unified') {
+      fetchCollabGraph();
+    }
   };
 }
 
-// 项目列表加载
+// 项目列表加载 (支持记住上次选择与自动聚焦真实活跃项目)
 async function loadProjects() {
   try {
     const res = await fetch('/api/projects', { headers: authHeaders() });
     if (!res.ok) return;
     const list = await res.json();
-    if (list && list.length > 0 && dom.projectSelector) {
-      dom.projectSelector.innerHTML = list.map(p => {
-        const idSafe = escapeHtml(p.id);
-        const nameSafe = escapeHtml(p.display_name || p.id);
-        const selected = p.id === currentProjectId ? 'selected' : '';
-        return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
-      }).join('');
+    if (!list || list.length === 0 || !dom.projectSelector) return;
+
+    // 优先读取本地持久化项目，若无则优先选取有真实活跃度或非 default 的有效项目
+    const savedProjectId = localStorage.getItem('nexusProjectId');
+    let targetProject = list.find(p => p.id === savedProjectId);
+    if (!targetProject) {
+      targetProject = list.find(p => p.id === 'Agent-Nexus') ||
+                      list.find(p => p.id !== 'default' && (p.last_activity > 0 || p.node_count > 0)) ||
+                      list.find(p => p.id !== 'default') ||
+                      list[0];
     }
-  } catch {}
+
+    if (targetProject) {
+      currentProjectId = targetProject.id;
+      localStorage.setItem('nexusProjectId', currentProjectId);
+    }
+
+    dom.projectSelector.innerHTML = list.map(p => {
+      const idSafe = escapeHtml(p.id);
+      const nameSafe = escapeHtml(p.display_name || p.id);
+      const selected = p.id === currentProjectId ? 'selected' : '';
+      return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
+    }).join('');
+
+    // 项目切换就绪后，立即拉取一次该项目的专属数据
+    fetchDashboard();
+    fetchMemories();
+    fetchDialogues();
+    if (currentViewMode === 'topology' || currentViewMode === 'unified') {
+      fetchTopologyGraph();
+    }
+    if (currentViewMode === 'collab' || currentViewMode === 'unified') {
+      fetchCollabGraph();
+    }
+  } catch (err) {
+    console.error('Failed to load projects:', err);
+  }
 }
 
 // 态势大盘拉取
@@ -375,30 +402,64 @@ function renderAgents(agents, activeClaims) {
   if (!agents || agents.length === 0) {
     dom.agentsContainer.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 14px;">
-        当前项目暂无活跃的 AI 助手。
+        当前项目暂无注册的 AI 会话。
       </div>
     `;
     return;
   }
 
-  const statusMap = {
-    running: '正在改文件',
-    waiting: '排队等待中',
-    idle: '空闲就绪',
-    departed: '已离开'
-  };
+  const now = Date.now();
+  const claimsList = activeClaims || [];
 
-  dom.agentsContainer.innerHTML = agents.map(a => {
-    const status = a.status || 'idle';
-    const statusSafe = escapeHtml(status);
-    const statusLabel = escapeHtml(statusMap[status] || status);
+  // 严格区分 4 种会话生命周期状态：
+  // 1. 在线施工中 (Working)：在线且持有独占文件/资源租约，或标记为 running
+  // 2. 排队等待中 (Waiting)：在线且因锁冲突受阻排队
+  // 3. 在线待命 (Idle)：在线但未持锁且未排队，随时候命
+  // 4. 历史离线 (Departed)：心跳超期且无存活 PID
+  const workingAgents = [];
+  const waitingAgents = [];
+  const idleAgents = [];
+  const departedAgents = [];
+
+  for (const a of agents) {
+    const claims = claimsList.filter(c => c.agent_id === a.id);
+    const isWorking = a.lifecycle_state === 'working' ||
+                      a.status === 'running' ||
+                      (claims.length > 0 && a.status !== 'departed');
+
+    const isWaiting = !isWorking && (
+      a.lifecycle_state === 'waiting' ||
+      a.status === 'waiting' ||
+      !!a.blocked_reason
+    );
+
+    const isIdle = !isWorking && !isWaiting && (
+      a.lifecycle_state === 'idle' ||
+      a.status === 'idle' ||
+      (a.status !== 'departed' && ((now - a.last_heartbeat) <= 120000))
+    );
+
+    if (isWorking) {
+      workingAgents.push({ ...a, resolvedClaims: claims, stateClass: 'working', stateLabel: '在线施工中' });
+    } else if (isWaiting) {
+      waitingAgents.push({ ...a, resolvedClaims: claims, stateClass: 'waiting', stateLabel: '排队等待中' });
+    } else if (isIdle) {
+      idleAgents.push({ ...a, resolvedClaims: claims, stateClass: 'idle', stateLabel: '在线待命' });
+    } else {
+      departedAgents.push({ ...a, resolvedClaims: claims, stateClass: 'departed', stateLabel: '历史离线' });
+    }
+  }
+
+  function renderSingleAgentCard(a) {
     const displayName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id);
     const nameSafe = escapeHtml(displayName);
-    const claims = (activeClaims || []).filter(c => c.agent_id === a.id);
     const providerShort = escapeHtml((a.provider || displayName || 'A').toUpperCase().slice(0, 2));
+    const claims = a.resolvedClaims || [];
+
+    const shortTarget = a.last_target ? a.last_target.split(/[\/\\]/).pop() : null;
 
     return `
-      <div class="agent-card ${statusSafe}">
+      <div class="agent-card ${a.stateClass}">
         <div class="agent-top-row">
           <div class="agent-id-name">
             <div class="agent-icon">${providerShort}</div>
@@ -407,35 +468,123 @@ function renderAgents(agents, activeClaims) {
               ${a.pid ? `<span style="font-size: 11px; opacity: 0.6; font-weight: normal; margin-left: 4px;">(PID: ${escapeHtml(String(a.pid))})</span>` : ''}
             </div>
           </div>
-          <span class="status-tag ${statusSafe}">${statusLabel}</span>
+          <span class="status-tag ${a.stateClass}">
+            ${a.stateClass === 'working' ? '<span class="status-pulse-dot"></span>' : ''}
+            ${a.stateLabel}
+          </span>
         </div>
+
+        ${a.last_tool ? `
+          <div class="agent-tool-telemetry">
+            <span class="tool-tag ${escapeHtml(a.last_tool.toLowerCase())}">${escapeHtml(a.last_tool)}</span>
+            <span class="tool-target" title="${escapeHtml(a.last_target || a.last_action || '')}">
+              ${escapeHtml(shortTarget || a.last_action || '执行中')}
+            </span>
+          </div>
+        ` : ''}
+
         <div class="intent-box">
           ${a.current_intent ? `<strong>当前意图:</strong> ${escapeHtml(a.current_intent)}` : '<span style="color: var(--text-faint);">暂未声明修改意图</span>'}
         </div>
+
         ${a.progress_summary ? `
-          <div class="progress-box" style="margin-top: 8px; padding: 6px 10px; background: rgba(14, 165, 233, 0.08); border-left: 2px solid #0ea5e9; border-radius: 4px; font-size: 11px;">
-            <strong style="color: #38bdf8;">施工进度:</strong> ${escapeHtml(a.progress_summary)}
+          <div class="progress-box">
+            <strong>施工进度:</strong> ${escapeHtml(a.progress_summary)}
           </div>
         ` : ''}
+
         ${a.blocked_reason ? `
-          <div class="blocked-callout" style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 12px; background: var(--status-blocked-bg); border: 1px solid var(--status-blocked-border); border-radius: 10px; color: var(--status-blocked); font-size: 13px;">
+          <div class="blocked-callout">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
             <span>${escapeHtml(a.blocked_reason)}</span>
           </div>
         ` : ''}
+
         ${claims.length > 0 ? `
           <div class="claims-zone">
             <span class="claims-label">已独占锁定的文件/资源 (${claims.length})</span>
             <div class="claims-flex">
               ${claims.map(c => `
-                <span class="claim-pill" title="${escapeHtml(c.claim_target)}">[${escapeHtml(c.claim_type)}] ${escapeHtml(c.claim_target.split('/').pop())}</span>
+                <span class="claim-pill" title="${escapeHtml(c.claim_target)}">[${escapeHtml(c.claim_type)}] ${escapeHtml(c.claim_target.split(/[\/\\]/).pop())}</span>
               `).join('')}
             </div>
           </div>
         ` : ''}
       </div>
     `;
-  }).join('');
+  }
+
+  let html = `
+    <!-- 1. 在线施工中 -->
+    <div class="lifecycle-tier-group tier-working">
+      <div class="lifecycle-tier-header">
+        <div class="tier-heading-title">
+          <span class="tier-indicator-dot working"></span>
+          <span>在线施工中 (Working)</span>
+        </div>
+        <span class="tier-count-badge working">${workingAgents.length} 个会话</span>
+      </div>
+      <div class="agents-grid">
+        ${workingAgents.length > 0
+          ? workingAgents.map(renderSingleAgentCard).join('')
+          : '<div class="tier-empty-placeholder">当前无正在独占修改文件或执行重载的会话</div>'}
+      </div>
+    </div>
+
+    <!-- 2. 排队等待中 -->
+    <div class="lifecycle-tier-group tier-waiting">
+      <div class="lifecycle-tier-header">
+        <div class="tier-heading-title">
+          <span class="tier-indicator-dot waiting"></span>
+          <span>排队等待中 (Waiting)</span>
+        </div>
+        <span class="tier-count-badge waiting">${waitingAgents.length} 个会话</span>
+      </div>
+      <div class="agents-grid">
+        ${waitingAgents.length > 0
+          ? waitingAgents.map(renderSingleAgentCard).join('')
+          : '<div class="tier-empty-placeholder">施工道路通畅，无因锁冲突排队阻塞的会话</div>'}
+      </div>
+    </div>
+
+    <!-- 3. 在线待命 / 没有工作 -->
+    <div class="lifecycle-tier-group tier-idle">
+      <div class="lifecycle-tier-header">
+        <div class="tier-heading-title">
+          <span class="tier-indicator-dot idle"></span>
+          <span>在线待命 / 准备就绪 (Idle)</span>
+        </div>
+        <span class="tier-count-badge idle">${idleAgents.length} 个会话</span>
+      </div>
+      <div class="agents-grid">
+        ${idleAgents.length > 0
+          ? idleAgents.map(renderSingleAgentCard).join('')
+          : '<div class="tier-empty-placeholder">当前无在线待命会话</div>'}
+      </div>
+    </div>
+  `;
+
+  // 4. 历史离线（折叠呈现，杜绝喧宾夺主打扰施工）
+  if (departedAgents.length > 0) {
+    html += `
+      <details class="departed-accordion">
+        <summary class="departed-summary">
+          <div class="departed-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>历史离线会话归档 (${departedAgents.length} 个)</span>
+          </div>
+          <span class="departed-hint">点击展开 / 收起历史已离线助手记录</span>
+        </summary>
+        <div class="agents-grid departed-grid">
+          ${departedAgents.map(renderSingleAgentCard).join('')}
+        </div>
+      </details>
+    `;
+  }
+
+  dom.agentsContainer.innerHTML = html;
 }
 
 function renderTimeline(timeline) {
@@ -594,6 +743,7 @@ if (dom.masterBroadcastBtn) {
 const debouncedFetchDashboard = debounce(fetchDashboard, 100);
 const debouncedFetchMemories = debounce(fetchMemories, 150);
 const debouncedFetchDialogues = debounce(fetchDialogues, 150);
+const debouncedFetchCollab = debounce(fetchCollabGraph, 120);
 
 // 会话间对话网络拉取与渲染
 async function fetchDialogues() {
@@ -647,14 +797,14 @@ if (dom.refreshDialogueBtn) {
 }
 
 // ==========================================
-// View Switcher (War Room / Topology / Magpie Gateway / Unified)
+// View Switcher (War Room / Topology / Live Collaboration Graph / Unified)
 // ==========================================
 let currentViewMode = 'war-room';
 
 function setViewMode(mode) {
   currentViewMode = mode;
-  [dom.tabWarRoom, dom.tabTopology, dom.tabGateway, dom.tabUnified].forEach(t => t?.classList.remove('active'));
-  [dom.viewWarRoom, dom.viewTopology, dom.viewGateway].forEach(v => v?.classList.remove('active'));
+  [dom.tabWarRoom, dom.tabTopology, dom.tabCollab, dom.tabUnified].forEach(t => t?.classList.remove('active'));
+  [dom.viewWarRoom, dom.viewTopology, dom.viewCollab].forEach(v => v?.classList.remove('active'));
 
   if (mode === 'war-room') {
     dom.tabWarRoom?.classList.add('active');
@@ -664,24 +814,28 @@ function setViewMode(mode) {
     dom.viewTopology?.classList.add('active');
     fetchTopologyGraph();
     requestAnimationFrame(() => redrawTopologyEdges());
-  } else if (mode === 'gateway') {
-    dom.tabGateway?.classList.add('active');
-    dom.viewGateway?.classList.add('active');
-    fetchGatewayStatus();
+  } else if (mode === 'collab') {
+    dom.tabCollab?.classList.add('active');
+    dom.viewCollab?.classList.add('active');
+    fetchCollabGraph();
+    requestAnimationFrame(() => redrawCollabEdges());
   } else if (mode === 'unified') {
     dom.tabUnified?.classList.add('active');
     dom.viewWarRoom?.classList.add('active');
     dom.viewTopology?.classList.add('active');
-    dom.viewGateway?.classList.add('active');
+    dom.viewCollab?.classList.add('active');
     fetchTopologyGraph();
-    fetchGatewayStatus();
-    requestAnimationFrame(() => redrawTopologyEdges());
+    fetchCollabGraph();
+    requestAnimationFrame(() => {
+      redrawTopologyEdges();
+      redrawCollabEdges();
+    });
   }
 }
 
 if (dom.tabWarRoom) dom.tabWarRoom.onclick = () => setViewMode('war-room');
 if (dom.tabTopology) dom.tabTopology.onclick = () => setViewMode('topology');
-if (dom.tabGateway) dom.tabGateway.onclick = () => setViewMode('gateway');
+if (dom.tabCollab) dom.tabCollab.onclick = () => setViewMode('collab');
 if (dom.tabUnified) dom.tabUnified.onclick = () => setViewMode('unified');
 
 // ==========================================
@@ -950,394 +1104,376 @@ function redrawTopologyEdges() {
   drawTopologyEdges(filteredNodes, edges);
 }
 
-// 监听窗口尺寸变化，自适应动态重算拓扑贝塞尔曲线坐标
+// 监听窗口尺寸变化，自适应动态重算拓扑与协同图谱贝塞尔曲线坐标
 window.addEventListener('resize', debounce(() => {
   redrawTopologyEdges();
+  redrawCollabEdges();
 }, 60));
 
 // ==========================================
-// Magpie Elastic Gateway Controller
+// Multi-Session Collaboration Graph Controller (多会话实时协同防撞车图谱)
 // ==========================================
-let currentGatewayData = null;
+let currentCollabData = null;
 
-async function fetchGatewayStatus() {
+async function fetchCollabGraph() {
   try {
-    const res = await fetch('/api/gateway/status', { headers: authHeaders() });
+    const res = await fetch(`/api/collaboration-graph?project_id=${encodeURIComponent(currentProjectId)}`, {
+      headers: authHeaders()
+    });
     if (!res.ok) return;
     const data = await res.json();
-    currentGatewayData = data;
-    renderGateway(data);
+    currentCollabData = data;
+    renderCollabView(data);
   } catch (err) {
-    console.error('Fetch gateway status error:', err);
+    console.error('Fetch collab graph error:', err);
   }
 }
 
-function renderGateway(data) {
+if (dom.collabRefreshBtn) {
+  dom.collabRefreshBtn.onclick = () => fetchCollabGraph();
+}
+
+function renderCollabView(data) {
   if (!data) return;
 
-  const strategy = data.strategy || 'smart';
-  const candidates = data.candidates || [];
-  const candidateCount = data.candidateCount != null ? data.candidateCount : candidates.length;
-
-  // 1. 同步策略下拉框与拓扑策略展示
-  if (dom.gwStrategySelect && dom.gwStrategySelect.value !== strategy) {
-    dom.gwStrategySelect.value = strategy;
-  }
-  if (dom.topoStrategyDisplay) {
-    const stratNames = {
-      smart: '策略: 智能亲和（优先缓存）',
-      ordered: '策略: 按优先级瀑布降级',
-      rotate: '策略: 轮流分担',
-      'least-used': '策略: 最少使用优先'
-    };
-    dom.topoStrategyDisplay.textContent = stratNames[strategy] || `策略: ${strategy}`;
-  }
-  if (dom.topoAffinityKey) {
-    dom.topoAffinityKey.textContent = escapeHtml(currentProjectId || 'default');
+  const stats = data.stats || {};
+  if (dom.collabStatWorking) dom.collabStatWorking.textContent = stats.working_sessions || 0;
+  if (dom.collabStatWaiting) dom.collabStatWaiting.textContent = stats.waiting_sessions || 0;
+  if (dom.collabStatIdle) dom.collabStatIdle.textContent = stats.idle_sessions || 0;
+  if (dom.collabStatLockedRes) dom.collabStatLockedRes.textContent = stats.locked_resources || 0;
+  if (dom.collabStatConflicts) {
+    const conflictEdges = (data.edges || []).filter(e => e.type === 'conflict');
+    dom.collabStatConflicts.textContent = conflictEdges.length;
   }
 
-  // 2. 统计指标与健康判定
-  let totalReqs = 0;
-  let activeNodes = 0;
-  let restingNodes = 0;
-  let lastLatency = 0;
-
-  candidates.forEach(c => {
-    totalReqs += (c.totalRequests || 0);
-    if (c.resting) {
-      restingNodes++;
-    } else {
-      activeNodes++;
-    }
-    if (c.lastLatencyMs && c.lastLatencyMs > 0) {
-      lastLatency = c.lastLatencyMs;
-    }
-  });
-
-  if (dom.gwTotalRequests) dom.gwTotalRequests.textContent = totalReqs;
-  if (dom.gwActiveNodes) dom.gwActiveNodes.textContent = activeNodes;
-  if (dom.gwRestingNodes) dom.gwRestingNodes.textContent = restingNodes;
-  if (dom.gwAvgLatency) dom.gwAvgLatency.textContent = `${lastLatency}ms`;
-
-  if (dom.gwCandidateCountText) {
-    dom.gwCandidateCountText.textContent = `${candidateCount} 个模型节点`;
+  if (dom.collabLastUpdatedText) {
+    const timeStr = new Date(data.timestamp || Date.now()).toTimeString().split(' ')[0];
+    dom.collabLastUpdatedText.textContent = `更新于 ${timeStr}`;
   }
 
-  // 顶部健康胶囊与标签 Badge
-  const allDead = candidateCount > 0 && activeNodes === 0;
-  if (dom.gwHealthDot && dom.gwHealthText) {
-    if (candidateCount === 0) {
-      dom.gwHealthText.textContent = '等待配置';
-      dom.gwHealthDot.style.background = '#64748b';
-      dom.gwHealthDot.style.boxShadow = '0 0 8px #64748b';
-    } else if (allDead) {
-      dom.gwHealthText.textContent = '全部休眠中';
-      dom.gwHealthDot.style.background = '#ef4444';
-      dom.gwHealthDot.style.boxShadow = '0 0 8px #ef4444';
-    } else if (restingNodes > 0) {
-      dom.gwHealthText.textContent = '部分节点避让中';
-      dom.gwHealthDot.style.background = '#f59e0b';
-      dom.gwHealthDot.style.boxShadow = '0 0 8px #f59e0b';
-    } else {
-      dom.gwHealthText.textContent = '全部正常运行';
-      dom.gwHealthDot.style.background = '#10b981';
-      dom.gwHealthDot.style.boxShadow = '0 0 8px #10b981';
-    }
-  }
-
-  // 3. 渲染拓扑集群通道
-  if (dom.topoCandidatesCluster) {
-    if (candidates.length === 0) {
-      dom.topoCandidatesCluster.innerHTML = `
-        <div class="topo-channel-row" style="color: var(--text-faint); font-size: 11px; justify-content: center;">
-          当前未配置上游模型节点。
-        </div>
-      `;
-    } else {
-      dom.topoCandidatesCluster.innerHTML = candidates.map((c, idx) => {
-        const isResting = !!c.resting;
-        const channelClass = isResting ? 'resting' : 'active';
-        const statusClass = isResting ? 'cooldown' : 'healthy';
-        const statusLabel = isResting
-          ? `冷却休眠 (${c.remainingRestSeconds || 0}秒)`
-          : `正常服务 (优先级:${c.priority})`;
-        return `
-          <div class="topo-channel-row ${channelClass}">
-            <span class="topo-channel-name">
-              <span class="topo-channel-dot ${statusClass}"></span>
-              <span>[#${idx + 1}] ${escapeHtml(c.name || c.id)}</span>
-            </span>
-            <span class="topo-channel-status ${statusClass}">${statusLabel}</span>
-          </div>
-        `;
-      }).join('');
-    }
-  }
-
-  // 4. 渲染 Upstream Candidate Pool Grid 卡片
-  renderCandidatesGrid(candidates);
+  renderCollabCanvas(data);
+  renderCollabTable(data);
 }
 
-function renderCandidatesGrid(candidates) {
-  if (!dom.gwCandidatesContainer) return;
+function renderCollabCanvas(data) {
+  if (!dom.collabNodesLayer || !dom.collabSvgLayer) return;
 
-  if (!candidates || candidates.length === 0) {
-    dom.gwCandidatesContainer.innerHTML = `
-      <div style="grid-column: 1 / -1; padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 16px;">
-        <div style="font-weight: 600; color: var(--text-title); margin-bottom: 6px;">当前后台未配置上游模型节点</div>
-        <div style="font-size: 12px; opacity: 0.8;">提示：可通过 ~/.agent-nexus/config.json 或环境变量配置可用上游模型节点，系统将在 429 限流或服务故障时毫秒级自动熔断切流。</div>
+  const nodes = data.nodes || [];
+  const edges = data.edges || [];
+
+  if (nodes.length === 0) {
+    dom.collabNodesLayer.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-faint); font-size: 14px; width: 100%;">
+        <div style="font-size: 16px; font-weight: 700; color: var(--text-title); margin-bottom: 8px;">当前项目暂无活跃会话或被锁定的文件</div>
+        <div>当多会话启动并调用工具修改代码时，实时协同节点与防撞车依赖边将在此全景展开。</div>
       </div>
+    `;
+    dom.collabSvgLayer.innerHTML = '';
+    return;
+  }
+
+  const sessionNodes = nodes.filter(n => n.node_type === 'session');
+  const resourceNodes = nodes.filter(n => n.node_type === 'resource');
+
+  let html = `
+    <div class="collab-columns-wrapper">
+      <!-- 左列：协同会话节点 (Sessions) -->
+      <div class="collab-column sessions-column">
+        <div class="collab-column-header">
+          <span class="collab-col-title">🤖 在席助手会话 (${sessionNodes.length})</span>
+          <span class="collab-col-hint">按生命周期与当前工具实时感知</span>
+        </div>
+        <div class="collab-cards-list">
+          ${sessionNodes.length > 0 ? sessionNodes.map(s => {
+            const shortTarget = s.last_target ? s.last_target.split(/[\/\\]/).pop() : null;
+            const provShort = escapeHtml((s.provider || 'A').toUpperCase().slice(0, 2));
+            const stateLabels = {
+              working: '🛠️ 施工中',
+              waiting: '⏳ 排队中',
+              idle: '💤 待命中',
+              departed: '⏹️ 已离线'
+            };
+            const stateLabel = stateLabels[s.lifecycle_state] || s.lifecycle_state;
+
+            return `
+              <div class="collab-card session-card state-${escapeHtml(s.lifecycle_state)}" data-node-id="${escapeHtml(s.id)}">
+                <div class="collab-card-top">
+                  <div class="collab-agent-info">
+                    <span class="collab-agent-avatar">${provShort}</span>
+                    <span class="collab-agent-name" title="${escapeHtml(s.name)}">
+                      ${escapeHtml(s.name)}
+                      ${s.pid ? `<small class="collab-pid">(PID: ${s.pid})</small>` : ''}
+                    </span>
+                  </div>
+                  <span class="collab-state-pill ${escapeHtml(s.lifecycle_state)}">${stateLabel}</span>
+                </div>
+
+                ${s.last_tool ? `
+                  <div class="collab-tool-badge-row">
+                    <span class="tool-tag ${escapeHtml(s.last_tool.toLowerCase())}">${escapeHtml(s.last_tool)}</span>
+                    <span class="tool-target-text" title="${escapeHtml(s.last_target || s.last_action || '')}">
+                      ${escapeHtml(shortTarget || s.last_action || '执行中')}
+                    </span>
+                  </div>
+                ` : ''}
+
+                <div class="collab-intent-text">
+                  ${s.current_intent ? escapeHtml(s.current_intent) : '<span style="color: var(--text-faint); font-style: italic;">暂无意图声明</span>'}
+                </div>
+
+                ${s.active_leases_count > 0 ? `
+                  <div class="collab-lock-badge">
+                    <span>独占持锁: ${s.active_leases_count} 项</span>
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('') : '<div class="collab-empty-column">暂无在席会话</div>'}
+        </div>
+      </div>
+
+      <!-- 右列：互斥资源与文件 (Resources / Files) -->
+      <div class="collab-column resources-column">
+        <div class="collab-column-header">
+          <span class="collab-col-title">📁 互斥文件与锁定资源 (${resourceNodes.length})</span>
+          <span class="collab-col-hint">独占修改租约与排队申请目标</span>
+        </div>
+        <div class="collab-cards-list">
+          ${resourceNodes.length > 0 ? resourceNodes.map(r => {
+            const shortName = r.target.split(/[\/\\]/).pop();
+            const isLocked = r.status === 'locked';
+            const statusLabel = isLocked ? `🔒 独占锁定中 (${r.remaining_sec}s)` : '⚠️ 产生争用';
+            const statusClass = isLocked ? 'locked' : 'contended';
+
+            return `
+              <div class="collab-card resource-card ${statusClass}" data-node-id="${escapeHtml(r.id)}">
+                <div class="collab-card-top">
+                  <div class="collab-res-info">
+                    <span class="collab-res-icon">
+                      ${r.claim_type === 'resource'
+                        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"></rect><rect x="2" y="14" width="20" height="8" rx="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>'
+                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>'
+                      }
+                    </span>
+                    <span class="collab-res-name" title="${escapeHtml(r.target)}">
+                      [${escapeHtml((r.claim_type || 'file').toUpperCase())}] ${escapeHtml(shortName)}
+                    </span>
+                  </div>
+                  <span class="collab-lock-status-pill ${statusClass}">${statusLabel}</span>
+                </div>
+                <div class="collab-res-path">${escapeHtml(r.target)}</div>
+              </div>
+            `;
+          }).join('') : '<div class="collab-empty-column">当前无文件被独占锁定</div>'}
+        </div>
+      </div>
+    </div>
+  `;
+
+  dom.collabNodesLayer.innerHTML = html;
+  requestAnimationFrame(() => drawCollabEdges(nodes, edges));
+}
+
+function drawCollabEdges(nodes, edges) {
+  if (!dom.collabSvgLayer || !dom.collabNodesLayer || !dom.collabCanvasInner) return;
+
+  const innerRect = dom.collabCanvasInner.getBoundingClientRect();
+  dom.collabSvgLayer.setAttribute('width', innerRect.width);
+  dom.collabSvgLayer.setAttribute('height', innerRect.height);
+
+  let svgHtml = `
+    <defs>
+      <linearGradient id="edge-grad-lease" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#34d399" stop-opacity="0.8" />
+        <stop offset="100%" stop-color="#10b981" stop-opacity="0.9" />
+      </linearGradient>
+      <linearGradient id="edge-grad-waiting" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.8" />
+        <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.9" />
+      </linearGradient>
+      <linearGradient id="edge-grad-conflict" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#f87171" stop-opacity="0.9" />
+        <stop offset="100%" stop-color="#ef4444" stop-opacity="1" />
+      </linearGradient>
+    </defs>
+  `;
+
+  const nodeElements = new Map();
+  dom.collabNodesLayer.querySelectorAll('.collab-card').forEach(el => {
+    const id = el.getAttribute('data-node-id');
+    if (id) nodeElements.set(id, el);
+  });
+
+  edges.forEach((edge, idx) => {
+    const srcEl = nodeElements.get(edge.source);
+    const dstEl = nodeElements.get(edge.target);
+    if (!srcEl || !dstEl) return;
+
+    const rSrc = srcEl.getBoundingClientRect();
+    const rDst = dstEl.getBoundingClientRect();
+
+    const x1 = (rSrc.right - innerRect.left);
+    const y1 = (rSrc.top + rSrc.height / 2 - innerRect.top);
+    const x2 = (rDst.left - innerRect.left);
+    const y2 = (rDst.top + rDst.height / 2 - innerRect.top);
+
+    const dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
+    const pathD = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+
+    let strokeGrad = 'url(#edge-grad-lease)';
+    let strokeClass = 'edge-lease';
+    if (edge.type === 'waiting_for') {
+      strokeGrad = 'url(#edge-grad-waiting)';
+      strokeClass = 'edge-waiting';
+    } else if (edge.type === 'conflict') {
+      strokeGrad = 'url(#edge-grad-conflict)';
+      strokeClass = 'edge-conflict';
+    }
+
+    svgHtml += `
+      <path
+        id="collab-edge-${idx}"
+        class="collab-edge-line ${strokeClass}"
+        d="${pathD}"
+        stroke="${strokeGrad}"
+        data-source="${escapeHtml(edge.source)}"
+        data-target="${escapeHtml(edge.target)}"
+        data-type="${escapeHtml(edge.type)}"
+      />
+    `;
+  });
+
+  dom.collabSvgLayer.innerHTML = svgHtml;
+  bindCollabHoverEvents(edges);
+}
+
+function bindCollabHoverEvents(edges) {
+  if (!dom.collabNodesLayer || !dom.collabSvgLayer) return;
+
+  const cards = dom.collabNodesLayer.querySelectorAll('.collab-card');
+  const edgeLines = dom.collabSvgLayer.querySelectorAll('.collab-edge-line');
+
+  cards.forEach(card => {
+    const nodeId = card.getAttribute('data-node-id');
+
+    card.onmouseenter = () => {
+      const relatedNodes = new Set([nodeId]);
+      edges.forEach(e => {
+        if (e.source === nodeId || e.target === nodeId) {
+          relatedNodes.add(e.source);
+          relatedNodes.add(e.target);
+        }
+      });
+
+      cards.forEach(c => {
+        const id = c.getAttribute('data-node-id');
+        if (relatedNodes.has(id)) {
+          c.classList.add('highlighted');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.add('dimmed');
+          c.classList.remove('highlighted');
+        }
+      });
+
+      edgeLines.forEach(l => {
+        const src = l.getAttribute('data-source');
+        const dst = l.getAttribute('data-target');
+        if (src === nodeId || dst === nodeId) {
+          l.classList.add('highlighted');
+          l.classList.remove('dimmed');
+        } else {
+          l.classList.add('dimmed');
+          l.classList.remove('highlighted');
+        }
+      });
+    };
+
+    card.onmouseleave = () => {
+      cards.forEach(c => c.classList.remove('highlighted', 'dimmed'));
+      edgeLines.forEach(l => l.classList.remove('highlighted', 'dimmed'));
+    };
+  });
+}
+
+function redrawCollabEdges() {
+  if (!currentCollabData) return;
+  if (currentViewMode !== 'collab' && currentViewMode !== 'unified') return;
+  drawCollabEdges(currentCollabData.nodes || [], currentCollabData.edges || []);
+}
+
+function renderCollabTable(data) {
+  if (!dom.collabTableBody) return;
+
+  const sessionNodes = (data.nodes || []).filter(n => n.node_type === 'session');
+  if (sessionNodes.length === 0) {
+    dom.collabTableBody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align: center; color: var(--text-faint); padding: 30px;">
+          当前项目暂无活跃会话记录。
+        </td>
+      </tr>
     `;
     return;
   }
 
-  const errorTypeMap = {
-    'rate-limit': '429 频率限流',
-    'overloaded': '上游过载拥堵',
-    'auth': '认证鉴权失败',
-    'billing': '账户余额不足',
-    'timeout': '响应超时',
-    'bad-request': '请求格式非法',
-    'server-error': '5xx 服务端故障',
-    'none': '无异常'
-  };
+  const now = Date.now();
+  dom.collabTableBody.innerHTML = sessionNodes.map(s => {
+    const shortTarget = s.last_target ? s.last_target.split(/[\/\\]/).pop() : '-';
+    const stateMap = {
+      working: '<span class="status-tag working"><span class="status-pulse-dot"></span>在线施工中</span>',
+      waiting: '<span class="status-tag waiting">排队等待中</span>',
+      idle: '<span class="status-tag idle">在线待命</span>',
+      departed: '<span class="status-tag departed">历史离线</span>'
+    };
+    const stateBadge = stateMap[s.lifecycle_state] || s.lifecycle_state;
 
-  dom.gwCandidatesContainer.innerHTML = candidates.map(c => {
-    const isResting = !!c.resting;
-    const isDead = c.consecutiveFailures >= 5;
-    const cardClass = isDead ? 'dead' : (isResting ? 'resting' : '');
-    const badgeClass = isDead ? 'dead' : (isResting ? 'resting' : 'active');
-    const badgeText = isDead ? '已停用' : (isResting ? '冷却休眠中' : '正常服务中');
-
-    const lastFailureType = c.lastFailureType || 'none';
-    const failureLabel = errorTypeMap[lastFailureType] || lastFailureType;
-    const pillClass = `pill-${lastFailureType}`;
-
-    const remainingSec = c.remainingRestSeconds || 0;
-    const totalCooldownSec = Math.max(60, remainingSec);
-    const progressPct = isResting ? Math.min(100, Math.max(5, (remainingSec / totalCooldownSec) * 100)) : 0;
+    let heartbeatText = '未知';
+    if (s.last_heartbeat) {
+      const diffSec = Math.max(0, Math.round((now - s.last_heartbeat) / 1000));
+      if (diffSec < 10) heartbeatText = '刚刚';
+      else if (diffSec < 60) heartbeatText = `${diffSec} 秒前`;
+      else if (diffSec < 3600) heartbeatText = `${Math.floor(diffSec / 60)} 分钟前`;
+      else heartbeatText = `${Math.floor(diffSec / 3600)} 小时前`;
+    }
 
     return `
-      <div class="candidate-card ${cardClass}">
-        <div class="cand-header">
-          <div class="cand-title-box">
-            <div class="cand-name-row">
-              <span class="cand-name" title="${escapeHtml(c.id)}">${escapeHtml(c.name || c.id)}</span>
-              <span class="cand-provider-tag">${escapeHtml((c.provider || 'unknown').toUpperCase())}</span>
-            </div>
-            <span class="cand-model">${escapeHtml(c.model || 'adaptive-llm')}</span>
+      <tr>
+        <td>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <strong style="color: var(--text-title);">${escapeHtml(s.name)}</strong>
+            ${s.pid ? `<span style="font-size: 11px; color: var(--text-faint); font-family: var(--font-mono);">(PID: ${s.pid})</span>` : ''}
           </div>
-          <span class="cand-status-badge ${badgeClass}">${badgeText}</span>
-        </div>
-
-        <div class="cand-stats-grid">
-          <div class="cand-stat-item">
-            <span class="cand-stat-label">优先级 / 权重</span>
-            <span class="cand-stat-val">P${c.priority || 0} / W${c.weight || 1}</span>
-          </div>
-          <div class="cand-stat-item">
-            <span class="cand-stat-label">成功请求率</span>
-            <span class="cand-stat-val" style="color: #34d399;">${c.successCount || 0} / ${c.totalRequests || 0}</span>
-          </div>
-          <div class="cand-stat-item">
-            <span class="cand-stat-label">最近耗时</span>
-            <span class="cand-stat-val" style="color: #38bdf8;">${c.lastLatencyMs || 0}ms</span>
-          </div>
-        </div>
-
-        <div class="cand-breaker-box">
-          <div class="cand-breaker-row">
-            <span style="color: var(--text-faint);">最近错误归因:</span>
-            ${lastFailureType !== 'none'
-              ? `<span class="cand-error-pill ${pillClass}">${escapeHtml(failureLabel)}</span>`
-              : `<span style="color: var(--text-faint); font-family: var(--font-mono); font-size: 10px;">无异常 (0 故障)</span>`
-            }
-          </div>
-
-          ${isResting ? `
-            <div class="cooldown-wrap">
-              <div class="cooldown-meta">
-                <span>防频繁冲击保护中</span>
-                <span>还剩 ${remainingSec} 秒恢复</span>
-              </div>
-              <div class="cooldown-track">
-                <div class="cooldown-progress" style="width: ${progressPct}%;"></div>
-              </div>
-            </div>
-          ` : ''}
-
-          <div class="cand-footer-row">
-            <span style="font-size: 10px; color: var(--text-faint); font-family: var(--font-mono);">
-              累计失败: ${c.failureCount || 0} (连续失败: ${c.consecutiveFailures || 0})
-            </span>
-            <button class="cand-unrest-btn" data-unrest-id="${escapeHtml(c.id)}">
-              ${isResting ? '立即唤醒' : '重置统计'}
-            </button>
-          </div>
-        </div>
-      </div>
+        </td>
+        <td>${stateBadge}</td>
+        <td>
+          ${s.last_tool
+            ? `<span class="tool-tag ${escapeHtml(s.last_tool.toLowerCase())}">${escapeHtml(s.last_tool)}</span>`
+            : '<span style="color: var(--text-faint);">-</span>'
+          }
+        </td>
+        <td>
+          ${s.last_target
+            ? `<code class="target-code-pill" title="${escapeHtml(s.last_target)}">${escapeHtml(shortTarget)}</code>`
+            : (s.last_action ? `<span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(s.last_action)}</span>` : '<span style="color: var(--text-faint);">-</span>')
+          }
+        </td>
+        <td>
+          <span style="font-size: 13px; color: var(--text-main);">${escapeHtml(s.current_intent || '-')}</span>
+        </td>
+        <td>
+          ${s.active_leases_count > 0
+            ? `<span class="collab-table-lock-pill">独占 ${s.active_leases_count} 个锁</span>`
+            : '<span style="color: var(--text-faint); font-size: 12px;">无持锁</span>'
+          }
+        </td>
+        <td>
+          <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-faint);">${heartbeatText}</span>
+        </td>
+      </tr>
     `;
   }).join('');
-
-  // 绑定各卡片独立 Reset 按钮
-  dom.gwCandidatesContainer.querySelectorAll('.cand-unrest-btn').forEach(btn => {
-    btn.onclick = () => {
-      const id = btn.getAttribute('data-unrest-id');
-      if (id) unrestCandidate(id);
-    };
-  });
 }
-
-// 切换路由策略
-if (dom.gwStrategySelect) {
-  dom.gwStrategySelect.onchange = async () => {
-    const strategy = dom.gwStrategySelect.value;
-    try {
-      const res = await fetch('/api/gateway/strategy', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ strategy })
-      });
-      if (res.ok) {
-        fetchGatewayStatus();
-      } else {
-        const err = await res.json();
-        alert('Strategy update failed: ' + (err.error || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Strategy update error: ' + err.message);
-    }
-  };
-}
-
-// 单个节点解除休眠
-window.unrestCandidate = async function (id) {
-  try {
-    const res = await fetch('/api/gateway/reset', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ id })
-    });
-    if (res.ok) {
-      fetchGatewayStatus();
-    }
-  } catch (err) {
-    alert('Unrest error: ' + err.message);
-  }
-};
-
-// 一键全局解除所有休眠
-if (dom.gwResetAllBtn) {
-  dom.gwResetAllBtn.onclick = async () => {
-    try {
-      const res = await fetch('/api/gateway/reset', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({})
-      });
-      if (res.ok) {
-        fetchGatewayStatus();
-      }
-    } catch (err) {
-      alert('Reset all error: ' + err.message);
-    }
-  };
-}
-
-// 实时路由拨测交互
-if (dom.probeDispatchBtn && dom.probeUserMessage) {
-  async function dispatchProbe() {
-    const text = dom.probeUserMessage.value.trim();
-    if (!text) return;
-
-    if (dom.probeOutputContainer) {
-      dom.probeOutputContainer.innerHTML = `
-        <div style="color: #38bdf8; font-style: italic;">
-          正在通过智能网关调度请求（当前项目缓存键="${escapeHtml(currentProjectId)}")...
-        </div>
-      `;
-    }
-
-    const startTime = Date.now();
-    try {
-      dom.probeDispatchBtn.disabled = true;
-      dom.probeDispatchBtn.style.opacity = '0.6';
-
-      const res = await fetch('/api/gateway/chat', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          system_prompt: 'You are Magpie resilient gateway verification probe.',
-          user_message: text,
-          affinityKey: currentProjectId
-        })
-      });
-
-      const latency = Date.now() - startTime;
-      const json = await res.json();
-
-      if (res.ok) {
-        if (dom.probeOutputContainer) {
-          dom.probeOutputContainer.innerHTML = `
-            <div class="probe-res-line">
-              <span class="probe-res-badge ok">HTTP 200 成功</span>
-              <span class="probe-res-meta">服务节点: <strong>${escapeHtml(json.candidateId || 'gateway')}</strong> | 耗时: ${latency}ms</span>
-            </div>
-            <div class="probe-res-body">${escapeHtml(json.content || JSON.stringify(json, null, 2))}</div>
-          `;
-        }
-      } else {
-        if (dom.probeOutputContainer) {
-          dom.probeOutputContainer.innerHTML = `
-            <div class="probe-res-line">
-              <span class="probe-res-badge fail">HTTP ${res.status} 错误</span>
-              <span class="probe-res-meta">耗时: ${latency}ms</span>
-            </div>
-            <div class="probe-res-body" style="color: #f87171;">${escapeHtml(json.error || '所有可用模型节点均已耗尽')}</div>
-          `;
-        }
-      }
-      fetchGatewayStatus();
-    } catch (err) {
-      if (dom.probeOutputContainer) {
-        dom.probeOutputContainer.innerHTML = `
-          <div class="probe-res-line">
-            <span class="probe-res-badge fail">网络连接异常</span>
-          </div>
-          <div class="probe-res-body" style="color: #f87171;">${escapeHtml(err.message)}</div>
-        `;
-      }
-    } finally {
-      dom.probeDispatchBtn.disabled = false;
-      dom.probeDispatchBtn.style.opacity = '1';
-    }
-  }
-
-  dom.probeDispatchBtn.onclick = dispatchProbe;
-  dom.probeUserMessage.onkeydown = (e) => {
-    if (e.key === 'Enter') dispatchProbe();
-  };
-}
-
-// 倒计时自然衰减计算（每 1000ms 刷新一次休眠倒计时）
-setInterval(() => {
-  if (currentGatewayData && currentGatewayData.candidates) {
-    let changed = false;
-    currentGatewayData.candidates.forEach(c => {
-      if (c.resting && c.remainingRestSeconds > 0) {
-        c.remainingRestSeconds--;
-        changed = true;
-        if (c.remainingRestSeconds <= 0) {
-          c.resting = false;
-          c.lastFailureType = 'none';
-        }
-      }
-    });
-    if (changed) {
-      renderGateway(currentGatewayData);
-    }
-  }
-}, 1000);
 
 // 初始化
 const statusEl = document.getElementById('daemon-status');
@@ -1346,7 +1482,7 @@ if (statusEl && window.location.host) {
 }
 
 const urlTab = new URLSearchParams(window.location.search).get('tab') || (window.location.hash ? window.location.hash.slice(1) : null);
-if (urlTab && ['war-room', 'topology', 'gateway', 'unified'].includes(urlTab)) {
+if (urlTab && ['war-room', 'topology', 'collab', 'unified'].includes(urlTab)) {
   setViewMode(urlTab);
 }
 
@@ -1355,7 +1491,7 @@ fetchDashboard();
 fetchMemories();
 fetchDialogues();
 fetchTopologyGraph();
-fetchGatewayStatus();
+fetchCollabGraph();
 
 // 定时保底轮询（2500ms 刷新频率完全符合 60 FPS 规约）
 setInterval(() => {
@@ -1364,8 +1500,8 @@ setInterval(() => {
   if (currentViewMode === 'topology' || currentViewMode === 'unified') {
     fetchTopologyGraph();
   }
-  if (currentViewMode === 'gateway' || currentViewMode === 'unified') {
-    fetchGatewayStatus();
+  if (currentViewMode === 'collab' || currentViewMode === 'unified') {
+    fetchCollabGraph();
   }
 }, 2500);
 
@@ -1394,15 +1530,19 @@ function connectWebSocket() {
         } else if (payload.type === 'message:sent' || payload.type === 'messages:read') {
           debouncedFetchDialogues();
           debouncedFetchDashboard();
+          debouncedFetchCollab();
         } else if (payload.type === 'lead:awakened') {
           handleLeadAwakened(payload.data);
           debouncedFetchDashboard();
           debouncedFetchDialogues();
+          debouncedFetchCollab();
         } else {
           debouncedFetchDashboard();
+          debouncedFetchCollab();
         }
       } catch {
         debouncedFetchDashboard();
+        debouncedFetchCollab();
       }
     };
 

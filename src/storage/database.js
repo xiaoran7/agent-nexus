@@ -31,7 +31,7 @@ export function createDatabase(customPath = null) {
     INSERT OR IGNORE INTO projects (id, root_path, display_name, created_at, last_activity)
     VALUES ('default', '', 'Default Project', 0, 0);
 
-    -- 1. Agent 注册表 (带项目作用域与进程号)
+    -- 1. Agent 注册表 (带项目作用域与进程号、工具调用态势追踪)
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default',
@@ -44,7 +44,10 @@ export function createDatabase(customPath = null) {
       registered_at INTEGER NOT NULL,
       current_intent TEXT,
       progress_summary TEXT,
-      pid INTEGER
+      pid INTEGER,
+      last_tool TEXT,
+      last_action TEXT,
+      last_target TEXT
     );
 
     -- 2. 意图总账 (Intent Ledger)
@@ -203,6 +206,9 @@ function migrateOldSchemaIfNeeded(db) {
     { name: 'current_intent', type: 'TEXT' },
     { name: 'progress_summary', type: 'TEXT' },
     { name: 'pid', type: 'INTEGER' },
+    { name: 'last_tool', type: 'TEXT' },
+    { name: 'last_action', type: 'TEXT' },
+    { name: 'last_target', type: 'TEXT' },
   ];
   for (const col of agentColumns) {
     try {
@@ -252,5 +258,74 @@ function migrateOldSchemaIfNeeded(db) {
     }
   } catch {
     // 忽略迁移失败（例如新库已是 state_v2 形状）
+  }
+
+  // 启动时自动自我修复脏数据、乱码与僵尸排队记录
+  selfHealDatabase(db);
+}
+
+/**
+ * 数据库启动自愈器：
+ * 1. 彻底清除数据库中残存的乱码符号 (� /  / 控制字符)
+ * 2. 清理超期僵尸等待记录，避免历史上阻塞的冲突卡片永久挂在协同面板
+ * 3. 自动将超时不活跃会话归档为 departed 状态
+ */
+function selfHealDatabase(db) {
+  try {
+    const now = Date.now();
+
+    // 1. 清理超过 5 分钟的陈旧等待队列记录
+    try {
+      db.prepare(`DELETE FROM wait_queue WHERE (? - created_at) > 300000`).run(now);
+    } catch {}
+
+    // 2. 将超过 10 分钟无心跳且依然处于 waiting/running 的意图标记为 aborted
+    try {
+      db.prepare(`
+        UPDATE intents
+        SET status = 'aborted', updated_at = ?
+        WHERE status IN ('waiting', 'running') AND (? - updated_at) > 600000
+      `).run(now, now);
+    } catch {}
+
+    // 3. 自愈修复包含 � 或损坏字符的 intents 记录
+    try {
+      const badIntents = db.prepare(`
+        SELECT id, summary, blocked_reason FROM intents
+        WHERE instr(summary, ?) > 0 OR instr(blocked_reason, ?) > 0
+      `).all('', '');
+
+      const updateIntent = db.prepare(`UPDATE intents SET summary = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`);
+      for (const row of badIntents) {
+        let summary = row.summary || '';
+        let blocked = row.blocked_reason || null;
+        if (summary.includes('')) summary = 'Background Coordination Task';
+        if (blocked && blocked.includes('')) {
+          blocked = blocked.replace(/[^\x20-\x7E一-龥_.\-/:#\[\]\(\)'\"]/g, 'System Agent').replace(/\s+/g, ' ');
+        }
+        updateIntent.run(summary, blocked, now, row.id);
+      }
+    } catch {}
+
+    // 4. 自愈修复包含 � 的 activity_log 记录
+    try {
+      const badLogs = db.prepare(`SELECT id, description FROM activity_log WHERE instr(description, ?) > 0`).all('');
+      const updateLog = db.prepare(`UPDATE activity_log SET description = ? WHERE id = ?`);
+      for (const log of badLogs) {
+        const cleanDesc = log.description.replace(/[^\x20-\x7E一-龥_.\-/:#\[\]\(\)'\"]/g, 'System Agent').replace(/\s+/g, ' ');
+        updateLog.run(cleanDesc, log.id);
+      }
+    } catch {}
+
+    // 5. 将超期无心跳 (>120s) 的在线 Agent 状态归位为 departed，防止幽灵在线
+    try {
+      db.prepare(`
+        UPDATE agents
+        SET status = 'departed'
+        WHERE status IN ('running', 'waiting') AND (? - last_heartbeat) > 120000
+      `).run(now);
+    } catch {}
+  } catch (err) {
+    // 自愈异常不阻断主流程启动
   }
 }

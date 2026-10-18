@@ -215,6 +215,39 @@ function notifyGitRelease(payload) {
   });
 }
 
+function reportTelemetry(payload) {
+  return new Promise((resolvePromise) => {
+    try {
+      const data = JSON.stringify(payload);
+      const req = request({
+        host: HOST,
+        port: PORT,
+        path: '/api/hook/telemetry',
+        method: 'POST',
+        family: 4,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
+        },
+        timeout: 400,
+      }, (res) => {
+        res.resume();
+        resolvePromise(true);
+      });
+      req.on('error', () => resolvePromise(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolvePromise(false);
+      });
+      req.write(data);
+      req.end();
+    } catch {
+      resolvePromise(false);
+    }
+  });
+}
+
 function checkPermission(payload) {
   return new Promise((resolvePromise) => {
     const data = JSON.stringify(payload);
@@ -277,6 +310,28 @@ async function main() {
 
   const identity = resolveAgentIdentity(payload);
   const projectInfo = resolveProject(workspaceDir);
+
+  // 0. 上报实时工具调用态势与心跳活跃度 (非阻塞后台刷新)
+  const toolName = payload.tool_name || null;
+  const toolInput = payload.tool_input || payload.input || {};
+  const toolTarget = toolInput.file_path || toolInput.path || toolInput.target || toolInput.pattern || null;
+  const toolAction = toolName === 'Bash'
+    ? (toolInput.command ? toolInput.command.slice(0, 80) : 'Run Command')
+    : (toolTarget ? `${toolName} ${basename(toolTarget)}` : toolName);
+
+  if (toolName) {
+    reportTelemetry({
+      agent_id: identity.agentId,
+      provider: identity.provider,
+      session_id: identity.sessionId,
+      tool: toolName,
+      action: toolAction,
+      target: toolTarget,
+      workspace_dir: workspaceDir,
+      project_id: projectInfo.projectId,
+      pid: identity.pid
+    }).catch(() => {});
+  }
 
   // 1. 优先检查生命周期动作：若执行 git commit / git push，说明当前施工单元完结，零感释放持有的所有租约
   if (isGitCommitOrPush(payload)) {

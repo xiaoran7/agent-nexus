@@ -47,6 +47,20 @@
         </svg>
         <span>协同看板</span>
       </button>
+      <button id="tab-collab" class="view-tab">
+        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="6" cy="6" r="3"></circle>
+          <circle cx="18" cy="6" r="3"></circle>
+          <circle cx="18" cy="18" r="3"></circle>
+          <circle cx="6" cy="18" r="3"></circle>
+          <line x1="9" y1="6" x2="15" y2="6"></line>
+          <line x1="18" y1="9" x2="18" y2="15"></line>
+          <line x1="15" y1="18" x2="9" y2="18"></line>
+          <line x1="6" y1="15" x2="6" y2="9"></line>
+        </svg>
+        <span>实时协同图谱</span>
+        <span id="collab-tab-badge" class="badge-tab-healthy">全景实时</span>
+      </button>
       <button id="tab-topology" class="view-tab">
         <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="18" cy="5" r="3"></circle>
@@ -57,13 +71,6 @@
         </svg>
         <span>演进拓扑</span>
         <span id="topology-tab-badge" class="badge-tab-tag">全景</span>
-      </button>
-      <button id="tab-gateway" class="view-tab">
-        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-        </svg>
-        <span>模型网关</span>
-        <span id="gateway-tab-badge" class="badge-tab-healthy">就绪</span>
       </button>
       <button id="tab-unified" class="view-tab">
         <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -301,207 +308,140 @@
     </div>
 
     <!-- ========================================== -->
-    <!-- VIEW 2: Magpie Elastic Gateway & Dispatch  -->
+    <!-- VIEW 2: Live Multi-Session Collaboration Graph -->
     <!-- ========================================== -->
-    <div id="view-gateway" class="view-pane">
-      <!-- 1. Gateway Status & Control Banner -->
-      <section class="gateway-hero-panel">
-        <div class="gw-hero-header">
-          <div class="gw-title-group">
-            <div class="gw-icon-badge">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+    <div id="view-collab" class="view-pane">
+      <!-- 1. Collaboration Graph Hero Banner -->
+      <section class="collab-hero-panel">
+        <div class="collab-hero-header">
+          <div class="collab-title-group">
+            <div class="collab-icon-badge">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="6" cy="6" r="3"></circle>
+                <circle cx="18" cy="6" r="3"></circle>
+                <circle cx="18" cy="18" r="3"></circle>
+                <circle cx="6" cy="18" r="3"></circle>
+                <line x1="9" y1="6" x2="15" y2="6"></line>
+                <line x1="18" y1="9" x2="18" y2="15"></line>
+                <line x1="15" y1="18" x2="9" y2="18"></line>
+                <line x1="6" y1="15" x2="6" y2="9"></line>
               </svg>
             </div>
             <div>
-              <div class="gw-main-title">
-                <span>多模型弹性智能网关</span>
-                <span class="badge-gw-live">自动容灾防超时</span>
+              <div class="collab-main-title">
+                <span>多 Session 实时协同防撞车图谱</span>
+                <span class="badge-collab-live">实时感知</span>
               </div>
-              <div class="gw-sub-title">智能错误识别 • 故障节点自动避让 • 会话缓存亲和保持</div>
+              <div class="collab-sub-title">全景追踪多会话正在修改的文件、调用的工具、独占的锁与冲突依赖因果</div>
             </div>
           </div>
 
-          <div class="gw-controls-group">
-            <div class="gw-strategy-capsule">
-              <span class="capsule-label">分发策略:</span>
-              <select id="gw-strategy-select" class="gw-select">
-                <option value="smart">智能亲和优先（最大化命中提示词缓存）</option>
-                <option value="ordered">按优先级瀑布降级（首选失败换次选）</option>
-                <option value="rotate">轮流分担（平均分摊请求）</option>
-                <option value="least-used">最少使用优先（空闲节点优先）</option>
-              </select>
-            </div>
-
-            <div class="gw-health-capsule">
-              <span id="gw-health-dot" class="pulse-dot"></span>
-              <span id="gw-health-text" style="font-weight: 700;">全部正常</span>
+          <div class="collab-controls-group">
+            <div class="collab-health-capsule">
+              <span id="collab-live-dot" class="pulse-dot"></span>
+              <span id="collab-live-status" style="font-weight: 700;">实时联调监控中</span>
               <span class="capsule-divider"></span>
-              <span id="gw-candidate-count-text">0 个模型节点</span>
+              <span id="collab-last-updated-text">就绪</span>
             </div>
 
-            <button id="gw-reset-all-btn" class="modern-btn-primary" title="立即解除所有正在冷却休眠的候选节点">
+            <button id="collab-refresh-btn" class="modern-btn-primary" title="手动刷新当前多会话协同图谱">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
               </svg>
-              <span>一键唤醒全部节点</span>
+              <span>立即刷新图谱</span>
             </button>
           </div>
         </div>
 
-        <!-- 4 Summary Metric Mini-Cards for Gateway -->
-        <div class="gw-metric-grid">
-          <div class="gw-metric-box">
-            <span class="gw-metric-num" id="gw-total-requests">0</span>
-            <span class="gw-metric-desc">累计调度请求数</span>
+        <!-- 5 Summary Metric Cards for Collaboration -->
+        <div class="collab-metric-grid">
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="collab-stat-working" style="color: #34d399;">0</span>
+            <span class="collab-metric-desc">在线施工中 (Working)</span>
           </div>
-          <div class="gw-metric-box">
-            <span class="gw-metric-num" id="gw-active-nodes" style="color: #34d399;">0</span>
-            <span class="gw-metric-desc">可用模型节点</span>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="collab-stat-waiting" style="color: #fbbf24;">0</span>
+            <span class="collab-metric-desc">排队等待中 (Waiting)</span>
           </div>
-          <div class="gw-metric-box">
-            <span class="gw-metric-num" id="gw-resting-nodes" style="color: #fbbf24;">0</span>
-            <span class="gw-metric-desc">休息/冷却中节点</span>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="collab-stat-idle" style="color: #38bdf8;">0</span>
+            <span class="collab-metric-desc">在线待命 (Idle)</span>
           </div>
-          <div class="gw-metric-box">
-            <span class="gw-metric-num" id="gw-avg-latency" style="color: #38bdf8;">0ms</span>
-            <span class="gw-metric-desc">最近耗时</span>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="collab-stat-locked-res" style="color: #c084fc;">0</span>
+            <span class="collab-metric-desc">锁定资源 / 文件</span>
+          </div>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="collab-stat-conflicts" style="color: #f87171;">0</span>
+            <span class="collab-metric-desc">冲突依赖边</span>
           </div>
         </div>
       </section>
 
-      <!-- 2. Visual Dispatch Pipeline Topology -->
+      <!-- 2. Interactive Collaboration Canvas -->
       <section class="modern-card" style="margin-top: 20px;">
         <div class="panel-header">
           <div class="panel-title">
             <div class="panel-title-icon">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="18" cy="5" r="3"></circle>
-                <circle cx="6" cy="12" r="3"></circle>
-                <circle cx="18" cy="19" r="3"></circle>
-                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
               </svg>
             </div>
-            <span>请求调度与故障自动转移流水线</span>
-          </div>
-          <span class="panel-meta" id="topology-flow-status">缓存亲和路由生效中</span>
-        </div>
-
-        <div class="topology-canvas" id="topology-canvas">
-          <div class="topo-node inbound">
-            <div class="topo-node-badge">接入端</div>
-            <div class="topo-node-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-            </div>
-            <div class="topo-node-title">助手提问请求</div>
-            <div class="topo-node-sub">本地终端 / 工具调用</div>
-          </div>
-
-          <div class="topo-beam-connector">
-            <div class="beam-line"></div>
-            <span class="beam-label">项目缓存键: <code id="topo-affinity-key">default</code></span>
-          </div>
-
-          <div class="topo-node router">
-            <div class="topo-node-badge">智能网关</div>
-            <div class="topo-node-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="16 3 21 3 21 8"></polyline>
-                <line x1="4" y1="20" x2="21" y2="3"></line>
-                <polyline points="21 16 21 21 16 21"></polyline>
-                <line x1="15" y1="15" x2="21" y2="21"></line>
-                <line x1="4" y1="4" x2="9" y2="9"></line>
-              </svg>
-            </div>
-            <div class="topo-node-title">Magpie 智能路由</div>
-            <div class="topo-node-sub" id="topo-strategy-display">分发策略: 智能亲和</div>
-          </div>
-
-          <div class="topo-beam-connector">
-            <div class="beam-line"></div>
-            <span class="beam-label">零丢包故障自愈</span>
-          </div>
-
-          <div class="topo-cluster" id="topo-candidates-cluster"></div>
-
-          <div class="topo-beam-connector">
-            <div class="beam-line"></div>
-            <span class="beam-label">实时流式返回</span>
-          </div>
-
-          <div class="topo-node output">
-            <div class="topo-node-badge">输出端</div>
-            <div class="topo-node-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="17 8 12 3 7 8"></polyline>
-                <line x1="12" y1="3" x2="12" y2="15"></line>
-              </svg>
-            </div>
-            <div class="topo-node-title">可靠回答交付</div>
-            <div class="topo-node-sub">高可用保障</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 3. Candidate Nodes Grid -->
-      <section class="modern-card" style="margin-top: 20px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-title-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="2" width="20" height="8" rx="2"></rect>
-                <rect x="2" y="14" width="20" height="8" rx="2"></rect>
-                <line x1="6" y1="6" x2="6.01" y2="6"></line>
-                <line x1="6" y1="18" x2="6.01" y2="18"></line>
-              </svg>
-            </div>
-            <span>可用模型池与防封防限流看板</span>
+            <span>多会话协作与防撞车依赖全景拓扑</span>
           </div>
           <div class="panel-meta-actions">
-            <span class="panel-meta" id="candidates-pool-meta">限流错误自动休眠监控中</span>
+            <span class="collab-legend-item"><span class="legend-dot green"></span> 持有租约</span>
+            <span class="collab-legend-item"><span class="legend-dot amber"></span> 排队请求</span>
+            <span class="collab-legend-item"><span class="legend-dot red"></span> 冲突阻断</span>
           </div>
         </div>
 
-        <div class="candidates-grid" id="gw-candidates-container"></div>
+        <div class="collab-canvas-viewport" id="collab-viewport">
+          <div class="collab-canvas-inner" id="collab-canvas-inner">
+            <svg class="collab-svg-layer" id="collab-svg-layer"></svg>
+            <div class="collab-nodes-layer" id="collab-nodes-layer">
+              <!-- 动态注入会话节点与资源节点 -->
+            </div>
+          </div>
+        </div>
       </section>
 
-      <!-- 4. Live Gateway Probe -->
+      <!-- 3. Real-time Session Inspection Table -->
       <section class="modern-card" style="margin-top: 20px;">
         <div class="panel-header">
           <div class="panel-title">
             <div class="panel-title-icon">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="4 17 10 11 4 5"></polyline>
-                <line x1="12" y1="19" x2="20" y2="19"></line>
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+                <line x1="9" y1="21" x2="9" y2="9"></line>
               </svg>
             </div>
-            <span>模型调用实时测试与容灾体验</span>
+            <span>会话实时态势巡检表 (各助手当前执行工具与触达目标)</span>
           </div>
-          <span class="panel-meta">REST API /api/gateway/chat</span>
+          <span class="panel-meta" id="collab-table-meta">实时追踪</span>
         </div>
-
-        <div class="probe-body">
-          <div class="probe-input-col">
-            <div class="probe-row">
-              <input type="text" id="probe-user-message" class="probe-input" placeholder="输入一段测试内容，体验多模型调度（例如：请帮我检查项目接口规范）..." value="测试模型网关：你好，请做个自我介绍" />
-              <button id="probe-dispatch-btn" class="modern-btn-primary">
-                <span>发送测试请求</span>
-              </button>
-            </div>
-            <div class="probe-hint">
-              <span>提示：在此处拨测验证。若首选节点发生 429 限流或 5xx 故障，网关将毫秒级熔断并无感降级到备用候选节点。</span>
-            </div>
-          </div>
-
-          <div class="probe-output-col" id="probe-output-container">
-            <div class="probe-output-placeholder">
-              准备就绪。模型回复和故障转移轨迹将在这里显示。
-            </div>
-          </div>
+        <div class="collab-table-container">
+          <table class="collab-table">
+            <thead>
+              <tr>
+                <th>会话名称 / ID</th>
+                <th>生命周期状态</th>
+                <th>正在调用工具</th>
+                <th>当前触达目标 (文件/资源)</th>
+                <th>当前声明意图</th>
+                <th>独占锁明细</th>
+                <th>最后心跳</th>
+              </tr>
+            </thead>
+            <tbody id="collab-table-body">
+              <!-- 动态注入表格内容 -->
+            </tbody>
+          </table>
         </div>
       </section>
     </div>
