@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-10-18 修复桌面端独立 EXE 依赖修剪与 WebSocket 运行时完整性 (Desktop Packaging Fix)
+
+### 改了什么
+
+- **打包依赖声明与防剪裁 (`scripts/build-exe.cjs`)**：
+  - 在面向 Desktop 的 `package.json` 中完整保留生产依赖 `dependencies`（包含 `ws`），防止 `@electron/packager` 默认行为 prune 导致打包产物缺少 WebSocket 模块；
+  - 显式传入 `prune: false`，彻底解决独立打包 EXE 拉起 Daemon 报 `Cannot find package 'ws'` 的问题；
+  - 确保独立分发包 `Agent-Nexus.exe` 启动时内置 Daemon 能够秒级就绪并建立长连接。
+
+---
+
 ## 2026-10-18 优化开源可发现性与 AI 检索生态支持 (Open-Source Discoverability & LLM-Friendly Indexing)
 
 ### 改了什么

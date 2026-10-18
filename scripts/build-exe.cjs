@@ -68,7 +68,8 @@ async function main() {
     description: pkg.description,
     main: 'desktop/main.cjs',
     author: 'tangwg',
-    license: 'MIT'
+    license: 'MIT',
+    dependencies: pkg.dependencies || { ws: '^8.21.3' }
   };
   fs.writeFileSync(path.join(appStagingDir, 'package.json'), JSON.stringify(desktopPkg, null, 2), 'utf8');
 
@@ -84,6 +85,7 @@ async function main() {
     appVersion: version,
     appCopyright: 'Copyright (c) 2026 WANGUI TANG',
     overwrite: true,
+    prune: false,
     asar: false,
     win32metadata: {
       CompanyName: 'TannerLab',
