@@ -50,4 +50,11 @@ test('DaemonController: 守护进程探活与状态探测', async (t) => {
       }
     }
   });
+
+  await t.test('resolveNodeRuntime: 优先探测支持 node:sqlite 的系统 Node 解释器', () => {
+    const controller = new DaemonController(testPort);
+    const runtime = controller.resolveNodeRuntime();
+    assert.ok(runtime.executable);
+    assert.equal(typeof runtime.asNode, 'boolean');
+  });
 });

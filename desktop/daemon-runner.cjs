@@ -16,6 +16,35 @@ class DaemonController {
   }
 
   /**
+   * 解析可支持 node:sqlite 的 Node 运行时环境
+   */
+  resolveNodeRuntime() {
+    if (process.env.NEXUS_NODE_PATH && fs.existsSync(process.env.NEXUS_NODE_PATH)) {
+      return { executable: process.env.NEXUS_NODE_PATH, asNode: false };
+    }
+
+    // 优先尝试系统 PATH 中的 Node（必须支持 node:sqlite 原生模块）
+    const candidates = [
+      'node',
+      'node.exe',
+      'D:\\nodejs\\node.exe',
+      'C:\\Program Files\\nodejs\\node.exe',
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'node', 'node.exe')
+    ];
+
+    const { execFileSync } = require('node:child_process');
+    for (const candidate of candidates) {
+      try {
+        execFileSync(candidate, ['-e', 'require("node:sqlite")'], { stdio: 'ignore' });
+        return { executable: candidate, asNode: false };
+      } catch {}
+    }
+
+    // 若未探测到外部 Node，则回退至 process.execPath (配合 ELECTRON_RUN_AS_NODE: '1')
+    return { executable: process.execPath, asNode: true };
+  }
+
+  /**
    * 检查 Daemon 健康状态
    */
   async checkAlive() {
@@ -44,15 +73,21 @@ class DaemonController {
 
     console.log(`[Desktop] No running daemon detected on port ${this.port}. Launching managed daemon...`);
     const cliPath = path.resolve(__dirname, '../src/cli.js');
+    const runtime = this.resolveNodeRuntime();
+    console.log(`[Desktop] Launching daemon via: ${runtime.executable} (asNode: ${runtime.asNode})`);
 
-    this.childProcess = spawn(process.execPath, [cliPath, 'start'], {
+    const env = {
+      ...process.env,
+      NEXUS_PORT: String(this.port)
+    };
+    if (runtime.asNode) {
+      env.ELECTRON_RUN_AS_NODE = '1';
+    }
+
+    this.childProcess = spawn(runtime.executable, [cliPath, 'start'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
-        NEXUS_PORT: String(this.port)
-      }
+      env
     });
 
     this.isEmbedded = true;

@@ -64,6 +64,7 @@ async function main() {
   const desktopPkg = {
     name: 'agent-nexus',
     version: version,
+    type: 'module',
     description: pkg.description,
     main: 'desktop/main.cjs',
     author: 'tangwg',
@@ -83,7 +84,7 @@ async function main() {
     appVersion: version,
     appCopyright: 'Copyright (c) 2026 WANGUI TANG',
     overwrite: true,
-    asar: true,
+    asar: false,
     win32metadata: {
       CompanyName: 'TannerLab',
       FileDescription: 'Agent-Nexus Multi-Agent Coordinator & Dashboard',
