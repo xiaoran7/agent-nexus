@@ -54,7 +54,22 @@
 
 ## Quick Start & Verification
 
-### Prerequisites
+### 1. Instant Run via npx (Recommended)
+
+No cloning required. Launch the coordinator and visual dashboard immediately:
+
+```bash
+# Run on-demand without installing
+npx @xiaoran7/agent-nexus start
+
+# Or install globally as a persistent CLI
+npm install -g @xiaoran7/agent-nexus
+nexus start
+```
+
+### 2. Run from Source
+
+#### Prerequisites
 - Node.js 24+ (utilizing native `node:sqlite` with zero native compilation dependencies).
 
 ```bash

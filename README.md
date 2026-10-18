@@ -30,6 +30,19 @@ Agent-Nexus 专为解决多 Agent 并发写代码时的**文件互相覆盖、�
 
 ## 启动与验证
 
+### 1. 免安装秒级启动 (npx 推荐)
+
+```bash
+# 无需克隆代码，直接单命令拉起协调中枢与实时面板
+npx @xiaoran7/agent-nexus start
+
+# 或者全局安装为系统 CLI
+npm install -g @xiaoran7/agent-nexus
+nexus start
+```
+
+### 2. 源码本地运行与二次开发
+
 使用支持 `node:sqlite` 的 Node 环境（项目设计基线为 Node 24），从本目录执行：
 
 ```powershell

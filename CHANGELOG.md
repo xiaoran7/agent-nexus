@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-10-18 支持 npm 生态与免安装秒级运行 (@xiaoran7/agent-nexus)
+
+### 改了什么
+
+- **npm 发行配置规范化 (`package.json`)**：
+  - 命名空间对齐为 `@xiaoran7/agent-nexus`，配置 `publishConfig.access = "public"`；
+  - 增补 `bin` 映射：同时支持 `nexus` 与 `agent-nexus` 双 CLI 命令别名；
+  - 增设严谨的 `files` 打包白名单，将非必要的大体积开发资源（如 `desktop/`、`test/`）彻底剔除，解压体积仅 489 KB（压缩 tarball 仅 141 KB），实现秒级轻量下载；
+  - 补全 `repository`、`homepage` 与 `bugs` 社区元数据链接。
+- **免安装体验指南 (`README.md`, `README_EN.md`, `llms.txt`)**：
+  - 首推 `npx @xiaoran7/agent-nexus start` 免克隆即开即用命令；
+  - 补充全局安装 `npm install -g @xiaoran7/agent-nexus` 指引。
+- **全量测试通过**：236 项核心单元与集成测试全部 100% 绿色通过。
+
+---
+
 ## 2026-10-18 修复桌面端独立 EXE 依赖修剪与 WebSocket 运行时完整性 (Desktop Packaging Fix)
 
 ### 改了什么

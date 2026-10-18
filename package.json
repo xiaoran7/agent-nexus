@@ -1,11 +1,31 @@
 {
-  "name": "agent-nexus",
+  "name": "@xiaoran7/agent-nexus",
   "version": "0.2.6",
   "description": "Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, Codex, Cursor). Prevents file edit collisions and Git worktree conflicts.",
   "main": "src/daemon/index.js",
   "type": "module",
   "bin": {
-    "nexus": "./src/cli.js"
+    "nexus": "./src/cli.js",
+    "agent-nexus": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "docs",
+    "README.md",
+    "README_EN.md",
+    "llms.txt",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiaoran7/agent-nexus.git"
+  },
+  "homepage": "https://github.com/xiaoran7/agent-nexus#readme",
+  "bugs": {
+    "url": "https://github.com/xiaoran7/agent-nexus/issues"
   },
   "scripts": {
     "start": "node src/cli.js start",
