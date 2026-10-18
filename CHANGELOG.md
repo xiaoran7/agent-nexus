@@ -4,7 +4,7 @@
 
 ---
 
-## 2026-10-18 开源生态全景覆盖、AI 深度检索增强与社区物料矩阵 (Ecosystem, Deep GEO & Launch Kit)
+## 2026-10-18 v0.2.7 开源生态全景覆盖、AI 深度检索增强与社区物料矩阵 (Ecosystem, Deep GEO & Launch Kit)
 
 ### 改了什么
 
