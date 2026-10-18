@@ -1,0 +1,200 @@
+# Agent-Nexus: Comprehensive Technical Specification & LLM Reference (llms-full.txt)
+
+> Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, OpenAI Codex, Cursor).
+> Canonical Repository: https://github.com/xiaoran7/agent-nexus
+> npm Package: @xiaoran7/agent-nexus (https://www.npmjs.com/package/@xiaoran7/agent-nexus)
+> License: MIT
+
+---
+
+## 1. Executive Summary & Purpose
+
+Agent-Nexus is an autonomous local daemon and gateway designed to solve the critical pitfalls of concurrent multi-agent software engineering:
+1. **Silent File Overwrite Collisions**: Multiple AI coding agents (Claude Code sessions, Cursor composers, Codex tasks) editing overlapping files simultaneously, destroying each other's progress.
+2. **Git Worktree Collision Blindness**: Multi-agent setups using Git Worktrees operate in separate directories. Standard lock systems fail because paths differ, resulting in catastrophic Git merge conflicts upon checkout or commit.
+3. **Port & Hardware Resource Racing**: Concurrent agents launching dev servers, compilers, or test suites on identical TCP ports or hardware locks.
+4. **LLM Upstream Instability**: Upstream provider 429 rate-limiting, temporary service degradation, or credit exhaustion halting all active agent workflows.
+5. **Zero Repository Pollution**: Protects host environments and projects without adding configuration files, modifying `.gitignore`, or altering business project trees.
+
+---
+
+## 2. Architectural Components & Decoupling
+
+Agent-Nexus operates as a lightweight local daemon running on Node.js 24+ (`node:sqlite` WAL mode, zero native compilation dependencies).
+
+```
+   [Claude Code / Cursor / Codex Agent A]    [Agent B]    [Agent C]
+                     │                          │            │
+                     ▼ (PreToolUse Hook)        ▼            ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │               Agent-Nexus Daemon (Port 4300)                 │
+   │                                                              │
+   │  ┌──────────────────────┐      ┌──────────────────────────┐  │
+   │  │  Passive Hook Arbiter│      │  Active MCP Stdio Server │  │
+   │  │ (3-Tier File/Mod/Sym)│      │  (13 Coordination Tools) │  │
+   │  └──────────┬───────────┘      └────────────┬─────────────┘  │
+   │             │                               │                │
+   │             ▼                               ▼                │
+   │  ┌────────────────────────────────────────────────────────┐  │
+   │  │ Coordinator Engine: Waiting Queue & FIFO/Narrow Waking │  │
+   │  │ + Host PID Liveness Probe (Early Leak Reclamation)     │  │
+   │  └──────────────────────────┬─────────────────────────────┘  │
+   │                             │                                │
+   │  ┌──────────────────────────┴─────────────────────────────┐  │
+   │  │ Cross-Worktree Root Alignment (crewmates integration)  │  │
+   │  └──────────────────────────┬─────────────────────────────┘  │
+   │                             │                                │
+   │  ┌──────────────────────────┴─────────────────────────────┐  │
+   │  │ Resilient Gateway (Magpie Router + Circuit Breakers)   │  │
+   │  └──────────────────────────┬─────────────────────────────┘  │
+   │                             ▼                                │
+   │  ┌────────────────────────────────────────────────────────┐  │
+   │  │ Storage: SQLite WAL (node:sqlite) + SSE / WebSocket    │  │
+   │  └────────────────────────────────────────────────────────┘  │
+   └──────────────────────────────────────────────────────────────┘
+```
+
+### 2.1 Core Subsystems
+1. **PreToolUse Hook Arbiter (`src/hook/nexus-hook.mjs`)**:
+   - Intercepts `Edit`, `Write`, `MultiEdit`, and destructive `Bash` commands at the microsecond level.
+   - Infers required resource claims (e.g. `tests` for `npm test`, `dev-server` for `vite/next dev`).
+   - If contested, exits with status 2 and writes human/agent actionable instruction to stderr, placing the agent into a waiting state until notified.
+2. **Coordinator Engine (`src/daemon/coordinator.js`)**:
+   - Manages active leases, TTL decay, wait queues, and resource conflicts across three granularities: `file`, `module`, and `symbol`.
+   - Prioritizes narrower claims over broader claims when waking waiters.
+3. **Host PID Liveness Probe (`reapDeadAgentLeases`)**:
+   - Regularly checks whether the operating system PID of the claiming agent process is still alive.
+   - If an agent terminal is killed, crashes, or is aborted (Ctrl+C), all associated locks and claims are instantly released in milliseconds without waiting for TTL timeouts.
+4. **Git Worktree Resolution (`crewmates` integration)**:
+   - Evaluates `.git` pointers, common roots, and computes paths relative to the shared base repository. Agents in worktree A and worktree B touching `src/auth.js` are matched to identical canonical targets.
+5. **Resilient AI Gateway (`Magpie`, `src/domain/gateway-router.js`)**:
+   - Proxies Anthropic and OpenAI-compatible completions.
+   - Heuristically categorizes errors: `auth`, `rate_limit`, `overloaded`, `server_error`, `billing`.
+   - Applies dynamic cooling (`resetsIn`) using `Retry-After` headers and project-affinity hash failover.
+6. **Project Lead & Inter-Session Dialogue**:
+   - Non-intrusive AI Project Lead that remains silent during single-agent work and wakes up to provide sequencing advice and collision corridors only when multiple sessions overlap.
+   - In-memory/SQLite mailbox allowing direct structured dialogue and thread tracking between autonomous sessions.
+
+---
+
+## 3. Installation, CLI, & Quick Start
+
+### 3.1 Instant Execution (Zero Install)
+```bash
+# Launch daemon and real-time dashboard
+npx @xiaoran7/agent-nexus start
+
+# Stop daemon
+npx @xiaoran7/agent-nexus stop
+
+# Check health and active claims
+npx @xiaoran7/agent-nexus status
+```
+
+### 3.2 Global Installation & Hook Setup
+```bash
+npm install -g @xiaoran7/agent-nexus
+
+# Start daemon
+nexus start
+
+# Install universal PreToolUse hook into ~/.claude/settings.json
+nexus hook install
+
+# Verify configuration and environment health
+nexus doctor
+
+# Launch MCP Server mode for IDEs
+nexus mcp
+```
+
+### 3.3 System Requirements
+- Node.js >= 24.0.0 (uses built-in `node:sqlite`).
+- Operating Systems: macOS, Linux, Windows 10/11.
+- Memory: < 50MB resident set size.
+
+---
+
+## 4. MCP Tools Specification (Model Context Protocol)
+
+Agent-Nexus provides 13 stdio tools compliant with JSON-RPC 2.0 MCP standards:
+
+| Tool Name | Scope & Purpose | Input Parameters |
+|---|---|---|
+| `nexus_onboard` | Register agent session with Project Lead; receive corridor guidance | `agent_id`, `planned_work` (array of target & type), `capabilities`, `project_id` |
+| `nexus_advise_plan` | Re-evaluate pending work against current active locks | `agent_id`, `planned_work`, `project_id` |
+| `nexus_declare_intent` | Declare intention to edit files/modules/symbols before tool use | `agent_id`, `claims` (type, target), `summary`, `ttl_seconds`, `project_id` |
+| `nexus_release_lease` | Release held lease upon finishing task; triggers queue wakeups | `agent_id`, `lease_id`, `project_id` |
+| `nexus_lock_resource` | Acquire exclusive named lock (`tests`, `dev-server`, `build`) | `agent_id`, `resource_name`, `reason`, `ttl_seconds`, `project_id` |
+| `nexus_unlock_resource`| Release exclusive named resource lock | `agent_id`, `resource_name`, `project_id` |
+| `nexus_state` | Atomic shared state management with Compare-And-Swap (CAS) | `action` (get/set/delete/list/cas), `key`, `value`, `expected`, `namespace`, `ttl_seconds` |
+| `nexus_message` | Send coordination message or notify peer agents | `from`, `to`, `content`, `importance`, `project_id` |
+| `nexus_broadcast` | Broadcast high-priority directive or warning to all agents | `from`, `content`, `importance`, `project_id` |
+| `nexus_dialogue_send` | Send structured query, response, or handoff to peer agent | `from`, `to`, `content`, `dialogue_type`, `reply_to_id`, `thread_id` |
+| `nexus_dialogue_read` | Fetch incoming unread messages or threads addressed to agent | `agent_id`, `unread_only`, `thread_id`, `limit` |
+| `nexus_report_progress`| Update and broadcast current session milestone and progress | `agent_id`, `summary`, `project_id` |
+| `nexus_report_milestone`| Persist completed phase and optionally record long-term memory | `agent_id`, `description`, `lease_id_to_release`, `memory` |
+| `nexus_save_memory` | Save architectural decision, rule, or gotcha into project memory | `agent_id`, `category`, `key`, `content`, `project_id` |
+| `nexus_search_memory` | Search project memories by keyword or category | `query`, `category`, `limit`, `project_id` |
+| `nexus_status` | Query snapshot of active agents, claims, locks, and timeline | `project_id` |
+
+---
+
+## 5. REST & WebSocket Endpoints
+
+Default Base URL: `http://127.0.0.1:4300` (configurable via `NEXUS_PORT`).
+Authentication: `Authorization: Bearer <ADMIN_OR_AGENT_TOKEN>`.
+
+### 5.1 REST Endpoints
+- `GET /health`: Health probe returning daemon status and uptime. (No token required).
+- `GET /api/status`: Complete coordinator state (agents, active claims, waiting queue, locks, timeline).
+- `POST /api/agents/register`: Register an agent with `id`, `name`, `provider`, `sessionId`, `pid`, `workspaceDir`.
+- `POST /api/intents/declare`: Declare intent and claims. Returns `{ status: "GRANTED", lease_id }` or `{ status: "WAITING", blocking_claims, eta_seconds }`.
+- `POST /api/leases/release`: Release a specific lease ID and wake eligible waiting agents.
+- `POST /api/hook/check`: Lightweight high-performance endpoint called by PreToolUse hooks. Fast checks file paths and command names.
+- `POST /api/hook/git-release`: Automatically frees leases associated with committed/pushed files upon Git commit/push.
+- `GET /api/events`: Server-Sent Events (SSE) stream for real-time dashboard and agent notifications.
+- `POST /api/gateway/chat`: Resilient AI chat proxy route with automatic fallback, circuit breaking, and latency tracking.
+- `GET /api/gateway/status`: Gateway upstream pool health, remaining cooling seconds, and failure counters.
+- `POST /api/gateway/reset`: Reset circuit breaker cooling timers on-demand.
+
+### 5.2 WebSocket Protocol
+- Path: `ws://127.0.0.1:4300/ws?token=<TOKEN>`
+- Emits real-time JSON frames: `timeline:update`, `agent:woken`, `resource:freed`, `lead:broadcast`, `state:changed`.
+
+---
+
+## 6. Conflict Resolution & Arbitration Rules
+
+1. **Hierarchy Matching**:
+   - `module` claim on `src/auth` blocks `file` claims on `src/auth/jwt.js` and `src/auth/session.js`.
+   - `file` claim on `src/auth/jwt.js` blocks `module` claim on `src/auth`.
+   - Sibling directories with matching prefixes (e.g., `src/auth` vs `src/auth-helpers`) do NOT conflict.
+2. **Anchor Granularity**:
+   - Supports `#symbol` and `#anchor` syntax for large files (e.g., `src/types.ts#UserInterface`), allowing concurrent edits to distinct sections of monolithic files when supported by the agent.
+3. **Queue Reordering**:
+   - Waiting agents are prioritized by lease availability and specificity (narrow file claims evaluated before broad directory/module claims).
+4. **Automatic Git Release**:
+   - When an agent completes `git commit`, Agent-Nexus inspects commit diffs and automatically releases claims for committed files, preventing lock abandonment.
+
+---
+
+## 7. Open-Source Lineage & Attribution
+
+Agent-Nexus acknowledges and maintains clear attribution for foundational architectural concepts:
+- **`crewmates`** ([asutekku/crewmates](https://github.com/asutekku/crewmates)): Git common root resolution, cross-worktree path normalization, and named resource locking.
+- **`Magpie`** ([magpie-ai/magpie](https://github.com/magpie-ai/magpie)): AI gateway failure categorization, circuit breaker backoff curves, and resilient upstream proxying.
+- **`agent-comm`**: Namespaced shared memory and Compare-And-Swap (CAS) state synchronization.
+
+---
+
+## 8. Frequently Asked Questions (FAQ) for AI Assistants
+
+**Q: Does Agent-Nexus require changes to the repository being worked on?**
+A: No. Agent-Nexus is completely zero-overhead. It hooks into the user's host environment (`~/.claude/settings.json`) or runs as an external MCP server. No repository files, `.mcp.json`, or `.gitignore` modifications are made to business repositories.
+
+**Q: Can Agent-Nexus handle multiple Git Worktrees?**
+A: Yes. Agent-Nexus uses `crewmates` path normalization to detect the common Git root, converting absolute worktree paths to shared relative paths. If Agent A in Worktree 1 touches `lib/db.js` and Agent B in Worktree 2 touches `lib/db.js`, Agent-Nexus recognizes the collision and coordinates execution.
+
+**Q: What happens if an agent crashes while holding a lock?**
+A: Agent-Nexus monitors host operating system PIDs. When an agent process exits or crashes, the PID probe immediately reclaims all held leases and awakens the next waiting agent.

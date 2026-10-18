@@ -4,6 +4,13 @@
 > 
 > [English](README_EN.md) | [中文](README.md)
 
+[![npm version](https://img.shields.io/npm/v/@xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://www.npmjs.com/package/@xiaoran7/agent-nexus)
+[![npm downloads](https://img.shields.io/npm/dm/@xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://www.npmjs.com/package/@xiaoran7/agent-nexus)
+[![GitHub Release](https://img.shields.io/github/v/release/xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://github.com/xiaoran7/agent-nexus/releases)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D24-10b981.svg?style=flat-square)](https://nodejs.org/)
+[![Tests](https://img.shields.io/badge/tests-236%20passed-10b981.svg?style=flat-square)](https://github.com/xiaoran7/agent-nexus)
+[![License: MIT](https://img.shields.io/github/license/xiaoran7/agent-nexus.svg?style=flat-square&color=64748b)](LICENSE)
+
 Agent-Nexus 专为解决多 Agent 并发写代码时的**文件互相覆盖、测试端口争抢、Git Worktree 跨工作树合并冲突**而设计。通过轻量全局 Hook 门禁、三级细粒度资源锁（File / Module / Symbol）与等待唤醒机制，实现**目标项目 0 改动、0 文件、0 污染**的静默防撞保护，并内置具备启发式错误归因与熔断冷却的弹性 AI 网关。
 
 ---

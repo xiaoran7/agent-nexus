@@ -37,6 +37,35 @@ function debounce(fn, delay = 200) {
   };
 }
 
+// 规范化 Agent 显示名称，剔除乱码/损坏字符并提供标准化身份标识
+function formatAgentDisplayName(name, agentId, provider, sessionId) {
+  if (name && typeof name === 'string' && name.trim()) {
+    const trimmed = name.trim();
+    if (!/[�-\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed) && !/^[?\s.\-=_]+$/.test(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  const parts = (agentId || '').split('-');
+  const prov = (provider || parts[0] || 'agent').toLowerCase();
+  const provMap = {
+    'claude': 'Claude',
+    'claude-fable': 'Claude Fable',
+    'claude-sonnet': 'Claude Sonnet',
+    'claude-opus': 'Claude Opus',
+    'codex': 'Codex',
+    'zcode': 'ZCode',
+    'agent': 'Agent'
+  };
+  const provLabel = provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
+  const rawSession = sessionId || (parts.length > 1 ? parts.slice(1).join('-') : '');
+  if (!rawSession || rawSession === 'default') {
+    return provLabel;
+  }
+  const cleanSession = rawSession.length > 8 ? rawSession.slice(0, 8) : rawSession;
+  return `${provLabel} (${cleanSession})`;
+}
+
 // DOM 元素缓存
 const dom = {
   projectSelector: document.getElementById('project-selector'),
@@ -113,7 +142,6 @@ const dom = {
   // Upstream Candidate Pool Grid
   gwCandidatesContainer: document.getElementById('gw-candidates-container'),
   candidatesPoolMeta: document.getElementById('candidates-pool-meta'),
-  gwDemoLoadBtn: document.getElementById('gw-demo-load-btn'),
 
   // Live Probe Console
   probeUserMessage: document.getElementById('probe-user-message'),
@@ -364,9 +392,10 @@ function renderAgents(agents, activeClaims) {
     const status = a.status || 'idle';
     const statusSafe = escapeHtml(status);
     const statusLabel = escapeHtml(statusMap[status] || status);
-    const nameSafe = escapeHtml(a.name);
+    const displayName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id);
+    const nameSafe = escapeHtml(displayName);
     const claims = (activeClaims || []).filter(c => c.agent_id === a.id);
-    const providerShort = escapeHtml((a.provider || 'A').toUpperCase().slice(0, 2));
+    const providerShort = escapeHtml((a.provider || displayName || 'A').toUpperCase().slice(0, 2));
 
     return `
       <div class="agent-card ${statusSafe}">
@@ -435,7 +464,7 @@ function renderTimeline(timeline) {
       badgeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 5L6 9H2v6h4l5 4V5z"></path></svg>';
     }
 
-    const actor = escapeHtml(item.agent_name || item.agent_id);
+    const actor = escapeHtml(formatAgentDisplayName(item.agent_name, item.agent_id));
     const eventType = escapeHtml(item.event_type);
     const desc = escapeHtml(item.description);
 
@@ -474,7 +503,7 @@ async function fetchMemories(query = '') {
 
     dom.memoryItemsContainer.innerHTML = list.map(m => {
       const catSafe = escapeHtml(m.category);
-      const srcSafe = m.source_agent_id ? `@${escapeHtml(m.source_agent_id)}` : '';
+      const srcSafe = m.source_agent_id ? `@${escapeHtml(formatAgentDisplayName(null, m.source_agent_id))}` : '';
       const keySafe = escapeHtml(m.key);
       const contentSafe = escapeHtml(m.content);
 
@@ -584,8 +613,8 @@ async function fetchDialogues() {
 
     dom.dialogueContainer.innerHTML = list.map(m => {
       const timeStr = escapeHtml(new Date(m.created_at).toTimeString().split(' ')[0]);
-      const fromSafe = escapeHtml(m.from_agent_name || m.from_agent);
-      const toSafe = m.to_agent ? `@${escapeHtml(m.to_agent_name || m.to_agent)}` : 'BROADCAST';
+      const fromSafe = escapeHtml(formatAgentDisplayName(m.from_agent_name, m.from_agent));
+      const toSafe = m.to_agent ? `@${escapeHtml(formatAgentDisplayName(m.to_agent_name, m.to_agent))}` : 'BROADCAST';
       const typeSafe = escapeHtml((m.dialogue_type || 'chat').toUpperCase());
       const contentSafe = escapeHtml(m.content);
       const threadSafe = m.thread_id ? `#${escapeHtml(m.thread_id)}` : '';
@@ -634,6 +663,7 @@ function setViewMode(mode) {
     dom.tabTopology?.classList.add('active');
     dom.viewTopology?.classList.add('active');
     fetchTopologyGraph();
+    requestAnimationFrame(() => redrawTopologyEdges());
   } else if (mode === 'gateway') {
     dom.tabGateway?.classList.add('active');
     dom.viewGateway?.classList.add('active');
@@ -645,6 +675,7 @@ function setViewMode(mode) {
     dom.viewGateway?.classList.add('active');
     fetchTopologyGraph();
     fetchGatewayStatus();
+    requestAnimationFrame(() => redrawTopologyEdges());
   }
 }
 
@@ -778,7 +809,7 @@ function renderTopologyView(data) {
               <line x1="8" y1="16" x2="8.01" y2="16"></line>
               <line x1="16" y1="16" x2="16.01" y2="16"></line>
             </svg>
-            <span>${escapeHtml(node.agentName || node.agentId)}</span>
+            <span>${escapeHtml(formatAgentDisplayName(node.agentName, node.agentId))}</span>
           </div>
           <span class="topo-type-chip ${typeChipClass}">${typeLabel}</span>
         </div>
@@ -899,17 +930,37 @@ function bindTopologyInteractions(nodes, edges) {
   });
 }
 
+// 拓扑连线重绘函数（自适应视口尺寸与节点位置）
+function redrawTopologyEdges() {
+  if (!currentTopologyData) return;
+  if (currentViewMode !== 'topology' && currentViewMode !== 'unified') return;
+  const rawNodes = currentTopologyData?.nodes || [];
+  const edges = currentTopologyData?.edges || [];
+  const filteredNodes = rawNodes.filter(n => {
+    if (!topoSearchQuery) return true;
+    const matchTitle = (n.title || '').toLowerCase().includes(topoSearchQuery);
+    const matchDesc = (n.description || '').toLowerCase().includes(topoSearchQuery);
+    const matchAgent = (n.agentName || n.agentId || '').toLowerCase().includes(topoSearchQuery);
+    const matchFiles = (n.claims || []).some(c => {
+      const targetStr = typeof c === 'string' ? c : (c?.target || '');
+      return targetStr.toLowerCase().includes(topoSearchQuery);
+    });
+    return matchTitle || matchDesc || matchAgent || matchFiles;
+  });
+  drawTopologyEdges(filteredNodes, edges);
+}
+
+// 监听窗口尺寸变化，自适应动态重算拓扑贝塞尔曲线坐标
+window.addEventListener('resize', debounce(() => {
+  redrawTopologyEdges();
+}, 60));
+
 // ==========================================
 // Magpie Elastic Gateway Controller
 // ==========================================
 let currentGatewayData = null;
-let isDemoMode = false;
 
 async function fetchGatewayStatus() {
-  if (isDemoMode) {
-    renderGateway(currentGatewayData);
-    return;
-  }
   try {
     const res = await fetch('/api/gateway/status', { headers: authHeaders() });
     if (!res.ok) return;
@@ -1033,8 +1084,8 @@ function renderCandidatesGrid(candidates) {
   if (!candidates || candidates.length === 0) {
     dom.gwCandidatesContainer.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 16px;">
-        <div>当前后台未配置上游模型节点。</div>
-        <div style="margin-top: 8px; font-size: 12px;">提示：点击上方“载入双模型演示（体验自动换路线）”可立刻体验当主力模型 429 报错时，系统如何毫秒级自动切换到备用模型！</div>
+        <div style="font-weight: 600; color: var(--text-title); margin-bottom: 6px;">当前后台未配置上游模型节点</div>
+        <div style="font-size: 12px; opacity: 0.8;">提示：可通过 ~/.agent-nexus/config.json 或环境变量配置可用上游模型节点，系统将在 429 限流或服务故障时毫秒级自动熔断切流。</div>
       </div>
     `;
     return;
@@ -1148,9 +1199,6 @@ if (dom.gwStrategySelect) {
         body: JSON.stringify({ strategy })
       });
       if (res.ok) {
-        if (isDemoMode && currentGatewayData) {
-          currentGatewayData.strategy = strategy;
-        }
         fetchGatewayStatus();
       } else {
         const err = await res.json();
@@ -1164,17 +1212,6 @@ if (dom.gwStrategySelect) {
 
 // 单个节点解除休眠
 window.unrestCandidate = async function (id) {
-  if (isDemoMode && currentGatewayData) {
-    const c = currentGatewayData.candidates.find(item => item.id === id);
-    if (c) {
-      c.resting = false;
-      c.remainingRestSeconds = 0;
-      c.consecutiveFailures = 0;
-      c.lastFailureType = 'none';
-    }
-    renderGateway(currentGatewayData);
-    return;
-  }
   try {
     const res = await fetch('/api/gateway/reset', {
       method: 'POST',
@@ -1192,16 +1229,6 @@ window.unrestCandidate = async function (id) {
 // 一键全局解除所有休眠
 if (dom.gwResetAllBtn) {
   dom.gwResetAllBtn.onclick = async () => {
-    if (isDemoMode && currentGatewayData) {
-      currentGatewayData.candidates.forEach(c => {
-        c.resting = false;
-        c.remainingRestSeconds = 0;
-        c.consecutiveFailures = 0;
-        c.lastFailureType = 'none';
-      });
-      renderGateway(currentGatewayData);
-      return;
-    }
     try {
       const res = await fetch('/api/gateway/reset', {
         method: 'POST',
@@ -1235,34 +1262,6 @@ if (dom.probeDispatchBtn && dom.probeUserMessage) {
     try {
       dom.probeDispatchBtn.disabled = true;
       dom.probeDispatchBtn.style.opacity = '0.6';
-
-      if (isDemoMode) {
-        // Demo 模拟路由响应
-        await new Promise(r => setTimeout(r, 450));
-        const latency = Date.now() - startTime;
-        if (dom.probeOutputContainer) {
-          dom.probeOutputContainer.innerHTML = `
-            <div class="probe-res-line">
-              <span class="probe-res-badge ok">HTTP 200 成功</span>
-              <span class="probe-res-meta">实际服务节点: <strong>备用模型 (DeepSeek-V3)</strong> | 耗时: ${latency}ms | 策略: ${escapeHtml(currentGatewayData.strategy)}</span>
-            </div>
-            <div class="probe-res-body">【故障自动转移轨迹】
-• 主力模型 "Claude 3.7 Sonnet" 当前处于 429 频率限流休眠状态。
-• 系统触发零丢包快速降级 → 自动切换至备用模型 "DeepSeek-V3" 完成回答。
-回答内容: 已成功处理您的测试请求："${escapeHtml(text)}"</div>
-          `;
-        }
-        if (currentGatewayData) {
-          const backup = currentGatewayData.candidates.find(c => c.id === 'backup-deepseek-v3');
-          if (backup) {
-            backup.totalRequests = (backup.totalRequests || 0) + 1;
-            backup.successCount = (backup.successCount || 0) + 1;
-            backup.lastLatencyMs = latency;
-          }
-          renderGateway(currentGatewayData);
-        }
-        return;
-      }
 
       const res = await fetch('/api/gateway/chat', {
         method: 'POST',
@@ -1317,55 +1316,6 @@ if (dom.probeDispatchBtn && dom.probeUserMessage) {
   dom.probeDispatchBtn.onclick = dispatchProbe;
   dom.probeUserMessage.onkeydown = (e) => {
     if (e.key === 'Enter') dispatchProbe();
-  };
-}
-
-// 载入演示拓扑 (Demo Mode)
-if (dom.gwDemoLoadBtn) {
-  dom.gwDemoLoadBtn.onclick = () => {
-    isDemoMode = true;
-    currentGatewayData = {
-      strategy: 'smart',
-      candidateCount: 2,
-      candidates: [
-        {
-          id: 'primary-anthropic-claude',
-          name: '主力模型 Claude 3.7 Sonnet',
-          provider: 'anthropic',
-          model: 'claude-3-7-sonnet-20250219',
-          priority: 0,
-          weight: 1,
-          totalRequests: 42,
-          successCount: 41,
-          failureCount: 1,
-          consecutiveFailures: 1,
-          lastLatencyMs: 380,
-          resting: true,
-          remainingRestSeconds: 48,
-          lastFailureType: 'rate-limit'
-        },
-        {
-          id: 'backup-deepseek-v3',
-          name: '备用模型 DeepSeek V3 (容灾备选)',
-          provider: 'openai',
-          model: 'deepseek-chat',
-          priority: 1,
-          weight: 1,
-          totalRequests: 18,
-          successCount: 18,
-          failureCount: 0,
-          consecutiveFailures: 0,
-          lastLatencyMs: 240,
-          resting: false,
-          remainingRestSeconds: 0,
-          lastFailureType: 'none'
-        }
-      ]
-    };
-    if (dom.candidatesPoolMeta) {
-      dom.candidatesPoolMeta.textContent = '双模型自动容灾演练运行中';
-    }
-    renderGateway(currentGatewayData);
   };
 }
 

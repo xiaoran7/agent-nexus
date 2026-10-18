@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-10-18 开源生态全景覆盖、AI 深度检索增强与社区物料矩阵 (Ecosystem, Deep GEO & Launch Kit)
+
+### 改了什么
+
+- **工业级 Shields.io 动态徽章墙 (`README.md`, `README_EN.md`)**：
+  - 中英双语 README 顶部统一补充 npm 版本号、npm 月下载量、GitHub Release、Node >= 24、236 Tests Passed 及 MIT License 动态徽章，建立开源项目专业成熟度与高信任度形象。
+- **全景深度检索规范 `llms-full.txt` 与索引对齐 (`llms-full.txt`, `llms.txt`, `package.json`)**：
+  - 遵循 `llmstxt.org` 规范撰写机器全量技术文档 `llms-full.txt`，覆盖系统架构图、三级冲突判定边界算法、13 个 MCP 工具 Schema、REST/WebSocket 全量端点、Git Worktree 对齐原理及 AI 助手答疑 FAQ；
+  - 在 `llms.txt` 顶部与底部显式引入 `llms-full.txt` 深度研报锚点，并在 `package.json` 的 `files` 打包白名单中纳入。
+- **Smithery.ai MCP 注册表官方适配 (`smithery.yaml`)**：
+  - 根目录新增标准 `smithery.yaml` 配置，声明 stdio 启动命令（`npx -y @xiaoran7/agent-nexus mcp`），为上架全球最大 MCP 注册目录打通一键索引。
+- **GitHub 开源社区规范与 Issue 体系构建 (`.github/`)**：
+  - 新增标准 YAML 格式的 Bug 汇报模板（`bug_report.yml`）与功能建议模板（`feature_request.yml`）；
+  - 新增规范的 PR 评审合并模板（`PULL_REQUEST_TEMPLATE.md`），助力 GitHub Community Standards 达到 100% 满分。
+- **长尾搜索 SEO 种子问答库 (`docs/DISCUSSIONS_QA_SEEDS.md`)**：
+  - 精准提炼 3 篇针对“多 Claude Code 会话冲突”、“Git Worktree 跨目录防撞”与“AI 弹性网关防封”的典型 Q&A 问答文案，供 GitHub Discussions 快速开帖建立 Google / Perplexity 官方解答信源。
+- **开源目录收录与 Awesome PR 指南 (`docs/COMMUNITY_SUBMISSIONS.md`)**：
+  - 整理针对 `awesome-claude-code`、`awesome-mcp-servers` 的 PR 标题与正文模板，并附带 Smithery 与 Glama 的上架步骤。
+- **全平台推广文案物料包 (`docs/LAUNCH_COPYWRITING.md`)**：
+  - 编写涵盖 V2EX、知乎、Reddit (r/ClaudeAI)、Hacker News (Show HN) 与 X/Twitter 的完整发帖文案，免去人工撰写烦恼，支持一键复制发布。
+- **全量测试验证**：236 项核心单元与集成测试全部 100% 保持绿色通过。
+
+---
+
+## 2026-10-18 根治乱码、清除硬编码与全端自适应响应式改造 (Encoding, Real Data & Responsive UI)
+
+### 改了什么
+
+- **多字节 UTF-8 乱码彻底根治 (`src/transport/rest.js`, `src/daemon/coordinator.js`, `src/ui/app.js`)**：
+  - **网络传输层分片拼装**：在 REST 服务 `readJson` 中采用二进制 Buffer 数组收集流分块，通过 `Buffer.concat(chunks).toString('utf8')` 统一解码，彻底消除多字节 UTF-8 字符在 TCP 数据包边界被截断撕裂导致的乱码；
+  - **后端身份防损坏消毒**：完善 `sanitizeAgentName` 与 `formatAgentDefaultName`，规范 Unicode 替换字符（``）、私有区（`-`）及控制字符拦截过滤，同时修复空串判定缺陷，精准保留已注册的真实 Agent 名称；
+  - **前端视图标准化渲染**：在控制台新增 `formatAgentDisplayName`，在活跃 Agent 卡片、时间线、记忆库、跨会话对话网络与演进拓扑全链路统一名称显示，提供优雅兜底。
+- **全面清除硬编码与伪造 Mock 数据 (`src/ui/index.html`, `src/ui/app.js`, `scripts/seed-nodes.js`)**：
+  - **剔除 Mock 模式**：彻底移除前端假候选节点切换器（`gwDemoLoadBtn` / `isDemoMode`）与伪造响应逻辑，真实探测控制台完全直连后端 `/api/gateway/chat`；
+  - **动态占位校准**：清除 HTML 静态硬编码（如固定端口 `127.0.0.1:4300` 改为动态 `--`、固定 `1 个会话施工中` 改为动态 `0 个活跃会话`），全部状态与指标均由后端 SSE/REST 真实推送驱动；
+  - **删除冗余种子脚本**：删除已废弃的硬编码数据注入脚本 `scripts/seed-nodes.js`。
+- **控制台全视口自适应响应式改造 (`src/ui/style.css`, `src/ui/app.js`)**：
+  - **流式容器重构**：彻底废除硬编码的固定像素宽（如 `min-width: 1000px`、`width: 440px`），拓扑画布及卡片采用 `width: 100%; max-width: 580px; min-width: 0;` 自适应流式排版；
+  - **精细断点分级**：新增 1200px（平板/窄屏）、1024px（单列堆叠布局）、768px（手机/窄平板弹性导航与栅格单列化）、480px（超小屏全宽触控优化）四级响应式断点；
+  - **SVG 贝塞尔连线动态重算**：为 `window.resize` 绑定防抖（60ms）的 `redrawTopologyEdges()`，视口缩放时自动基于真实 DOM 坐标实时重算重绘贝塞尔连线，符合 Aozora UI 与 60 FPS 顺滑性能红线。
+- **全量测试验证**：236 项核心单元与集成测试全部 100% 保持绿色通过。
+
+---
+
 ## 2026-10-18 支持 npm 生态与免安装秒级运行 (@xiaoran7/agent-nexus)
 
 ### 改了什么

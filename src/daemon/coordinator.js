@@ -5,6 +5,50 @@ import { ValidationError, requireString } from '../domain/errors.js';
 
 export { ValidationError };
 
+export function formatAgentDefaultName(provider, sessionId, agentId) {
+  const prov = (provider || 'agent').toLowerCase();
+  const provMap = {
+    'claude': 'Claude',
+    'claude-fable': 'Claude Fable',
+    'claude-sonnet': 'Claude Sonnet',
+    'claude-opus': 'Claude Opus',
+    'codex': 'Codex',
+    'zcode': 'ZCode',
+    'agent': 'Agent'
+  };
+  const provLabel = provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
+  if (!sessionId || sessionId === 'default') {
+    return provLabel;
+  }
+  const cleanSession = sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId;
+  return `${provLabel} (${cleanSession})`;
+}
+
+export function sanitizeAgentName(name, agentId, provider, sessionId) {
+  if (typeof name !== 'string' || !name.trim()) {
+    const parts = (agentId || '').split('-');
+    const prov = provider || parts[0] || 'agent';
+    const sess = sessionId || parts.slice(1).join('-') || '';
+    return formatAgentDefaultName(prov, sess, agentId);
+  }
+  const trimmed = name.trim();
+  // 过滤替换字符 �、私有区符号 (-) 或不可见控制字符
+  if (/[�-\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed)) {
+    const parts = (agentId || '').split('-');
+    const prov = provider || parts[0] || 'agent';
+    const sess = sessionId || parts.slice(1).join('-') || '';
+    return formatAgentDefaultName(prov, sess, agentId);
+  }
+  // 过滤纯乱码符号或截断损坏文本
+  if (/^[?\s.\-=_]+$/.test(trimmed)) {
+    const parts = (agentId || '').split('-');
+    const prov = provider || parts[0] || 'agent';
+    const sess = sessionId || parts.slice(1).join('-') || '';
+    return formatAgentDefaultName(prov, sess, agentId);
+  }
+  return trimmed;
+}
+
 const CLAIM_TYPES = new Set(['file', 'module', 'symbol', 'resource']);
 
 const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
@@ -214,7 +258,7 @@ export class CoordinatorEngine {
     const now = Date.now();
     const finalSessionId = sessionId == null ? 'default' : String(sessionId);
     const finalProvider = provider == null ? 'unknown' : String(provider);
-    const finalName = name || `${finalProvider}-${finalSessionId.slice(0, 6)}`;
+    const finalName = sanitizeAgentName(name, id, finalProvider, finalSessionId);
     const finalProjectId = projectId || 'default';
     const parsedPid = pid ? parseInt(pid, 10) : null;
     const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
@@ -305,9 +349,10 @@ export class CoordinatorEngine {
       const parts = agentId.split('-');
       const provider = parts[0] || 'agent';
       const sessionId = parts.slice(1).join('-') || `${now}`;
+      const defaultName = formatAgentDefaultName(provider, sessionId, agentId);
       this.registerAgent({
         id: agentId,
-        name: summary.slice(0, 30),
+        name: defaultName,
         provider,
         sessionId,
         workspaceDir: '',
@@ -408,7 +453,7 @@ export class CoordinatorEngine {
 
     const intentRow = this.db.prepare('SELECT summary FROM intents WHERE id = ?').get(lease.intent_id);
     const agentRow = this.db.prepare('SELECT name, provider FROM agents WHERE id = ?').get(agentId);
-    const releasedByName = agentRow?.name || agentId;
+    const releasedByName = sanitizeAgentName(agentRow?.name, agentId, agentRow?.provider);
 
     // 沉淀到演进拓扑服务
     if (this.topologyService && releasedClaims.length > 0) {
@@ -480,8 +525,8 @@ export class CoordinatorEngine {
       };
     }
 
-    const agentRow = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(agentId);
-    const releasedByName = agentRow?.name || agentId;
+    const agentRow = this.db.prepare('SELECT name, provider FROM agents WHERE id = ?').get(agentId);
+    const releasedByName = sanitizeAgentName(agentRow?.name, agentId, agentRow?.provider);
 
     const allReleasedClaims = [];
     const releasedLeaseIds = [];

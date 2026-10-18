@@ -4,6 +4,13 @@
 > 
 > [English](README_EN.md) | [中文](README.md)
 
+[![npm version](https://img.shields.io/npm/v/@xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://www.npmjs.com/package/@xiaoran7/agent-nexus)
+[![npm downloads](https://img.shields.io/npm/dm/@xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://www.npmjs.com/package/@xiaoran7/agent-nexus)
+[![GitHub Release](https://img.shields.io/github/v/release/xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://github.com/xiaoran7/agent-nexus/releases)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D24-10b981.svg?style=flat-square)](https://nodejs.org/)
+[![Tests](https://img.shields.io/badge/tests-236%20passed-10b981.svg?style=flat-square)](https://github.com/xiaoran7/agent-nexus)
+[![License: MIT](https://img.shields.io/github/license/xiaoran7/agent-nexus.svg?style=flat-square&color=64748b)](LICENSE)
+
 **Agent-Nexus** is a lightweight, zero-overhead coordination engine and resilient AI gateway built for concurrent coding agents. When multiple AI agents (e.g., Claude Code, OpenAI Codex, Cursor) work on the same workspace or across multiple Git Worktrees, Agent-Nexus prevents **silent file overwrite collisions, test suite & port racing, and Git merge disasters**—without polluting your business repositories.
 
 ---

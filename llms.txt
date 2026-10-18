@@ -1,6 +1,7 @@
 # Agent-Nexus
 
 > Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, Codex, Cursor).
+> Full machine-readable specification: [llms-full.txt](llms-full.txt)
 
 Agent-Nexus solves silent file clobbering, race conditions, test port conflicts, and Git merge disasters when multiple autonomous AI coding agents work concurrently on the same workspace or across Git Worktrees. It provides passive conflict arbitration, resource locks, waiting queue wakeups, and an intelligent resilient AI gateway with zero repo pollution.
 
@@ -46,6 +47,7 @@ Default Web Dashboard: `http://127.0.0.1:4300/?token=<ADMIN_TOKEN>`
 
 ## Primary Documentation Links
 
+- [llms-full.txt](llms-full.txt): Exhaustive specification, API signatures, MCP schemas, and algorithm rules.
 - [README](README.md): Comprehensive project guide in Chinese.
 - [README_EN](README_EN.md): Comprehensive project guide in English.
 - [Architecture](docs/ARCHITECTURE.md): State machine design, component decoupling, and lifecycle flows.

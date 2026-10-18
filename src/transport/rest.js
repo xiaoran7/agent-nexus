@@ -71,11 +71,12 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
     }
 
     const readJson = () => new Promise((resolve, reject) => {
-      let body = '';
-      req.on('data', chunk => body += chunk);
+      const chunks = [];
+      req.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
       req.on('end', () => {
         try {
-          resolve(body ? JSON.parse(body) : {});
+          const raw = Buffer.concat(chunks).toString('utf8');
+          resolve(raw ? JSON.parse(raw) : {});
         } catch (err) {
           reject(err);
         }

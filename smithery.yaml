@@ -1,0 +1,21 @@
+# Smithery configuration for Agent-Nexus
+# Learn more at: https://smithery.ai/docs/config#smitheryyaml
+
+name: "@xiaoran7/agent-nexus"
+description: "Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, Codex, Cursor)."
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      projectId:
+        type: string
+        description: "Optional project scope identifier to isolate coordination state and locks (defaults to 'default')"
+        default: "default"
+  commandFunction:
+    command: "npx"
+    args:
+      - "-y"
+      - "@xiaoran7/agent-nexus"
+      - "mcp"
