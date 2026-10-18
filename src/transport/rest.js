@@ -3,6 +3,12 @@ import { dirname, join } from 'node:path';
 import { ValidationError } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken } from './auth.js';
 
+let APP_VERSION = '0.2.7';
+try {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  if (pkg.version) APP_VERSION = pkg.version;
+} catch {}
+
 const PUBLIC_PATHS = new Set(['/health', '/', '/index.html', '/style.css', '/app.js']);
 
 let allowedOriginsCache = { raw: null, list: [] };
@@ -91,7 +97,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
     try {
       // 1. Health
       if (url.pathname === '/health') {
-        return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: '0.2.6' });
+        return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: APP_VERSION });
       }
 
       // 1.1 SSE 实时通知流 (GET /api/events)

@@ -29,7 +29,7 @@ async function main() {
   console.log('====================================================');
 
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
-  const version = pkg.version || '0.2.6';
+  const version = pkg.version || '0.2.7';
   console.log(`[Build] Target Version: ${version}`);
 
   // 1. 确保图标存在，若无则先生成

@@ -12,7 +12,7 @@ body:
     attributes:
       label: Agent-Nexus Version
       description: What version are you running? (Run `nexus --version` or check package version)
-      placeholder: "e.g. 0.2.6"
+      placeholder: "e.g. 0.2.7"
     validations:
       required: true
   - type: dropdown

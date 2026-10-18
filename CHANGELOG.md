@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-10-18 全面清除硬编码版本号与多端版本对齐 (Version Sync & Hardcode Elimination)
+
+### 改了什么
+
+- **REST 路由动态读取版本 (`src/transport/rest.js`)**：
+  - 彻底淘汰 `/health` 端点中硬编码的静态版本字符串，改为动态读取 `package.json` 中的 `version` 字段并回退保底，杜绝后续升级版本遗漏；
+  - 访问 `GET /health` 准确返回与当前发布包一致的 `version: "0.2.7"`。
+- **前端与构建工具版本同步 (`src/ui/index.html`, `scripts/build-exe.cjs`, `.github/ISSUE_TEMPLATE/bug_report.yml`)**：
+  - 修正监控面板底部栏版本号为 `Agent-Nexus 协同调度中枢 v0.2.7`；
+  - 同步 Windows 打包工具与 Issue 反馈模板中的版本回退与占位符至 `v0.2.7`。
+
+---
+
 ## 2026-10-18 升级 open-setup 规范至“AI 必做全包，人类只做主权点选”二权分立体系 (Open-Setup Binary Standard)
 
 ### 改了什么
