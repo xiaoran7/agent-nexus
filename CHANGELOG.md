@@ -24,6 +24,8 @@
   - 整理针对 `awesome-claude-code`、`awesome-mcp-servers` 的 PR 标题与正文模板，并附带 Smithery 与 Glama 的上架步骤。
 - **全平台推广文案物料包 (`docs/LAUNCH_COPYWRITING.md`)**：
   - 编写涵盖 V2EX、知乎、Reddit (r/ClaudeAI)、Hacker News (Show HN) 与 X/Twitter 的完整发帖文案，免去人工撰写烦恼，支持一键复制发布。
+- **沉淀通用开源发布规范技能 `open-setup` (`.claude/skills/open-setup/SKILL.md`, `docs/OPEN_SETUP_GUIDE.md`)**：
+  - 提炼跨项目、跨机器的标准规范，清晰界定“必须人做”、“AI 必须做”与“可以让 AI 做”的三界职责，全局注册 `/open-setup` 指令供任意开源工程一键启动。
 - **全量测试验证**：236 项核心单元与集成测试全部 100% 保持绿色通过。
 
 ---
