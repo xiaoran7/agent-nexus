@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-10-18 升级 open-setup 规范至“AI 必做全包，人类只做主权点选”二权分立体系 (Open-Setup Binary Standard)
+
+### 改了什么
+
+- **重构发布权责哲学与二权分立体系 (`docs/OPEN_SETUP_GUIDE.md`, `.claude/skills/open-setup/SKILL.md`)**：
+  - 彻底淘汰“可以让 AI 做”的模糊中间地带，确立 **“AI 必做全包，人类只做主权点选”** 的绝对执行原则；
+  - 凡是 AI 能够自动化、结构化落地的任务（徽章组装、生态上架配置、长尾 SEO 种子、全平台宣发文案、Awesome 列表 PR 等），全部升级为 AI 必须做的强制动作，严禁推诿给工程师；
+  - 人类工程师仅需在最后进行受限于账号密码、OAuth 鉴权和社区防刷风控的 5 分钟主权点选与发帖动作。
+- **全局与项目级 Skill 同步落地 (`~/.claude/skills/open-setup/SKILL.md`)**：
+  - 同步更新本地用户环境全局 Skill 与项目内规范，确保后续所有开源工程可无缝调用 `/open-setup` 实现极速冷启动。
+
+---
+
 ## 2026-10-18 根除项目名称哈希与下拉菜单冗余前缀 (Project Display Name Resolution)
 
 ### 改了什么
