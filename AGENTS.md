@@ -14,6 +14,19 @@
 
 - 协调为协作约定，不能宣称 Hook 是强制文件锁；配置写入与宿主执行必须分开验收。
 
+## 核心功能与模块速查地图 (Module Map)
+
+| 核心诉求 / 业务模块 | 关键源码入口 | 权威单测验证 |
+|---|---|---|
+| **资源冲突判决与等待唤醒** | `src/daemon/coordinator.js` | `test/comprehensive.test.js` |
+| **Git Worktree 共同根与相对化对齐 (`crewmates`)** | `src/domain/project.js` | `test/project.test.js` |
+| **弹性 AI 网关与熔断冷却 (`Magpie`)** | `src/domain/gateway-router.js` | `test/gateway-router.test.js` |
+| **命名空间共享状态与原子 CAS (`agent-comm`)** | `src/domain/state.js` | `test/comprehensive.test.js` |
+| **点对点通信与广播协调消息流** | `src/domain/messages.js` | `test/inter-session-dialogue.test.js` |
+| **SQLite WAL 存储与原子事务** | `src/storage/database.js` | `test/helpers.js` |
+| **PreToolUse 拦截门禁与命令推导** | `src/hook/nexus-hook.mjs` | `test/transport.test.js` |
+| **标准 Stdio MCP 传输端点** | `src/mcp/stdio.js`, `src/mcp/server.js` | `test/mcp-stdio.test.js` |
+
 长期偏好见 [MEMORY.md](MEMORY.md)。
 
 <!-- NEXUS-COORDINATION-START -->

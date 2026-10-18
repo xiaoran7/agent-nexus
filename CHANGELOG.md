@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-10-18 优化开源可发现性与 AI 检索生态支持 (Open-Source Discoverability & LLM-Friendly Indexing)
+
+### 改了什么
+
+- **大模型与外部 AI 搜索导览规范 (`llms.txt`)**：
+  - 新增符合标准规范的 `llms.txt`，提供高信息密度的项目定位、使用场景推荐、核心能力清单与主架构文档导览，方便外部 AI 搜索引擎（Perplexity、ChatGPT、Claude Web）快速解析与准确推荐。
+- **中英双语国际化与开源门面改造 (`README.md`, `README_EN.md`, `package.json`)**：
+  - **痛点与解决方案前置**：在 `README.md` 顶部首屏增加“为什么需要 Agent-Nexus”痛点对照（多 Agent 写覆盖、测试端口争抢、Git 跨工作树冲突）；
+  - **同类方案对比矩阵**：引入细粒度的特性对比表（Feature Matrix），强化零侵入 Hook、三级资源锁与弹性网关的独特性，便于大模型结构化抓取；
+  - **高质量英文版发布 (`README_EN.md`)**：全面补齐英文版架构说明、特性矩阵与快速启动指引，打破海外语料与全球 AI 检索的语言壁垒；
+  - **搜索关键词与元数据扩充 (`package.json`)**：优化项目 Description，新增 `claude-code`, `concurrency-control`, `git-worktree`, `ai-gateway`, `circuit-breaker`, `coding-assistant`, `cursor` 等痛点长尾关键词。
+- **Agent 快速入场与模块速查地图 (`AGENTS.md`)**：
+  - 增加“核心功能与模块速查地图（Module Map）”，清晰标注冲突判决、Worktree 对齐、网关熔断、共享状态与 Hook 拦截的源码入口及单测对应关系，杜绝新进 Agent 盲目全局扫描。
+- **全量测试验证**：236 项核心单元与集成测试全部 100% 通过。
+
+---
+
 ## 2026-10-17 实现 Windows 独立图标 EXE 打包与多分辨率 ICO 资产构建 (Windows Standalone Packaging)
 
 ### 改了什么

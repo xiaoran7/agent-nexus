@@ -1,7 +1,7 @@
 {
   "name": "agent-nexus",
   "version": "0.2.6",
-  "description": "Passive Agent Coordinator - Multi-agent conflict detection, lease management, resilient AI gateway and real-time coordination dashboard",
+  "description": "Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, Codex, Cursor). Prevents file edit collisions and Git worktree conflicts.",
   "main": "src/daemon/index.js",
   "type": "module",
   "bin": {
@@ -23,9 +23,15 @@
     "coordinator",
     "claude-code",
     "codex",
-    "zcode",
+    "cursor",
     "multi-agent",
-    "conflict-detection"
+    "concurrency-control",
+    "conflict-detection",
+    "git-worktree",
+    "ai-gateway",
+    "circuit-breaker",
+    "developer-tools",
+    "coding-assistant"
   ],
   "author": "tangwg",
   "license": "MIT",
