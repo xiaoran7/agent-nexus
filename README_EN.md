@@ -59,8 +59,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/tanner-tang/Agent-Nexus.git
-cd Agent-Nexus
+git clone https://github.com/xiaoran7/agent-nexus.git
+cd agent-nexus
 
 # Install runtime dependencies (ws only)
 npm ci
@@ -106,4 +106,4 @@ Agent-Nexus proudly credits and adheres to upstream boundaries of key open-sourc
 
 ## License
 
-MIT © [WANGUI TANG](https://github.com/tanner-tang)
+MIT © [WANGUI TANG](https://github.com/xiaoran7)
