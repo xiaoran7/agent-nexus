@@ -235,7 +235,7 @@ async function loadProjects() {
         const idSafe = escapeHtml(p.id);
         const nameSafe = escapeHtml(p.display_name || p.id);
         const selected = p.id === currentProjectId ? 'selected' : '';
-        return `<option value="${idSafe}" ${selected}>Project: ${nameSafe}</option>`;
+        return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
       }).join('');
     }
   } catch {}

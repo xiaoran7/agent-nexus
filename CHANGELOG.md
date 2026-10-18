@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-18 根除项目名称哈希与下拉菜单冗余前缀 (Project Display Name Resolution)
+
+### 改了什么
+
+- **前端项目下拉选择框纯净化 (`src/ui/app.js`, `src/ui/index.html`)**：
+  - 彻底去除模板字符串中硬编码的 `Project: ` 重复前缀，根除类似 `Project: Project b7e6c7...` 的双重标签；
+  - 默认未选状态占位文本规范为标准简洁的 `Default Project`。
+- **物理文件系统真实路径与大小写反查 (`src/domain/project.js`)**：
+  - 核心模块新增并导出 `resolveProjectDisplayName(rawPath, canonicalPath, explicitId)`；
+  - 借助 `fs.realpathSync.native` 穿透大小写不敏感的文件系统映射，精准还原真实物理盘符与目录原始大小写（如 `Agent-Nexus`, `gate`, `agenthub`, `beszel`）；
+  - `resolveProject(dir)` 统一挂载真实可读的 `displayName` 属性。
+- **单层通用目录名智能语义组合 (`src/domain/project.js`)**：
+  - 识别单层通用子工程名（`server`, `client`, `frontend`, `backend`, `web`, `app`, `ui`, `src`），自动与父级目录拼接（如 `solum/server`），消除多模块仓库的同名混淆。
+- **存量数据库记录平滑回填与动态兜底 (`src/domain/project-registry.js`, `src/daemon/coordinator.js`)**：
+  - `ProjectRegistry` 启动时自动执行 `backfillProjectDisplayNames()`，将现有 SQLite 数据库中的 `Project <hash>` 记录原地升级为真实目录名；
+  - `listProjects()` 与 `getProject()` 具备动态实时兜底与映射，并在 Agent 注册落地数据库时按相同规则规范化；
+  - 支持 `cliproxyapi` 等非哈希显式 ID 的纯净展示。
+- **自动化测试拓展与纪律闭环 (`test/project.test.js`)**：
+  - 新增 4 项测试覆盖物理路径解析、通用子目录名组合、自定义项目 ID 规范化以及存量 SQLite 数据库平滑升级；
+  - 核心测试套件从 236 项扩充至 240 项，全部 100% 绿色通过。
+
+---
+
 ## 2026-10-18 优化桌面端主窗口就绪呈现与加载失败自动重试机制 (Desktop Window Reliability)
 
 ### 改了什么

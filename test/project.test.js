@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { canonicalizePath, hashProjectId, resolveProject, toRepoRelativePath } from '../src/domain/project.js';
+import { canonicalizePath, hashProjectId, resolveProject, toRepoRelativePath, resolveProjectDisplayName } from '../src/domain/project.js';
+import { ProjectRegistry } from '../src/domain/project-registry.js';
+import { DatabaseSync } from 'node:sqlite';
 
 test('项目识别与路径归一化', async (t) => {
   const baseTmp = mkdtempSync(join(tmpdir(), 'nexus-proj-test-'));
@@ -118,5 +120,62 @@ test('项目识别与路径归一化', async (t) => {
     const posixWt = '/workspace/my-repo-feat';
     assert.equal(toRepoRelativePath('/workspace/my-repo/src/domain/state.js', posixProj, posixProj), 'src/domain/state.js');
     assert.equal(toRepoRelativePath('/workspace/my-repo-feat/src/domain/state.js', posixProj, posixWt), 'src/domain/state.js');
+  });
+
+  await t.test('resolveProjectDisplayName 解析真实目录名与大小写', () => {
+    const namedDir = join(baseTmp, 'Agent-Nexus-Test');
+    mkdirSync(namedDir, { recursive: true });
+
+    const displayName = resolveProjectDisplayName(namedDir, namedDir);
+    assert.equal(displayName, 'Agent-Nexus-Test');
+
+    const res = resolveProject(namedDir);
+    assert.equal(res.displayName, 'Agent-Nexus-Test');
+  });
+
+  await t.test('resolveProjectDisplayName 通用子目录名与父目录拼接', () => {
+    const genericSub = join(baseTmp, 'solum', 'server');
+    mkdirSync(genericSub, { recursive: true });
+
+    const displayName = resolveProjectDisplayName(genericSub, genericSub);
+    assert.equal(displayName, 'solum/server');
+
+    // 针对不存在的虚拟路径规范化回退
+    const mockPath = 'd:/workspace/project/demo-monorepo/client';
+    assert.equal(resolveProjectDisplayName(mockPath, mockPath), 'demo-monorepo/client');
+  });
+
+  await t.test('resolveProjectDisplayName 处理默认与自定义显式标识符', () => {
+    assert.equal(resolveProjectDisplayName('', '', 'default'), 'Default Project');
+    assert.equal(resolveProjectDisplayName('', '', 'cliproxyapi'), 'cliproxyapi');
+    assert.equal(resolveProjectDisplayName('', '', 'Project cliproxyapi'), 'cliproxyapi');
+    assert.equal(resolveProjectDisplayName('', '', 'b7e6c7a3e3b4182e'), 'Project (b7e6c7)');
+    assert.equal(resolveProjectDisplayName('', '', null), 'Default Project');
+  });
+
+  await t.test('ProjectRegistry 自动将存量 Project <hash> 数据库记录回填升级为真实名称', () => {
+    const memDb = new DatabaseSync(':memory:');
+    memDb.exec('CREATE TABLE projects (id TEXT PRIMARY KEY, root_path TEXT NOT NULL, display_name TEXT, created_at INTEGER, last_activity INTEGER);');
+
+    const sampleDir = join(baseTmp, 'My-Service');
+    mkdirSync(sampleDir, { recursive: true });
+
+    memDb.exec(`
+      INSERT INTO projects VALUES ('default', '', 'Default Project', 0, 0);
+      INSERT INTO projects VALUES ('1122334455667788', '${sampleDir.replace(/\\/g, '/')}', 'Project 1122334455667788', 1, 1);
+      INSERT INTO projects VALUES ('cliproxyapi', '', 'Project cliproxyapi', 2, 2);
+    `);
+
+    const registry = new ProjectRegistry(memDb, null, null);
+    const list = registry.listProjects();
+
+    const migratedSample = list.find(p => p.id === '1122334455667788');
+    assert.equal(migratedSample.display_name, 'My-Service');
+
+    const migratedCli = list.find(p => p.id === 'cliproxyapi');
+    assert.equal(migratedCli.display_name, 'cliproxyapi');
+
+    const defProj = list.find(p => p.id === 'default');
+    assert.equal(defProj.display_name, 'Default Project');
   });
 });
