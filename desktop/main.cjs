@@ -41,7 +41,7 @@ function createMainWindow() {
     icon: nativeImage.createFromPath(icons.app),
     backgroundColor: '#0a0d16',
     autoHideMenuBar: true,
-    show: false, // 初始隐藏，等加载完毕后再显示
+    show: true, // 初始直接显示窗口
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -57,6 +57,16 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     mainWindow.focus();
+  });
+
+  // 失败自动重试机制
+  mainWindow.webContents.on('did-fail-load', () => {
+    setTimeout(() => {
+      if (mainWindow) {
+        const freshToken = daemon.getToken();
+        mainWindow.loadURL(`http://127.0.0.1:${PORT}/?token=${encodeURIComponent(freshToken)}`);
+      }
+    }, 800);
   });
 
   // 拦截关闭事件，仅最小化/隐藏至托盘

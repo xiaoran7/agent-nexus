@@ -130,6 +130,7 @@ export function resolveProject(startDir) {
         return {
           projectId: hashProjectId(canonicalRoot),
           projectRoot: canonicalRoot,
+          displayName: resolveProjectDisplayName(rootToUse, canonicalRoot),
           marker,
           worktree: worktreeInfo
         };
@@ -149,9 +150,77 @@ export function resolveProject(startDir) {
   return {
     projectId: hashProjectId(fallbackRoot),
     projectRoot: fallbackRoot,
+    displayName: resolveProjectDisplayName(targetDir, fallbackRoot),
     marker: null,
     worktree: { isWorktree: false, name: null, worktreeRoot: fallbackRoot }
   };
+}
+
+/**
+ * 解析并提取用户友好、真实可读的项目展示名称
+ * 1. 优先提取物理文件系统路径真实大小写（Windows 下通过 fs.realpathSync.native 反查真实盘符与大小写）
+ * 2. 识别通用单层目录名（如 server, client, frontend, backend, web, app, ui, src），结合上一级目录组合命名（例如 solum/server）
+ * 3. 若路径在本地文件系统中不存在或不可寻址，回退为规范化路径的 basename（并处理跨平台与斜杠规范）
+ * 4. 若无路径且传入显式 ID：
+ *    - 'default' -> 'Default Project'
+ *    - 非 16-hex 纯哈希的自定义名称（如 'cliproxyapi', 'my-proj'）-> 去除冗余 'Project ' 前缀后返回
+ *    - 纯 16-hex 哈希（如 'b7e6c7a3e3b4182e'）-> 返回 'Project (b7e6c7)' 作为兜底
+ * 5. 全空回退为 'Default Project'
+ */
+export function resolveProjectDisplayName(rawPath, canonicalPath, explicitId) {
+  if (explicitId && typeof explicitId === 'string' && explicitId.toLowerCase() === 'default') {
+    return 'Default Project';
+  }
+
+  const candidatePath = rawPath || canonicalPath;
+  if (candidatePath && typeof candidatePath === 'string') {
+    try {
+      if (existsSync(candidatePath)) {
+        const nativePath = realpathSync.native ? realpathSync.native(candidatePath) : realpathSync(candidatePath);
+        const dirName = basename(nativePath);
+        const genericNames = new Set(['server', 'client', 'frontend', 'backend', 'web', 'app', 'ui', 'src']);
+        if (genericNames.has(dirName.toLowerCase())) {
+          const parentDir = basename(dirname(nativePath));
+          if (parentDir && parentDir !== '.' && parentDir !== '/' && parentDir !== '\\') {
+            return `${parentDir}/${dirName}`;
+          }
+        }
+        if (dirName && dirName !== '.' && dirName !== '/' && dirName !== '\\' && !dirName.includes(':')) {
+          return dirName;
+        }
+      }
+    } catch {}
+
+    const clean = candidatePath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const parts = clean.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      const dirName = parts[parts.length - 1];
+      const genericNames = new Set(['server', 'client', 'frontend', 'backend', 'web', 'app', 'ui', 'src']);
+      if (genericNames.has(dirName.toLowerCase()) && parts.length >= 2) {
+        const parentDir = parts[parts.length - 2];
+        if (parentDir && !parentDir.includes(':')) {
+          return `${parentDir}/${dirName}`;
+        }
+      }
+      if (dirName && !dirName.includes(':')) {
+        return dirName;
+      }
+    }
+  }
+
+  if (explicitId && typeof explicitId === 'string') {
+    const cleanId = explicitId.replace(/^Project\s+/i, '').trim();
+    if (!cleanId || cleanId.toLowerCase() === 'default') {
+      return 'Default Project';
+    }
+    // 如果不是 16 位 16 进制小写 hash，说明是用户显式命名的项目标识符（例如 cliproxyapi）
+    if (!/^[0-9a-f]{16}$/i.test(cleanId)) {
+      return cleanId;
+    }
+    return `Project (${cleanId.slice(0, 6)})`;
+  }
+
+  return 'Default Project';
 }
 
 function isPathAbsolute(p) {

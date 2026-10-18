@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-10-18 优化桌面端主窗口就绪呈现与加载失败自动重试机制 (Desktop Window Reliability)
+
+### 改了什么
+
+- **桌面端主窗口呈现与重连韧性 (`desktop/main.cjs`)**：
+  - **默认直接呈现**：窗口初始化设置 `show: true`，结合 `ready-to-show` 事件，彻底避免因 Electron 渲染或网络探针时延导致的窗口长时间隐藏问题；
+  - **网络失败自动重试机制 (`did-fail-load`)**：监听 WebContents 加载失败事件，若后台守护进程冷启动尚未完全就绪，800ms 后自动重新读取最新的免密 Token 并重新加载控制台 URL，实现完全自愈；
+  - **项目可读名称解析完善 (`src/domain/project.js`, `src/domain/project-registry.js`, `src/daemon/coordinator.js`)**：增强真实物理路径大小写反查，彻底根除存量哈希显示，提升多工程统览可读性；
+  - **打包产物直接验证**：最新生成的独立安装包 `Agent-Nexus.exe` 与后台守护进程双双启动并在用户屏幕上成功渲染。
+- **全量测试通过**：236 项核心单元与集成测试保持 100% 绿色通过。
+
+---
+
 ## 2026-10-18 v0.2.7 开源生态全景覆盖、AI 深度检索增强与社区物料矩阵 (Ecosystem, Deep GEO & Launch Kit)
 
 ### 改了什么

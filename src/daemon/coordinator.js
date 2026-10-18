@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { normalize, resolve, isAbsolute } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import { ValidationError, requireString } from '../domain/errors.js';
+import { resolveProjectDisplayName } from '../domain/project.js';
 
 export { ValidationError };
 
@@ -278,13 +279,25 @@ export class CoordinatorEngine {
     if (workspaceDir && finalProjectId) {
       try {
         const canonicalRoot = toComparablePath(workspaceDir);
+        const displayName = resolveProjectDisplayName(workspaceDir, canonicalRoot, finalProjectId);
         this.db.prepare(`
           INSERT INTO projects (id, root_path, display_name, created_at, last_activity)
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
+            display_name = CASE
+              WHEN excluded.display_name IS NOT NULL
+                AND excluded.display_name != ''
+                AND NOT excluded.display_name LIKE 'Project %'
+              THEN excluded.display_name
+              WHEN projects.display_name IS NULL
+                OR projects.display_name = ''
+                OR projects.display_name LIKE 'Project %'
+              THEN excluded.display_name
+              ELSE projects.display_name
+            END,
             last_activity = excluded.last_activity
-        `).run(finalProjectId, canonicalRoot, `Project ${finalProjectId}`, now, now);
+        `).run(finalProjectId, canonicalRoot, displayName, now, now);
       } catch {}
     }
 
