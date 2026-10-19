@@ -350,13 +350,19 @@ async function fetchDashboard() {
     }
     if (!res.ok) return;
     const data = await res.json();
-    renderMetrics(data);
-    renderLanes(data.activeClaims || [], data.agents || []);
-    renderAgents(data.agents || [], data.activeClaims || []);
-    renderTimeline(data.timeline || []);
+    renderDashboardSnapshot(data);
   } catch (err) {
     console.error('Fetch dashboard error:', err);
   }
+}
+
+// 统一态势渲染：/api/dashboard 响应与 WebSocket init:state / sync:response 快照共用
+function renderDashboardSnapshot(data) {
+  if (!data) return;
+  renderMetrics(data);
+  renderLanes(data.activeClaims || [], data.agents || []);
+  renderAgents(data.agents || [], data.activeClaims || []);
+  renderTimeline(data.timeline || []);
 }
 
 // 施工泳道渲染
@@ -2145,7 +2151,9 @@ function connectWebSocket() {
         if (payload.type === 'init:state' || payload.type === 'sync:response') {
           if (payload.data?.snapshot) {
             currentDashboardData = payload.data.snapshot;
-            renderDashboard(payload.data.snapshot);
+            // 快照与 /api/dashboard 响应结构一致，直接走同一组渲染器；
+            // 早先调用的 renderDashboard 从未定义，会让整段推送处理抛错中断。
+            renderDashboardSnapshot(payload.data.snapshot);
           }
           if (payload.data?.cockpit) {
             currentCockpitData = payload.data.cockpit;

@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-10-19 WebSocket 全量快照渲染中断修复 (WebSocket Snapshot Render Fix)
+
+### 改了什么
+
+- **根除 `init:state` / `sync:response` 推送处理中的未定义函数崩溃 (`src/ui/app.js`)**：
+  - 长连接建立或前端发起 `sync:request` 时，服务端会主动推送完整态势快照（`snapshot` 结构为 `{ agents, activeClaims, timeline }`，与 `GET /api/dashboard` 响应同构）；
+  - 但前端处理分支调用的是从未定义过的 `renderDashboard(payload.data.snapshot)`，每次推送都抛 `ReferenceError: renderDashboard is not defined`，被 `ws.onmessage` 的 `try/catch` 吞掉，导致该分支后续的驾驶舱渲染与拓扑/看板刷新逻辑被整段跳过；
+  - 现将态势渲染抽取为统一入口 `renderDashboardSnapshot(data)`，由 `fetchDashboard()` 与 WebSocket 推送分支共用，保证两条数据通路渲染行为完全一致，并补充快照结构同构的注释说明。
+
+### 验证
+
+- `node --check src/ui/app.js` 通过；`npm test` 245 项全通过；
+- 浏览器实测：重载后控制台无任何 `ReferenceError`，`currentDashboardData` 正常持有 13 个会话快照，指标卡、施工泳道、会话巡检表与时间线均随推送即时刷新。
+
+---
+
 ## 2026-10-19 动态工程探测架构证明、虚拟全景冲突根除与全界面视觉呼吸间距重构 (Dynamic Workspace Provenance, 'all' Conflict Fix & UI Spacing Overhaul)
 
 ### 改了什么
