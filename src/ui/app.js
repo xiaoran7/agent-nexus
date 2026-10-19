@@ -288,14 +288,26 @@ async function loadProjects() {
     const list = await res.json();
     if (!list || list.length === 0 || !dom.projectSelector) return;
 
+    // 过滤保留的虚拟全景 'all' 标识与无效 ID，并依据 id 严格去重
+    const validProjects = list.filter(p => p && p.id && p.id !== 'all' && p.id !== '');
+    const seen = new Set();
+    const uniqueProjects = [];
+    for (const p of validProjects) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        uniqueProjects.push(p);
+      }
+    }
+
     // 优先读取本地持久化项目，若无则优先选取有真实活跃度或非 default 的有效项目
     const savedProjectId = localStorage.getItem('nexusProjectId');
-    let targetProject = savedProjectId === 'all' ? { id: 'all' } : list.find(p => p.id === savedProjectId);
+    let targetProject = savedProjectId === 'all' ? { id: 'all' } : uniqueProjects.find(p => p.id === savedProjectId);
     if (!targetProject) {
-      targetProject = list.find(p => p.id === 'Agent-Nexus') ||
-                      list.find(p => p.id !== 'default' && (p.last_activity > 0 || p.node_count > 0)) ||
-                      list.find(p => p.id !== 'default') ||
-                      list[0];
+      targetProject = uniqueProjects.find(p => p.id === 'Agent-Nexus') ||
+                      uniqueProjects.find(p => p.id !== 'default' && (p.last_activity > 0 || p.node_count > 0)) ||
+                      uniqueProjects.find(p => p.id !== 'default') ||
+                      uniqueProjects[0] ||
+                      { id: 'all' };
     }
 
     if (targetProject) {
@@ -304,10 +316,10 @@ async function loadProjects() {
     }
 
     const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>全部项目 (跨工程协同全景)</option>`;
-    const projectOptions = list.map(p => {
+    const projectOptions = uniqueProjects.map(p => {
       const idSafe = escapeHtml(p.id);
       const nameSafe = escapeHtml(p.display_name || p.id);
-      const selected = p.id === currentProjectId ? 'selected' : '';
+      const selected = (p.id === currentProjectId && currentProjectId !== 'all') ? 'selected' : '';
       return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
     }).join('');
 

@@ -37,6 +37,8 @@ export class ProjectRegistry {
 
   backfillProjectDisplayNames() {
     try {
+      // 清除历史测试遗留的虚拟全景 'all' 脏记录与空 id 脏记录
+      this.db.prepare("DELETE FROM projects WHERE id = 'all' OR id = ''").run();
       const rows = this.db.prepare('SELECT id, root_path, display_name FROM projects').all();
       const updateStmt = this.db.prepare('UPDATE projects SET display_name = ? WHERE id = ?');
       for (const row of rows) {
@@ -51,6 +53,7 @@ export class ProjectRegistry {
   }
 
   ensureProject(projectId, rootPath = '', displayName = null) {
+    if (!projectId || projectId === 'all') return null;
     const now = Date.now();
     const finalName = displayName || resolveProjectDisplayName(rootPath, rootPath, projectId);
     this.db.prepare(`
@@ -75,6 +78,7 @@ export class ProjectRegistry {
   }
 
   getProject(projectId) {
+    if (!projectId || projectId === 'all') return null;
     const project = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) || null;
     if (project && (!project.display_name || /^Project\s+[0-9a-f]{16}$/i.test(project.display_name) || project.display_name === `Project ${project.id}`)) {
       project.display_name = resolveProjectDisplayName(project.root_path, project.root_path, project.id);
@@ -83,7 +87,8 @@ export class ProjectRegistry {
   }
 
   listProjects() {
-    const projects = this.db.prepare('SELECT * FROM projects ORDER BY last_activity DESC').all();
+    // 强制排除保留的虚拟全景 'all' 与空 id，确保下拉选单主权清晰且无冲突
+    const projects = this.db.prepare("SELECT * FROM projects WHERE id != 'all' AND id != '' ORDER BY last_activity DESC").all();
     return projects.map(p => {
       if (!p.display_name || /^Project\s+[0-9a-f]{16}$/i.test(p.display_name) || p.display_name === `Project ${p.id}`) {
         return {
@@ -98,7 +103,9 @@ export class ProjectRegistry {
   getOrCreateLead(projectId) {
     const finalId = projectId || 'default';
     if (!this.leads.has(finalId)) {
-      this.ensureProject(finalId);
+      if (finalId !== 'all') {
+        this.ensureProject(finalId);
+      }
       const adapter = this.llmAdapterFactory(finalId);
       const lead = new ProjectLead(finalId, this.coordinator, this.eventBus, adapter, this.memoryService);
       this.leads.set(finalId, lead);

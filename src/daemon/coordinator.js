@@ -452,7 +452,7 @@ export class CoordinatorEngine {
             END
         `).run(agentId, projectId, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid);
 
-        if (sess.cwd && projectId) {
+        if (sess.cwd && projectId && projectId !== 'all') {
           try {
             const canonicalRoot = toComparablePath(sess.cwd);
             const displayName = resolveProjectDisplayName(sess.cwd, canonicalRoot, projectId);
@@ -515,7 +515,7 @@ export class CoordinatorEngine {
     `);
     stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid, cleanTool, cleanAction, cleanTarget);
 
-    if (workspaceDir && finalProjectId) {
+    if (workspaceDir && finalProjectId && finalProjectId !== 'all') {
       try {
         const canonicalRoot = toComparablePath(workspaceDir);
         const displayName = resolveProjectDisplayName(workspaceDir, canonicalRoot, finalProjectId);

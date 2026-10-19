@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-10-19 动态工程探测架构证明、虚拟全景冲突根除与全界面视觉呼吸间距重构 (Dynamic Workspace Provenance, 'all' Conflict Fix & UI Spacing Overhaul)
+
+### 改了什么
+
+- **工作区数据源动态性证明与管道加固 (`src/domain/project.js`, `src/daemon/coordinator.js`, `src/hook/nexus-hook.mjs`)**：
+  - 彻底澄清并加固工作区数据源的动态自适应探测机制，证明 100% 动态发现与实时感知，绝无任何静态硬编码：
+    - **本地桌面会话穿透发现**：`getClaudeSessionRegistry()` 动态遍历扫描用户宿主机 `~/.claude/sessions/*.json`，实时提取每个活跃会话的真实 `cwd` 物理路径与窗口元数据；
+    - **终端底层 Hook 拦截上报**：各终端触发 `PreToolUse` 时通过 `src/hook/nexus-hook.mjs` 动态向后台上报调用现场的实际 `workspace_dir`；
+    - **根目录边界与工程命名解析**：`resolveProject(cwd)` 沿着真实物理路径向上探测多级锚点（`.nexus` > `.git` > `package.json` > `CLAUDE.md`）生成全局唯一哈希 ID；`resolveProjectDisplayName` 则智能识别跨多级目录与工作树结构（如 `solum/server` 等），实现零配置自适应感知。
+- **根除虚拟全景标识 `all` 与“全部项目”命名冲突与重复高亮缺陷 (`src/domain/project-registry.js`, `src/daemon/coordinator.js`, `src/ui/app.js`)**：
+  - **后端数据库与治理防线**：
+    - `ensureProject` 与 `getOrCreateLead` 设置核心门禁，阻断虚拟保留查询标识 `all` 或空字符串作为实体项目插入 `projects` 数据表；
+    - `backfillProjectDisplayNames` 在初始化时自动清理历史测试遗留的 `id = 'all'` 脏行；
+    - `listProjects` 强制执行 `WHERE id != 'all' AND id != ''` 过滤，确保返回的实体项目字典绝对纯净。
+  - **前端下拉选单单点高亮与严格去重**：
+    - `src/ui/app.js` 的 `loadProjects` 增加二次安全过滤与 `Set` 唯一去重；
+    - 选项拼接时，仅当 `currentProjectId === 'all'` 时高亮顶部首项 `全部项目 (跨工程协同全景)`，实体列表中的项目仅在真实选中且 `currentProjectId !== 'all'` 时标记 `selected`，彻底根除选中全景时折叠框被后面覆盖显示为英文 `all` 的错位缺陷。
+- **全界面视觉呼吸感、表格与指标网格间距全面调优 (`src/ui/style.css`)**：
+  - **核心指标卡片 Grid 布局规则补齐**：将 `index.html` 中采用的 `.collab-metric-grid` 与 `.collab-metric-box` 纳入网格样式声明，补全 `display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;` 及移动端/平板自适应媒体查询（`repeat(2, 1fr)` 与 `1fr`），彻底解决之前因缺失 CSS 规则导致的卡片紧贴堆叠与无间距问题；
+  - **项目下拉选单尺寸与触控留白重构**：`.proj-select` 采用 `appearance: none;` 清除原生系统样式，配置高对比度自适应 SVG 展开小箭头与 `padding: 7px 32px 7px 14px;`，并设置 `min-width: 180px; max-width: 260px;` 与 `text-overflow: ellipsis;`，彻底根除文字挤压与紧贴右边界的视觉压迫感；
+  - **态势巡检表格与卡片间距舒适化**：表格表头与单元格内边距由 `10px 14px` / `12px 14px` 优化升级为 `12px 16px` / `14px 16px`，卡片悬浮过渡增加平滑微位移与阴影，全面提升信息可读性与呼吸韵律。
+
+---
+
 ## 2026-10-19 全面去 Emoji 工业化升级与 WCAG AA 双模态对比度重构 (Zero-Emoji Industrial UI & WCAG AA Contrast Overhaul)
 
 ### 改了什么
