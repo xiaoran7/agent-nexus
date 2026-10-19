@@ -38,16 +38,7 @@
 
     <!-- View Mode Switcher: 现代圆润胶囊 Tabs -->
     <div class="view-tabs" id="view-tabs">
-      <button id="tab-war-room" class="view-tab active">
-        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7" rx="2"></rect>
-          <rect x="14" y="3" width="7" height="7" rx="2"></rect>
-          <rect x="14" y="14" width="7" height="7" rx="2"></rect>
-          <rect x="3" y="14" width="7" height="7" rx="2"></rect>
-        </svg>
-        <span>协同看板</span>
-      </button>
-      <button id="tab-collab" class="view-tab">
+      <button id="tab-collab" class="view-tab active">
         <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="6" cy="6" r="3"></circle>
           <circle cx="18" cy="6" r="3"></circle>
@@ -60,6 +51,15 @@
         </svg>
         <span>实时协同图谱</span>
         <span id="collab-tab-badge" class="badge-tab-healthy">全景实时</span>
+      </button>
+      <button id="tab-war-room" class="view-tab">
+        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="2"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="2"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="2"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="2"></rect>
+        </svg>
+        <span>协同看板</span>
       </button>
       <button id="tab-topology" class="view-tab">
         <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -130,7 +130,7 @@
     <!-- ========================================== -->
     <!-- VIEW 1: War Room (多 Agent 协同与泳道)      -->
     <!-- ========================================== -->
-    <div id="view-war-room" class="view-pane active">
+    <div id="view-war-room" class="view-pane">
       <!-- 0. Tech Lead Status Banner (常驻架构师协同视窗) -->
       <div class="lead-banner">
         <div class="lead-header-row">
@@ -310,7 +310,7 @@
     <!-- ========================================== -->
     <!-- VIEW 2: Live Multi-Session Collaboration Graph -->
     <!-- ========================================== -->
-    <div id="view-collab" class="view-pane">
+    <div id="view-collab" class="view-pane active">
       <!-- 1. Collaboration Graph Hero Banner -->
       <section class="collab-hero-panel">
         <div class="collab-hero-header">

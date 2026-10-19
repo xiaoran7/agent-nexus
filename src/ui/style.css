@@ -233,7 +233,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
-  padding-bottom: 90px;
+  padding-bottom: 120px;
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
@@ -245,8 +245,9 @@ body {
    ============================================================================= */
 
 header {
-  height: 68px;
-  padding: 0 32px;
+  min-height: 68px;
+  height: auto;
+  padding: 10px 28px;
   background: var(--header-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -254,7 +255,8 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
+  flex-wrap: wrap;
   position: sticky;
   top: 0;
   z-index: 50;
@@ -332,26 +334,33 @@ header {
 .view-tabs {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   background: var(--tabs-bg);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
-  padding: 4px;
+  padding: 3px;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
   flex-shrink: 0;
   white-space: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.view-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .view-tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 18px;
+  gap: 6px;
+  padding: 6px 14px;
   border-radius: var(--radius-pill);
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -2288,14 +2297,15 @@ header {
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(1080px, calc(100% - 40px));
+  width: min(1080px, calc(100% - 32px));
   z-index: 60;
+  pointer-events: none;
 }
 
 .master-inner {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   background: var(--broadcast-bar-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -2304,6 +2314,8 @@ header {
   padding: 8px 14px 8px 18px;
   box-shadow: var(--broadcast-bar-shadow);
   transition: background 0.25s ease, border-color 0.25s ease;
+  pointer-events: auto;
+  max-width: 100%;
 }
 
 .master-badge {
@@ -2314,10 +2326,12 @@ header {
   font-weight: 700;
   color: var(--sky-primary);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .master-input {
   flex: 1;
+  min-width: 120px;
   background: transparent;
   border: none;
   color: var(--text-main);
@@ -2596,9 +2610,24 @@ footer {
 /* 1. 平板与窄桌面视口 (<= 1200px) */
 @media (max-width: 1200px) {
   header {
-    padding: 12px 20px;
+    padding: 10px 16px;
     flex-wrap: wrap;
     gap: 12px;
+  }
+
+  .brand-container {
+    order: 1;
+  }
+
+  .top-right-meta {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .view-tabs {
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .app-main {
@@ -2768,6 +2797,39 @@ footer {
     right: -100vw;
     border-radius: 0;
     padding: 20px 16px;
+  }
+
+  .master-bar {
+    bottom: 12px;
+    width: calc(100% - 24px);
+  }
+
+  .master-inner {
+    border-radius: var(--radius-md);
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  .master-input {
+    width: 100%;
+    flex: 1 1 100%;
+    order: 2;
+  }
+
+  .master-badge {
+    order: 1;
+  }
+
+  .master-urgency {
+    order: 3;
+    margin-left: auto;
+  }
+
+  .master-btn {
+    order: 4;
+    padding: 6px 14px;
+    font-size: 12px;
   }
 
   footer {

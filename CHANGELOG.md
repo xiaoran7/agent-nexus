@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-19 离线会话过滤、后端施工态势打通、响应式布局修复与协同图谱默认主视图 (Active-Only Filtering & Responsive Graph)
+
+### 改了什么
+
+- **严格剔除离线会话，只展示施工中与排队中助手 (`src/daemon/coordinator.js`, `src/ui/app.js`)**：
+  - 响应用户“不要显示离线的 session，只显示在工作的和等待的”铁律，从协同看板、在席列表和协同图谱中彻底清除历史离线（`departed`）会话卡片；
+  - 彻底删除历史离线会话折叠面板，界面仅呈现真实在线施工（`working`）与排队等待（`waiting`）的高信噪比内容；
+  - 后端协同图谱自动过滤离线节点与悬空连接边。
+- **消除指标矛盾，打通真实后端施工态势 (`src/daemon/coordinator.js`, `src/hook/nexus-hook.mjs`, `src/ui/app.js`)**：
+  - 彻底消除顶部架构师视窗与下方指标卡口径不一致的矛盾，统一基于四级状态机 `lifecycle_state` 进行精准统计，真实反映施工与排队会话数；
+  - 引入写工具白名单判定机制（`WRITE_TOOLS_SET`），精确识别 `Write`、`Edit`、`MultiEdit`、`NotebookEdit`、`Update`、`apply_patch` 等写操作工具并计入施工态，只读分析工具（`Read`、`Grep`、`Glob`）保持待命，杜绝状态误判；
+  - 修复 PreToolUse Hook 中遥测上报与进程退出的异步竞态问题，改用 `await reportTelemetry(...)` 阻塞上报（带 400ms 超时保护），确保进程退出前遥测数据稳定上报中枢。
+- **协同图谱升级为系统第一主视图 (`src/ui/index.html`, `src/ui/app.js`)**：
+  - 将“多 Session 实时协同防撞车图谱”设定为系统默认主选 Tab 与呈现界面，打开即见直观图形；
+  - 以 SVG 动态贝塞尔曲线、流光动画与清晰的二分图谱形式，呈现各会话正在改动的文件、持有的互斥锁与排队因果关系。
+- **自适应响应式布局与防组件堆叠修复 (`src/ui/style.css`, `src/ui/index.html`)**：
+  - 顶栏全面改为流式自适应高度（`min-height: 68px; height: auto; flex-wrap: wrap;`），并在窄屏视口（<= 1200px）下使 Tabs 弹性折行流式排列，彻底解决“综合全览”Tab 溢出截断 Bug；
+  - 底部悬浮全员广播栏优化弹性容器包裹与内边距，小屏下输入框与操作按钮自适应流式排版，外层容器开启 `pointer-events: none` 保护；
+  - `body` 底部内边距扩展至 `120px`，主视窗垂直滚动顺畅，彻底消除底部遮挡。
+- **全量测试与规范交付 (`test/collaboration-lifecycle.test.js`)**：
+  - 验证全部 242 项单元测试 100% 通过；
+  - 严格遵守全局工程规范执行打包与交付。
+
+---
+
 ## 2026-10-19 数据库乱码彻底清洗、Session 4-Tier 状态机与多会话实时协同防撞车图谱 (Collaboration Graph & Lifecycle Clean)
 
 ### 改了什么

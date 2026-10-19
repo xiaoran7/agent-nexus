@@ -186,6 +186,19 @@ function assertClaimTarget(raw, claimType, baseDir, projectRoot) {
   return { type: claimType, target: normalized };
 }
 
+// 只有真正改文件的写工具或排他执行才计入正在施工状态
+const WRITE_TOOLS_SET = new Set([
+  'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update', 'apply_patch'
+]);
+
+function isExecutingWorkingTool(tool, heartbeat, now) {
+  if (!tool) return false;
+  if (WRITE_TOOLS_SET.has(tool)) {
+    return (now - heartbeat) <= 60000;
+  }
+  return false;
+}
+
 export class CoordinatorEngine {
   constructor(db, eventBus) {
     this.db = db;
@@ -1344,9 +1357,9 @@ export class CoordinatorEngine {
 
       let lifecycleState = 'departed';
       if (isOnline) {
-        if ((a.active_leases_count || 0) > 0) {
+        if ((a.active_leases_count || 0) > 0 || a.status === 'running' || a.current_intent_status === 'running' || a.current_intent_status === 'granted' || isExecutingWorkingTool(a.last_tool, a.last_heartbeat, now)) {
           lifecycleState = 'working';
-        } else if (a.current_intent_status === 'waiting') {
+        } else if (a.current_intent_status === 'waiting' || a.status === 'waiting' || a.blocked_reason) {
           lifecycleState = 'waiting';
         } else {
           lifecycleState = 'idle';
@@ -1442,10 +1455,10 @@ export class CoordinatorEngine {
 
       let lifecycleState = 'departed';
       if (isOnline) {
-        if ((a.active_leases_count || 0) > 0) {
+        if ((a.active_leases_count || 0) > 0 || a.status === 'running' || a.current_intent_status === 'running' || a.current_intent_status === 'granted' || isExecutingWorkingTool(a.last_tool, a.last_heartbeat, now)) {
           lifecycleState = 'working';
           workingCount++;
-        } else if (a.current_intent_status === 'waiting') {
+        } else if (a.current_intent_status === 'waiting' || a.status === 'waiting' || a.blocked_reason) {
           lifecycleState = 'waiting';
           waitingCount++;
         } else {
@@ -1454,6 +1467,11 @@ export class CoordinatorEngine {
         }
       } else {
         departedCount++;
+      }
+
+      // 彻底排除已离线的 session，只保留在线会话（避免历史离线僵尸节点污染拓扑）
+      if (lifecycleState === 'departed') {
+        continue;
       }
 
       const safeName = sanitizeAgentName(a.name, a.id, a.provider, a.session_id);
@@ -1526,6 +1544,9 @@ export class CoordinatorEngine {
       }
     }
 
+    const validNodeIds = new Set(nodes.map(n => n.id));
+    const cleanEdges = edges.filter(e => validNodeIds.has(e.source) && validNodeIds.has(e.target));
+
     return {
       project_id: finalProjectId || 'all',
       timestamp: now,
@@ -1536,10 +1557,10 @@ export class CoordinatorEngine {
         idle_sessions: idleCount,
         departed_sessions: departedCount,
         locked_resources: resourceNodeMap.size,
-        active_edges: edges.length
+        active_edges: cleanEdges.length
       },
       nodes,
-      edges
+      edges: cleanEdges
     };
   }
 }

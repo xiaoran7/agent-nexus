@@ -340,27 +340,40 @@ function renderLanes(claims, agents) {
 
 function renderMetrics(data) {
   const agents = data.agents || [];
-  if (dom.metricTotalAgents) dom.metricTotalAgents.textContent = agents.length;
-  if (dom.metricRunning) dom.metricRunning.textContent = agents.filter(a => a.status === 'running').length;
-  if (dom.metricWaiting) dom.metricWaiting.textContent = agents.filter(a => a.status === 'waiting').length;
+  // 严格依据四级生命周期状态机统计真实活跃会话：
+  // 1. working: 持有活跃文件租约、运行态意图或正在调用写工具改代码
+  // 2. waiting: 因锁冲突正在排队等待
+  const workingCount = agents.filter(a => a.lifecycle_state === 'working').length;
+  const waitingCount = agents.filter(a => a.lifecycle_state === 'waiting').length;
+  const activeCount = workingCount + waitingCount;
 
-  // 动态同步 Tech Lead 架构师视窗
-  updateLeadConsole(agents);
+  if (dom.metricTotalAgents) dom.metricTotalAgents.textContent = activeCount;
+  if (dom.metricRunning) dom.metricRunning.textContent = workingCount;
+  if (dom.metricWaiting) dom.metricWaiting.textContent = waitingCount;
+
+  // 动态同步 Tech Lead 架构师视窗，消除数据二义性与指标矛盾
+  updateLeadConsole(agents, workingCount, waitingCount);
 }
 
-function updateLeadConsole(agents) {
+function updateLeadConsole(agents, workingCount, waitingCount) {
   if (!dom.leadStatusChip) return;
-  const activeCount = agents.filter(a => a.status !== 'departed').length;
 
   if (dom.leadSessionStats) {
-    dom.leadSessionStats.textContent = `${activeCount} 个会话正在干活`;
+    if (workingCount === 0 && waitingCount === 0) {
+      dom.leadSessionStats.textContent = '0 个在席施工会话';
+    } else if (waitingCount > 0) {
+      dom.leadSessionStats.textContent = `${workingCount} 个会话施工中 · ${waitingCount} 个排队中`;
+    } else {
+      dom.leadSessionStats.textContent = `${workingCount} 个会话正在干活`;
+    }
   }
 
+  const activeCount = workingCount + waitingCount;
   if (activeCount <= 1) {
     dom.leadStatusChip.className = 'lead-chip chip-silent';
     dom.leadStatusChip.textContent = '静默守望（单人施工不打扰）';
     if (dom.leadAdviceContainer && !dom.leadAdviceContainer.getAttribute('data-sticky')) {
-      dom.leadAdviceContainer.innerHTML = `[Nexus 架构师静默保驾] 当前只有单会话独立施工，架构师保持静默，绝不产生干扰。当检测到新会话带着并发修改计划加入时，将实时唤醒并提供避让重排与交接路线。`;
+      dom.leadAdviceContainer.innerHTML = `[Nexus 架构师静默保驾] 当前无多会话写冲突，架构师保持静默，绝不产生干扰。当检测到多个会话并发修改同一文件或排队时，将实时唤醒并提供避让重排与交接路线。`;
     }
   } else {
     dom.leadStatusChip.className = 'lead-chip chip-awakened';
@@ -399,29 +412,17 @@ function handleLeadAwakened(data) {
 
 function renderAgents(agents, activeClaims) {
   if (!dom.agentsContainer) return;
-  if (!agents || agents.length === 0) {
-    dom.agentsContainer.innerHTML = `
-      <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; color: var(--text-faint); font-size: 13px; border: 1px dashed var(--border-subtle); border-radius: 14px;">
-        当前项目暂无注册的 AI 会话。
-      </div>
-    `;
-    return;
-  }
 
-  const now = Date.now();
   const claimsList = activeClaims || [];
 
-  // 严格区分 4 种会话生命周期状态：
-  // 1. 在线施工中 (Working)：在线且持有独占文件/资源租约，或标记为 running
-  // 2. 排队等待中 (Waiting)：在线且因锁冲突受阻排队
-  // 3. 在线待命 (Idle)：在线但未持锁且未排队，随时候命
-  // 4. 历史离线 (Departed)：心跳超期且无存活 PID
+  // 用户铁律：不要显示离线的 session，只显示在工作的和等待的！
   const workingAgents = [];
   const waitingAgents = [];
-  const idleAgents = [];
-  const departedAgents = [];
 
-  for (const a of agents) {
+  for (const a of (agents || [])) {
+    // 严格过滤掉所有已离线会话，不渲染历史离线僵尸卡片
+    if (a.lifecycle_state === 'departed' || a.status === 'departed') continue;
+
     const claims = claimsList.filter(c => c.agent_id === a.id);
     const isWorking = a.lifecycle_state === 'working' ||
                       a.status === 'running' ||
@@ -433,21 +434,25 @@ function renderAgents(agents, activeClaims) {
       !!a.blocked_reason
     );
 
-    const isIdle = !isWorking && !isWaiting && (
-      a.lifecycle_state === 'idle' ||
-      a.status === 'idle' ||
-      (a.status !== 'departed' && ((now - a.last_heartbeat) <= 120000))
-    );
-
     if (isWorking) {
       workingAgents.push({ ...a, resolvedClaims: claims, stateClass: 'working', stateLabel: '在线施工中' });
     } else if (isWaiting) {
       waitingAgents.push({ ...a, resolvedClaims: claims, stateClass: 'waiting', stateLabel: '排队等待中' });
-    } else if (isIdle) {
-      idleAgents.push({ ...a, resolvedClaims: claims, stateClass: 'idle', stateLabel: '在线待命' });
-    } else {
-      departedAgents.push({ ...a, resolvedClaims: claims, stateClass: 'departed', stateLabel: '历史离线' });
     }
+  }
+
+  if (workingAgents.length === 0 && waitingAgents.length === 0) {
+    dom.agentsContainer.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 48px 24px; text-align: center; color: var(--text-faint); font-size: 14px; border: 1px dashed var(--border-subtle); border-radius: 16px; background: var(--card-nested);">
+        <div style="font-size: 16px; font-weight: 700; color: var(--text-title); margin-bottom: 8px;">
+          当前无正在施工或排队的助手
+        </div>
+        <div style="color: var(--text-muted); font-size: 13px;">
+          历史离线会话已自动隐去。当助手调用工具修改代码、独占持锁或因冲突排队等待时，将在此实时呈现。
+        </div>
+      </div>
+    `;
+    return;
   }
 
   function renderSingleAgentCard(a) {
@@ -514,73 +519,41 @@ function renderAgents(agents, activeClaims) {
     `;
   }
 
-  let html = `
-    <!-- 1. 在线施工中 -->
-    <div class="lifecycle-tier-group tier-working">
-      <div class="lifecycle-tier-header">
-        <div class="tier-heading-title">
-          <span class="tier-indicator-dot working"></span>
-          <span>在线施工中 (Working)</span>
-        </div>
-        <span class="tier-count-badge working">${workingAgents.length} 个会话</span>
-      </div>
-      <div class="agents-grid">
-        ${workingAgents.length > 0
-          ? workingAgents.map(renderSingleAgentCard).join('')
-          : '<div class="tier-empty-placeholder">当前无正在独占修改文件或执行重载的会话</div>'}
-      </div>
-    </div>
+  let html = '';
 
-    <!-- 2. 排队等待中 -->
-    <div class="lifecycle-tier-group tier-waiting">
-      <div class="lifecycle-tier-header">
-        <div class="tier-heading-title">
-          <span class="tier-indicator-dot waiting"></span>
-          <span>排队等待中 (Waiting)</span>
-        </div>
-        <span class="tier-count-badge waiting">${waitingAgents.length} 个会话</span>
-      </div>
-      <div class="agents-grid">
-        ${waitingAgents.length > 0
-          ? waitingAgents.map(renderSingleAgentCard).join('')
-          : '<div class="tier-empty-placeholder">施工道路通畅，无因锁冲突排队阻塞的会话</div>'}
-      </div>
-    </div>
-
-    <!-- 3. 在线待命 / 没有工作 -->
-    <div class="lifecycle-tier-group tier-idle">
-      <div class="lifecycle-tier-header">
-        <div class="tier-heading-title">
-          <span class="tier-indicator-dot idle"></span>
-          <span>在线待命 / 准备就绪 (Idle)</span>
-        </div>
-        <span class="tier-count-badge idle">${idleAgents.length} 个会话</span>
-      </div>
-      <div class="agents-grid">
-        ${idleAgents.length > 0
-          ? idleAgents.map(renderSingleAgentCard).join('')
-          : '<div class="tier-empty-placeholder">当前无在线待命会话</div>'}
-      </div>
-    </div>
-  `;
-
-  // 4. 历史离线（折叠呈现，杜绝喧宾夺主打扰施工）
-  if (departedAgents.length > 0) {
+  if (workingAgents.length > 0) {
     html += `
-      <details class="departed-accordion">
-        <summary class="departed-summary">
-          <div class="departed-title">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            </svg>
-            <span>历史离线会话归档 (${departedAgents.length} 个)</span>
+      <!-- 1. 在线施工中 -->
+      <div class="lifecycle-tier-group tier-working">
+        <div class="lifecycle-tier-header">
+          <div class="tier-heading-title">
+            <span class="tier-indicator-dot working"></span>
+            <span>在线施工中 (Working)</span>
           </div>
-          <span class="departed-hint">点击展开 / 收起历史已离线助手记录</span>
-        </summary>
-        <div class="agents-grid departed-grid">
-          ${departedAgents.map(renderSingleAgentCard).join('')}
+          <span class="tier-count-badge working">${workingAgents.length} 个会话</span>
         </div>
-      </details>
+        <div class="agents-grid">
+          ${workingAgents.map(renderSingleAgentCard).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (waitingAgents.length > 0) {
+    html += `
+      <!-- 2. 排队等待中 -->
+      <div class="lifecycle-tier-group tier-waiting">
+        <div class="lifecycle-tier-header">
+          <div class="tier-heading-title">
+            <span class="tier-indicator-dot waiting"></span>
+            <span>排队等待中 (Waiting)</span>
+          </div>
+          <span class="tier-count-badge waiting">${waitingAgents.length} 个会话</span>
+        </div>
+        <div class="agents-grid">
+          ${waitingAgents.map(renderSingleAgentCard).join('')}
+        </div>
+      </div>
     `;
   }
 
@@ -799,7 +772,7 @@ if (dom.refreshDialogueBtn) {
 // ==========================================
 // View Switcher (War Room / Topology / Live Collaboration Graph / Unified)
 // ==========================================
-let currentViewMode = 'war-room';
+let currentViewMode = 'collab';
 
 function setViewMode(mode) {
   currentViewMode = mode;
@@ -1405,12 +1378,13 @@ function redrawCollabEdges() {
 function renderCollabTable(data) {
   if (!dom.collabTableBody) return;
 
-  const sessionNodes = (data.nodes || []).filter(n => n.node_type === 'session');
+  // 严格过滤掉已离线会话，只展示活跃协同会话
+  const sessionNodes = (data.nodes || []).filter(n => n.node_type === 'session' && n.lifecycle_state !== 'departed');
   if (sessionNodes.length === 0) {
     dom.collabTableBody.innerHTML = `
       <tr>
         <td colspan="7" style="text-align: center; color: var(--text-faint); padding: 30px;">
-          当前项目暂无活跃会话记录。
+          当前项目暂无在席施工或待命会话记录（离线会话已自动隐去）。
         </td>
       </tr>
     `;
@@ -1483,8 +1457,9 @@ if (statusEl && window.location.host) {
 
 const urlTab = new URLSearchParams(window.location.search).get('tab') || (window.location.hash ? window.location.hash.slice(1) : null);
 if (urlTab && ['war-room', 'topology', 'collab', 'unified'].includes(urlTab)) {
-  setViewMode(urlTab);
+  currentViewMode = urlTab;
 }
+setViewMode(currentViewMode);
 
 loadProjects();
 fetchDashboard();

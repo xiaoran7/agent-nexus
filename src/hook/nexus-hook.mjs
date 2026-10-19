@@ -320,17 +320,19 @@ async function main() {
     : (toolTarget ? `${toolName} ${basename(toolTarget)}` : toolName);
 
   if (toolName) {
-    reportTelemetry({
-      agent_id: identity.agentId,
-      provider: identity.provider,
-      session_id: identity.sessionId,
-      tool: toolName,
-      action: toolAction,
-      target: toolTarget,
-      workspace_dir: workspaceDir,
-      project_id: projectInfo.projectId,
-      pid: identity.pid
-    }).catch(() => {});
+    try {
+      await reportTelemetry({
+        agent_id: identity.agentId,
+        provider: identity.provider,
+        session_id: identity.sessionId,
+        tool: toolName,
+        action: toolAction,
+        target: toolTarget,
+        workspace_dir: workspaceDir,
+        project_id: projectInfo.projectId,
+        pid: identity.pid
+      });
+    } catch {}
   }
 
   // 1. 优先检查生命周期动作：若执行 git commit / git push，说明当前施工单元完结，零感释放持有的所有租约
