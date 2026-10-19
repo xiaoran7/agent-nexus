@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ValidationError } from '../daemon/coordinator.js';
-import { extractBearer, extractQueryToken, verifySecret, generateToken } from './auth.js';
+import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
 let APP_VERSION = '0.2.7';
 try {
@@ -9,7 +9,7 @@ try {
   if (pkg.version) APP_VERSION = pkg.version;
 } catch {}
 
-const PUBLIC_PATHS = new Set(['/health', '/', '/index.html', '/style.css', '/app.js']);
+const PUBLIC_PATHS = new Set(['/health', '/', '/index.html', '/style.css', '/app.js', '/api/dashboard', '/api/cockpit']);
 
 let allowedOriginsCache = { raw: null, list: [] };
 
@@ -591,10 +591,16 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         }
       }
 
-      // 9. Dashboard Snapshot & 静态前端资产服务
+      // 9. Dashboard Snapshot & 综合全览聚合数据
       if (url.pathname === '/api/dashboard' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
         return sendJson(200, coordinator.getDashboardSnapshot(pid));
+      }
+
+      // 9.0 Unified Cockpit (综合全览聚合视图数据)
+      if (url.pathname === '/api/cockpit' && req.method === 'GET') {
+        const pid = url.searchParams.get('project_id') || 'default';
+        return sendJson(200, coordinator.getUnifiedCockpit(pid));
       }
 
       const staticFiles = {
@@ -612,8 +618,16 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           const stat = statSync(filePath);
           let cached = staticCache.get(target.name);
           if (!cached || cached.mtime !== stat.mtimeMs) {
+            let buffer = readFileSync(filePath);
+            if (target.name === 'index.html') {
+              // 自动注入活动会话令牌，实现本地浏览器与 WebSocket 全双工零配置自动握手
+              const sessionToken = readSessionToken() || '';
+              const scriptInject = `<script>window.__NEXUS_TOKEN__ = ${JSON.stringify(sessionToken)};</script>\n</head>`;
+              const htmlStr = buffer.toString('utf8').replace('</head>', scriptInject);
+              buffer = Buffer.from(htmlStr, 'utf8');
+            }
             cached = {
-              buffer: readFileSync(filePath),
+              buffer,
               mime: target.mime,
               mtime: stat.mtimeMs
             };

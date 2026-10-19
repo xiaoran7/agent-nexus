@@ -1,7 +1,7 @@
 import { WebSocketServer } from 'ws';
 import { extractQueryToken, verifySecret } from './auth.js';
 
-export function createWsServer(httpServer, eventBus, tokenStore) {
+export function createWsServer(httpServer, eventBus, tokenStore, coordinator = null) {
   const wss = new WebSocketServer({ noServer: true });
 
   // 在 HTTP upgrade 阶段就拒绝，不要先握手再关。
@@ -34,6 +34,45 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
     ws.on('pong', () => {
       ws.isAlive = true;
     });
+
+    // 全双工长连接连接建立即刻主动下发全景初始化状态 (init:state)
+    // 零延迟建立全态势同步，告别原始轮询
+    if (coordinator) {
+      try {
+        const snapshot = coordinator.getDashboardSnapshot('default');
+        const cockpit = coordinator.getUnifiedCockpit('default');
+        ws.send(JSON.stringify({
+          type: 'init:state',
+          data: {
+            snapshot,
+            cockpit,
+            timestamp: Date.now()
+          }
+        }), () => {});
+      } catch (err) {
+        console.error('[Agent-Nexus] Failed to push init:state to WS client:', err);
+      }
+    }
+
+    // 处理客户端全双工双向交互请求
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }), () => {});
+        } else if (msg.type === 'sync:request') {
+          if (coordinator) {
+            const pid = msg.project_id || 'default';
+            const snapshot = coordinator.getDashboardSnapshot(pid);
+            const cockpit = coordinator.getUnifiedCockpit(pid);
+            ws.send(JSON.stringify({
+              type: 'sync:response',
+              data: { snapshot, cockpit, timestamp: Date.now() }
+            }), () => {});
+          }
+        }
+      } catch {}
+    });
   });
 
   const heartbeatInterval = setInterval(() => {
@@ -59,6 +98,14 @@ export function createWsServer(httpServer, eventBus, tokenStore) {
 
   eventBus.on('agent:woken', (data) => {
     broadcast(wss, { type: 'agent:woken', data });
+  });
+
+  eventBus.on('agent:telemetry', (data) => {
+    broadcast(wss, { type: 'agent:telemetry', data });
+  });
+
+  eventBus.on('agent:status', (data) => {
+    broadcast(wss, { type: 'agent:status', data });
   });
 
   eventBus.on('resource:freed', (data) => {

@@ -49,7 +49,7 @@ export function startDaemon(options = {}) {
   const server = createServer(handleRest);
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
-  const wss = createWsServer(server, eventBus, tokenStore);
+  const wss = createWsServer(server, eventBus, tokenStore, coordinator);
 
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
