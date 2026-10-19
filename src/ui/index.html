@@ -84,7 +84,7 @@
 
     <div class="top-right-meta">
       <select id="project-selector" class="proj-select">
-        <option value="all">🌐 全部项目 (跨工程协同全景)</option>
+        <option value="all">全部项目 (跨工程协同全景)</option>
         <option value="default">Default Project</option>
       </select>
 
@@ -173,23 +173,23 @@
 
         <div class="collab-metric-grid">
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="cockpit-stat-working" style="color: #34d399;">0</span>
+            <span class="collab-metric-num num-working" id="cockpit-stat-working">0</span>
             <span class="collab-metric-desc">在线施工助手</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="cockpit-stat-waiting" style="color: #fbbf24;">0</span>
+            <span class="collab-metric-num num-waiting" id="cockpit-stat-waiting">0</span>
             <span class="collab-metric-desc">排队阻塞请求</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="cockpit-stat-locks" style="color: #c084fc;">0</span>
+            <span class="collab-metric-num num-locks" id="cockpit-stat-locks">0</span>
             <span class="collab-metric-desc">活跃排他锁</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="cockpit-stat-nodes" style="color: #38bdf8;">0</span>
+            <span class="collab-metric-num num-nodes" id="cockpit-stat-nodes">0</span>
             <span class="collab-metric-desc">演进拓扑节点</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="cockpit-stat-messages" style="color: #a78bfa;">0</span>
+            <span class="collab-metric-num num-messages" id="cockpit-stat-messages">0</span>
             <span class="collab-metric-desc">跨会话调度记录</span>
           </div>
         </div>
@@ -201,7 +201,7 @@
         <section class="modern-card cockpit-card">
           <div class="panel-header">
             <div class="panel-title">
-              <div class="panel-title-icon" style="background: rgba(52, 211, 153, 0.15); color: #059669;">
+              <div class="panel-title-icon icon-working">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
                 </svg>
@@ -219,7 +219,7 @@
         <section class="modern-card cockpit-card">
           <div class="panel-header">
             <div class="panel-title">
-              <div class="panel-title-icon" style="background: rgba(56, 189, 248, 0.15); color: #0284c7;">
+              <div class="panel-title-icon icon-nodes">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="18" cy="5" r="3"></circle>
                   <circle cx="6" cy="12" r="3"></circle>
@@ -241,7 +241,7 @@
         <section class="modern-card cockpit-card">
           <div class="panel-header">
             <div class="panel-title">
-              <div class="panel-title-icon" style="background: rgba(192, 132, 252, 0.15); color: #9333ea;">
+              <div class="panel-title-icon icon-locks">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -260,7 +260,7 @@
         <section class="modern-card cockpit-card">
           <div class="panel-header">
             <div class="panel-title">
-              <div class="panel-title-icon" style="background: rgba(251, 191, 36, 0.15); color: #d97706;">
+              <div class="panel-title-icon icon-messages">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                 </svg>
@@ -488,10 +488,10 @@
           <div class="collab-controls-group">
             <div class="collab-filter-capsule">
               <button id="collab-filter-all" class="collab-filter-btn active" title="展示全部在席会话（含在线待命池）">
-                <span>🌐 全景在席 (含待命)</span>
+                <span>全景在席 (含待命)</span>
               </button>
               <button id="collab-filter-working" class="collab-filter-btn" title="仅看正在施工与排队争用的活跃会话">
-                <span>🔥 仅看活跃施工</span>
+                <span>仅看活跃施工</span>
               </button>
             </div>
 
@@ -516,23 +516,23 @@
         <!-- 5 Summary Metric Cards for Collaboration -->
         <div class="collab-metric-grid">
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="collab-stat-working" style="color: #34d399;">0</span>
+            <span class="collab-metric-num num-working" id="collab-stat-working">0</span>
             <span class="collab-metric-desc">在线施工中 (Working)</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="collab-stat-waiting" style="color: #fbbf24;">0</span>
+            <span class="collab-metric-num num-waiting" id="collab-stat-waiting">0</span>
             <span class="collab-metric-desc">排队等待中 (Waiting)</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="collab-stat-idle" style="color: #38bdf8;">0</span>
+            <span class="collab-metric-num num-idle" id="collab-stat-idle">0</span>
             <span class="collab-metric-desc">在线待命 (Idle)</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="collab-stat-locked-res" style="color: #c084fc;">0</span>
+            <span class="collab-metric-num num-locks" id="collab-stat-locked-res">0</span>
             <span class="collab-metric-desc">锁定资源 / 文件</span>
           </div>
           <div class="collab-metric-box">
-            <span class="collab-metric-num" id="collab-stat-conflicts" style="color: #f87171;">0</span>
+            <span class="collab-metric-num num-conflicts" id="collab-stat-conflicts">0</span>
             <span class="collab-metric-desc">冲突依赖边</span>
           </div>
         </div>
@@ -583,8 +583,8 @@
           </div>
           <div class="panel-meta-actions" style="display: flex; align-items: center; gap: 10px;">
             <div class="collab-filter-capsule mini">
-              <button id="collab-table-filter-all" class="collab-filter-btn active" title="展示全景（含待命会话）">🌐 全景</button>
-              <button id="collab-table-filter-working" class="collab-filter-btn" title="仅展示施工与排队会话">🔥 仅施工</button>
+              <button id="collab-table-filter-all" class="collab-filter-btn active" title="展示全景（含待命会话）">全景</button>
+              <button id="collab-table-filter-working" class="collab-filter-btn" title="仅展示施工与排队会话">仅施工</button>
             </div>
             <span class="panel-meta" id="collab-table-meta">实时追踪</span>
           </div>

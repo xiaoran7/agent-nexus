@@ -303,7 +303,7 @@ async function loadProjects() {
       localStorage.setItem('nexusProjectId', currentProjectId);
     }
 
-    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>🌐 全部项目 (跨工程协同全景)</option>`;
+    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>全部项目 (跨工程协同全景)</option>`;
     const projectOptions = list.map(p => {
       const idSafe = escapeHtml(p.id);
       const nameSafe = escapeHtml(p.display_name || p.id);
@@ -944,7 +944,7 @@ function renderUnifiedCockpit(cockpit) {
               ${stateBadge}
             </div>
             <div class="cockpit-worker-action-box">
-              <div class="cockpit-worker-tool">${tool}</div>
+              <div class="cockpit-worker-tool ${(w.current_tool || 'working').toLowerCase()}">${tool}</div>
               <div class="cockpit-worker-action" title="${escapeHtml(w.current_action || '')}">${action}</div>
             </div>
             ${target ? `
@@ -1316,7 +1316,7 @@ function renderTopologyView(data) {
     dom.topoSvgLayer.innerHTML = '';
     dom.topoNodesLayer.innerHTML = `
       <div class="topo-empty-state" style="text-align: center; padding: 60px 20px;">
-        <div class="topo-empty-icon" style="width: 48px; height: 48px; margin: 0 auto 16px auto; border-radius: 14px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; display: flex; align-items: center; justify-content: center;">
+        <div class="topo-empty-icon" style="width: 48px; height: 48px; margin: 0 auto 16px auto; border-radius: 14px; background: rgba(56, 189, 248, 0.12); color: var(--sky-primary); display: flex; align-items: center; justify-content: center;">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="18" cy="5" r="3"></circle>
             <circle cx="6" cy="12" r="3"></circle>
@@ -1667,8 +1667,8 @@ function renderCollabCanvas(data) {
       const shortTarget = s.current_target ? s.current_target.split(/[\/\\]/).pop() : (s.last_target ? s.last_target.split(/[\/\\]/).pop() : null);
       const provShort = escapeHtml((s.provider || 'A').toUpperCase().slice(0, 2));
       const stateLabels = {
-        working: '🛠️ 施工中',
-        waiting: '⏳ 排队中'
+        working: '施工中',
+        waiting: '排队中'
       };
       const stateLabel = stateLabels[s.lifecycle_state] || s.lifecycle_state;
       const toolName = s.current_tool || s.last_tool;
@@ -1755,7 +1755,7 @@ function renderCollabCanvas(data) {
       <!-- 左列：协同会话节点 (Sessions) -->
       <div class="collab-column sessions-column">
         <div class="collab-column-header">
-          <span class="collab-col-title">🤖 在席助手会话 (${displayedSessionCount})</span>
+          <span class="collab-col-title">在席助手会话 (${displayedSessionCount})</span>
           <span class="collab-col-hint">${showIdle ? '施工置顶 · 完工自动收拢待命池' : '已过滤待命会话 · 仅看活跃施工'}</span>
         </div>
         <div class="collab-cards-list">
@@ -1766,14 +1766,14 @@ function renderCollabCanvas(data) {
       <!-- 右列：互斥资源与文件 (Resources / Files) -->
       <div class="collab-column resources-column">
         <div class="collab-column-header">
-          <span class="collab-col-title">📁 互斥文件与锁定资源 (${resourceNodes.length})</span>
+          <span class="collab-col-title">互斥文件与锁定资源 (${resourceNodes.length})</span>
           <span class="collab-col-hint">独占修改租约与排队申请目标</span>
         </div>
         <div class="collab-cards-list">
           ${resourceNodes.length > 0 ? resourceNodes.map(r => {
             const shortName = r.target.split(/[\/\\]/).pop();
             const isLocked = r.status === 'locked';
-            const statusLabel = isLocked ? `🔒 独占锁定中 (${r.remaining_sec}s)` : '⚠️ 产生争用';
+            const statusLabel = isLocked ? `独占锁定中 (${r.remaining_sec}s)` : '产生争用';
             const statusClass = isLocked ? 'locked' : 'contended';
 
             return `

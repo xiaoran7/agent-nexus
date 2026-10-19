@@ -213,7 +213,7 @@ export class ProjectLead {
 
     if (conflicts.length === 0) {
       let advice = `[Nexus 架构师唤醒指引 - 并发通道确认]\n${peerContextSection}`;
-      advice += `✅ 经核验，你申报的 ${safeToStart.length} 项资源与正在施工的会话无直接重叠，可安全并发开工。建议保持独立模块解耦。`;
+      advice += `[核准] 经核验，你申报的 ${safeToStart.length} 项资源与正在施工的会话无直接重叠，可安全并发开工。建议保持独立模块解耦。`;
       return advice;
     }
 
@@ -221,11 +221,11 @@ export class ProjectLead {
     const safeList = safeToStart.map(s => `• ${s.target}`).join('\n');
 
     let advice = `[Nexus 架构师唤醒指引 - 避障重排建议]\n${peerContextSection}`;
-    advice += `⚠️ 检测到以下资源正在被其他活跃 Session 热写入：\n${blockedList}\n\n`;
+    advice += `[冲突警告] 检测到以下资源正在被其他活跃 Session 热写入：\n${blockedList}\n\n`;
     if (safeToStart.length > 0) {
-      advice += `💡 最佳施工路线建议：优先完成以下 ${safeToStart.length} 个空闲资源：\n${safeList}\n\n【避障与解耦建议】：对于冲突模块，请勿直接修改；建议先编写外部 Mock 数据或定义独立接口契约；\n【自动唤醒接力】：待前序会话完成并释放锁后，Nexus 将自动向你发送唤醒通知接力剩余任务。`;
+      advice += `[建议] 最佳施工路线建议：优先完成以下 ${safeToStart.length} 个空闲资源：\n${safeList}\n\n【避障与解耦建议】：对于冲突模块，请勿直接修改；建议先编写外部 Mock 数据或定义独立接口契约；\n【自动唤醒接力】：待前序会话完成并释放锁后，Nexus 将自动向你发送唤醒通知接力剩余任务。`;
     } else {
-      advice += `⚠️ 你的计划全部处于热写入锁定中。建议：\n1. 与持有锁的 Session 发起会话间对话（nexus_dialogue_send）确认接口与进度；\n2. 或进入监听等待模式，待其释放后再行开工。`;
+      advice += `[全部受阻] 你的计划全部处于热写入锁定中。建议：\n1. 与持有锁的 Session 发起会话间对话（nexus_dialogue_send）确认接口与进度；\n2. 或进入监听等待模式，待其释放后再行开工。`;
     }
     return advice;
   }

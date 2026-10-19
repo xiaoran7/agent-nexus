@@ -391,7 +391,7 @@ async function main() {
       reason: 'git_lifecycle'
     });
     if (releaseRes && releaseRes.releasedCount > 0) {
-      console.error(`[Agent-Nexus] 🚀 Auto-released ${releaseRes.releasedCount} lease(s) upon git commit/push and notified waiters.`);
+      console.error(`[Agent-Nexus] [Auto-Released] Auto-released ${releaseRes.releasedCount} lease(s) upon git commit/push and notified waiters.`);
     }
     process.exit(0);
   }
@@ -413,7 +413,7 @@ async function main() {
     });
 
     if (resourceRes.allow === false) {
-      console.error(`\n[Agent-Nexus] ⚠️ RESOURCE CONFLICT DETECTED & OPERATION BLOCKED:`);
+      console.error(`\n[Agent-Nexus] [BLOCKED] RESOURCE CONFLICT DETECTED & OPERATION BLOCKED:`);
       console.error(resourceRes.reason || `Resource '${targetResource}' is currently locked by another agent.`);
       if (resourceRes.holder) {
         console.error(`  - Lock Holder:   [${resourceRes.holder}]`);
@@ -451,7 +451,7 @@ async function main() {
   });
 
   if (res.allow === false) {
-    console.error(`\n[Agent-Nexus] ⚠️ CONFLICT DETECTED & OPERATION BLOCKED:`);
+    console.error(`\n[Agent-Nexus] [BLOCKED] CONFLICT DETECTED & OPERATION BLOCKED:`);
     console.error(res.reason || `File '${basename(targetFile)}' is currently locked by another agent.`);
     if (res.holder) {
       console.error(`  - Lock Holder:   [${res.holder}]`);
