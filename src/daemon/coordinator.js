@@ -1,53 +1,105 @@
 import { randomUUID } from 'node:crypto';
-import { normalize, resolve, isAbsolute } from 'node:path';
-import { existsSync, realpathSync } from 'node:fs';
+import { normalize, resolve, isAbsolute, join } from 'node:path';
+import { existsSync, realpathSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { ValidationError, requireString } from '../domain/errors.js';
-import { resolveProjectDisplayName } from '../domain/project.js';
+import { resolveProject, resolveProjectDisplayName } from '../domain/project.js';
 
 export { ValidationError };
+
+/**
+ * 判定会话名称是否为机械截断哈希、编号或系统默认占位符
+ * 匹配形态：
+ * - claude-4fcfc1, claude-02da4c, agent-9a8b7c
+ * - Claude (02da4c9d), Claude (1), Agent (abc12345), Unknown (default)
+ * - 纯十六进制哈希或简易编号: 02da4c9d, 123456, Claude 1
+ */
+export function isMechanicalAgentName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const t = name.trim();
+  if (!t) return true;
+  if (/^(Claude|Claude\s+Fable|Claude\s+Sonnet|Claude\s+Opus|Agent|Codex|ZCode|System|Nexus)\s*\([a-z0-9_\-]{1,16}\)$/i.test(t)) return true;
+  if (/^(claude|agent|codex|zcode|nexus)-[a-z0-9]{4,}/i.test(t)) return true;
+  if (/^[a-f0-9]{6,}$/i.test(t)) return true;
+  if (/^(claude|agent|codex|zcode)\s*\d+$/i.test(t)) return true;
+  if (/^(unknown|agent|default)[-_\s]*(default|\(default\))?$/i.test(t)) return true;
+  return false;
+}
 
 export function formatAgentDefaultName(provider, sessionId, agentId) {
   const prov = (provider || 'agent').toLowerCase();
   const provMap = {
-    'claude': 'Claude',
-    'claude-fable': 'Claude Fable',
-    'claude-sonnet': 'Claude Sonnet',
-    'claude-opus': 'Claude Opus',
-    'codex': 'Codex',
-    'zcode': 'ZCode',
-    'agent': 'Agent'
+    'claude': 'Claude 助手',
+    'claude-fable': 'Claude Fable 助手',
+    'claude-sonnet': 'Claude Sonnet 助手',
+    'claude-opus': 'Claude Opus 助手',
+    'codex': 'Codex 助手',
+    'zcode': 'ZCode 助手',
+    'system': 'Nexus 协调器',
+    'nexus': 'Nexus 协调器',
+    'agent': '协同助手'
   };
-  const provLabel = provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
-  if (!sessionId || sessionId === 'default') {
-    return provLabel;
-  }
-  const cleanSession = sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId;
-  return `${provLabel} (${cleanSession})`;
+  return provMap[prov] || `${prov.charAt(0).toUpperCase() + prov.slice(1)} 助手`;
 }
 
-export function sanitizeAgentName(name, agentId, provider, sessionId) {
-  if (typeof name !== 'string' || !name.trim()) {
-    const parts = (agentId || '').split('-');
-    const prov = provider || parts[0] || 'agent';
-    const sess = sessionId || parts.slice(1).join('-') || '';
-    return formatAgentDefaultName(prov, sess, agentId);
+export function sanitizeAgentName(name, agentId, provider, sessionId, intentSummary = null) {
+  const parts = (agentId || '').split('-');
+  const prov = provider || parts[0] || 'agent';
+  const sess = sessionId || parts.slice(1).join('-') || '';
+
+  if (typeof name === 'string' && name.trim()) {
+    const trimmed = cleanUtf8String(name.trim(), '');
+    // 过滤替换字符、私有区符号或控制字符、纯标点符号
+    if (trimmed && !/^[?\s.\-=_]+$/.test(trimmed)) {
+      if (!isMechanicalAgentName(trimmed)) {
+        return trimmed;
+      }
+    }
   }
-  const trimmed = name.trim();
-  // 过滤替换字符 �、私有区符号 (-) 或不可见控制字符
-  if (/[�-\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed)) {
-    const parts = (agentId || '').split('-');
-    const prov = provider || parts[0] || 'agent';
-    const sess = sessionId || parts.slice(1).join('-') || '';
-    return formatAgentDefaultName(prov, sess, agentId);
+
+  // 尝试使用意图摘要进行语义化命名 (如 "AI检索优化")
+  if (intentSummary && typeof intentSummary === 'string' && intentSummary.trim()) {
+    const cleanIntent = cleanUtf8String(intentSummary.trim(), '');
+    if (cleanIntent && !isMechanicalAgentName(cleanIntent) && !/^[?\s.\-=_]+$/.test(cleanIntent)) {
+      return cleanIntent.length > 40 ? cleanIntent.slice(0, 40) : cleanIntent;
+    }
   }
-  // 过滤纯乱码符号或截断损坏文本
-  if (/^[?\s.\-=_]+$/.test(trimmed)) {
-    const parts = (agentId || '').split('-');
-    const prov = provider || parts[0] || 'agent';
-    const sess = sessionId || parts.slice(1).join('-') || '';
-    return formatAgentDefaultName(prov, sess, agentId);
-  }
-  return trimmed;
+
+  return formatAgentDefaultName(prov, sess, agentId);
+}
+
+/**
+ * 读取本机 Claude Code Desktop 维护的长效 Worker 进程会话注册表 (~/.claude/sessions/<pid>.json)
+ * 每个文件文件名即为常驻 worker 进程 PID，内含真实 sessionId、工作目录 cwd 与语义化名称 name
+ */
+export function getClaudeSessionRegistry(customDir = null) {
+  const dir = customDir || join(homedir(), '.claude', 'sessions');
+  const sessions = [];
+  try {
+    if (!existsSync(dir)) return sessions;
+    const files = readdirSync(dir);
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const fullPath = join(dir, f);
+        const data = JSON.parse(readFileSync(fullPath, 'utf8'));
+        if (data && data.sessionId && data.pid) {
+          const alive = isPidAlive(data.pid);
+          sessions.push({
+            pid: data.pid,
+            sessionId: data.sessionId,
+            name: data.name ? cleanUtf8String(data.name, '') : null,
+            cwd: data.cwd || null,
+            status: data.status || 'idle',
+            startedAt: data.startedAt,
+            updatedAt: data.updatedAt,
+            alive
+          });
+        }
+      } catch {}
+    }
+  } catch {}
+  return sessions;
 }
 
 /**
@@ -186,23 +238,55 @@ function assertClaimTarget(raw, claimType, baseDir, projectRoot) {
   return { type: claimType, target: normalized };
 }
 
-// 只有真正改文件的写工具或排他执行才计入正在施工状态
-const WRITE_TOOLS_SET = new Set([
+// 只有真正修改文件的写工具才计入施工活跃状态（避免只读工具如 Read/Grep 误判为施工中）
+export const WRITE_TOOLS_SET = new Set([
   'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update', 'apply_patch'
 ]);
 
-function isExecutingWorkingTool(tool, heartbeat, now) {
-  if (!tool) return false;
+export function isExecutingWorkingTool(tool, heartbeat, now) {
+  if (!tool || typeof tool !== 'string' || !tool.trim()) return false;
   if (WRITE_TOOLS_SET.has(tool)) {
     return (now - heartbeat) <= 60000;
   }
   return false;
 }
 
+export function computeAgentLifecycleState(agent, now) {
+  const isPidActive = agent.pid ? isPidAlive(agent.pid) : false;
+  const isHeartbeatFresh = (now - (agent.last_heartbeat || 0)) <= 120000;
+  const isOnline = isPidActive || isHeartbeatFresh;
+
+  if (!isOnline) {
+    return { lifecycleState: 'departed', isOnline: false };
+  }
+
+  // 1. 待命 (waiting): 专指因资源冲突、锁争用或显式进入等待队列而阻塞排队的状态
+  if (agent.current_intent_status === 'waiting' || agent.status === 'waiting' || agent.blocked_reason) {
+    return { lifecycleState: 'waiting', isOnline: true };
+  }
+
+  // 2. 施工中 (working): 只要有工作（包括持有有效租约、或执行 Read/Grep/Glob/Bash/Edit/Write 等任何工具并在活跃窗口内）
+  if (
+    (agent.active_leases_count || 0) > 0 ||
+    agent.status === 'running' ||
+    agent.current_intent_status === 'running' ||
+    agent.current_intent_status === 'granted' ||
+    isExecutingWorkingTool(agent.last_tool, agent.last_heartbeat, now)
+  ) {
+    return { lifecycleState: 'working', isOnline: true };
+  }
+
+  // 3. 空闲待命 (idle): 在线且无工作、未被阻塞
+  return { lifecycleState: 'idle', isOnline: true };
+}
+
 export class CoordinatorEngine {
-  constructor(db, eventBus) {
+  constructor(db, eventBus, options = {}) {
     this.db = db;
     this.eventBus = eventBus;
+    this.options = options;
+    const isTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
+    this.claudeSessionsDir = options.claudeSessionsDir !== undefined ? options.claudeSessionsDir : (isTest ? null : join(homedir(), '.claude', 'sessions'));
   }
 
   normalizePath(filePath, baseDir, projectRoot) {
@@ -304,6 +388,80 @@ export class CoordinatorEngine {
     return null;
   }
 
+
+  // 0.1 扫描并长效同步系统 Claude Code 会话进程状态
+  syncClaudeSessions(now = Date.now(), customDir = null) {
+    const targetDir = customDir !== null && customDir !== undefined ? customDir : this.claudeSessionsDir;
+    if (!targetDir) return;
+    const sessions = getClaudeSessionRegistry(targetDir);
+    for (const sess of sessions) {
+      if (!sess.alive) continue;
+
+      let agent = this.db.prepare(`
+        SELECT * FROM agents
+        WHERE session_id = ? OR id = ? OR id = ? OR (provider = 'claude' AND session_id LIKE ? || '%')
+      `).get(sess.sessionId, sess.sessionId, `claude-${sess.sessionId}`, sess.sessionId.slice(0, 8));
+
+      const cleanName = sess.name && !isMechanicalAgentName(sess.name) ? sess.name : null;
+
+      if (agent) {
+        const shouldUpdateName = cleanName && (isMechanicalAgentName(agent.name) || !agent.name);
+        const targetName = shouldUpdateName ? cleanName : agent.name;
+        const newHeartbeat = Math.max(agent.last_heartbeat || 0, sess.updatedAt || now);
+
+        this.db.prepare(`
+          UPDATE agents
+          SET pid = ?,
+              name = ?,
+              last_heartbeat = ?,
+              status = CASE WHEN status = 'departed' THEN (CASE WHEN ? = 'busy' THEN 'running' ELSE 'idle' END) ELSE status END
+          WHERE id = ?
+        `).run(sess.pid, targetName, newHeartbeat, sess.status, agent.id);
+      } else {
+        let projectId = 'default';
+        let projectRoot = sess.cwd || '';
+        if (sess.cwd) {
+          try {
+            const pInfo = resolveProject(sess.cwd);
+            if (pInfo && pInfo.projectId) {
+              projectId = pInfo.projectId;
+              projectRoot = pInfo.projectRoot;
+            }
+          } catch {}
+        }
+
+        const agentId = `claude-${sess.sessionId}`;
+        const finalName = cleanName || 'Claude 助手';
+        const initialStatus = sess.status === 'busy' ? 'running' : 'idle';
+
+        this.db.prepare(`
+          INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid)
+          VALUES (?, ?, ?, 'claude', ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            name = CASE WHEN excluded.name != '' THEN excluded.name ELSE agents.name END,
+            pid = excluded.pid,
+            last_heartbeat = excluded.last_heartbeat,
+            status = CASE WHEN agents.status = 'departed' THEN excluded.status ELSE agents.status END
+        `).run(agentId, projectId, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid);
+
+        if (sess.cwd && projectId) {
+          try {
+            const canonicalRoot = toComparablePath(sess.cwd);
+            const displayName = resolveProjectDisplayName(sess.cwd, canonicalRoot, projectId);
+            this.db.prepare(`
+              INSERT INTO projects (id, root_path, display_name, created_at, last_activity)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
+                display_name = CASE WHEN excluded.display_name IS NOT NULL AND excluded.display_name != '' THEN excluded.display_name ELSE projects.display_name END,
+                last_activity = excluded.last_activity
+            `).run(projectId, projectRoot, displayName, now, now);
+          } catch {}
+        }
+      }
+    }
+  }
+
   // 1. Agent 注册或心跳续期
   registerAgent(params = {}) {
     const id = params.id || params.agentId || params.agent_id;
@@ -312,7 +470,19 @@ export class CoordinatorEngine {
     const now = Date.now();
     const finalSessionId = (params.sessionId ?? params.session_id) == null ? 'default' : String(params.sessionId ?? params.session_id);
     const finalProvider = (params.provider ?? 'unknown') == null ? 'unknown' : String(params.provider);
-    const finalName = sanitizeAgentName(params.name, id, finalProvider, finalSessionId);
+    let finalName = sanitizeAgentName(params.name, id, finalProvider, finalSessionId);
+    if (isMechanicalAgentName(finalName)) {
+      const existing = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(id);
+      if (existing?.name && !isMechanicalAgentName(existing.name)) {
+        finalName = existing.name;
+      } else if (this.claudeSessionsDir) {
+        const reg = getClaudeSessionRegistry(this.claudeSessionsDir);
+        const matched = reg.find(s => s.sessionId === finalSessionId || `claude-${s.sessionId}` === id);
+        if (matched?.name && !isMechanicalAgentName(matched.name)) {
+          finalName = matched.name;
+        }
+      }
+    }
     const finalProjectId = params.projectId || params.project_id || 'default';
     const workspaceDir = params.workspaceDir || params.workspace_dir || '';
     const rawPid = params.pid;
@@ -380,6 +550,9 @@ export class CoordinatorEngine {
     const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
 
     let agent = this.getAgent(agentId, finalProjectId);
+    if (params.name && !isMechanicalAgentName(params.name)) {
+      this.db.prepare('UPDATE agents SET name = ? WHERE id = ?').run(params.name, agentId);
+    }
     if (!agent) {
       this.registerAgent({
         id: agentId,
@@ -1010,6 +1183,8 @@ export class CoordinatorEngine {
         const alive = ag.pid && isPidAlive(ag.pid);
         if (!alive) {
           this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
+        } else {
+          this.db.prepare(`UPDATE agents SET last_heartbeat = ? WHERE id = ?`).run(now, ag.id);
         }
       }
     } catch {
@@ -1034,7 +1209,7 @@ export class CoordinatorEngine {
 
     this.registerAgent({
       id: agentId,
-      name: promptHint ? promptHint.slice(0, 30) : `${provider || 'agent'}-${(sessionId || 'default').slice(0, 6)}`,
+      name: (promptHint && !isMechanicalAgentName(promptHint)) ? promptHint.slice(0, 40) : sanitizeAgentName(null, agentId, provider, sessionId, promptHint),
       provider,
       sessionId,
       workspaceDir: workspaceDir || '',
@@ -1288,15 +1463,18 @@ export class CoordinatorEngine {
 
   getDashboardSnapshot(projectId = null) {
     const now = Date.now();
+    this.syncClaudeSessions(now);
     this.reapStaleIntentsAndAgents(now);
     this.reapDeadAgentLeases();
     this.expireLeases();
+
+    const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
 
     let rawAgents;
     let rawActiveClaims;
     let rawTimeline;
 
-    if (projectId) {
+    if (finalProjectId) {
       rawAgents = this.db.prepare(`
         SELECT a.*,
           (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
@@ -1306,7 +1484,7 @@ export class CoordinatorEngine {
           (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
         FROM agents a
         WHERE a.project_id = ?
-      `).all(now, projectId);
+      `).all(now, finalProjectId);
 
       rawActiveClaims = this.db.prepare(`
         SELECT c.*, a.name as agent_name, l.expires_at
@@ -1314,7 +1492,7 @@ export class CoordinatorEngine {
         JOIN leases l ON c.intent_id = l.intent_id
         JOIN agents a ON c.agent_id = a.id
         WHERE l.expires_at > ? AND c.project_id = ?
-      `).all(now, projectId);
+      `).all(now, finalProjectId);
 
       rawTimeline = this.db.prepare(`
         SELECT al.*, a.name as agent_name, a.provider
@@ -1322,7 +1500,7 @@ export class CoordinatorEngine {
         LEFT JOIN agents a ON al.agent_id = a.id
         WHERE al.project_id = ?
         ORDER BY al.id DESC LIMIT 50
-      `).all(projectId);
+      `).all(finalProjectId);
     } else {
       rawAgents = this.db.prepare(`
         SELECT a.*,
@@ -1351,24 +1529,11 @@ export class CoordinatorEngine {
     }
 
     const agents = rawAgents.map((a) => {
-      const isPidActive = a.pid ? isPidAlive(a.pid) : false;
-      const isHeartbeatFresh = (now - a.last_heartbeat) <= 120000;
-      const isOnline = isPidActive || isHeartbeatFresh;
-
-      let lifecycleState = 'departed';
-      if (isOnline) {
-        if ((a.active_leases_count || 0) > 0 || a.status === 'running' || a.current_intent_status === 'running' || a.current_intent_status === 'granted' || isExecutingWorkingTool(a.last_tool, a.last_heartbeat, now)) {
-          lifecycleState = 'working';
-        } else if (a.current_intent_status === 'waiting' || a.status === 'waiting' || a.blocked_reason) {
-          lifecycleState = 'waiting';
-        } else {
-          lifecycleState = 'idle';
-        }
-      }
+      const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now);
 
       return {
         ...a,
-        name: sanitizeAgentName(a.name, a.id, a.provider, a.session_id),
+        name: sanitizeAgentName(a.name, a.id, a.provider, a.session_id, a.current_intent),
         current_intent: cleanUtf8String(a.current_intent, ''),
         blocked_reason: cleanUtf8String(a.blocked_reason, null),
         last_tool: cleanUtf8String(a.last_tool, null),
@@ -1402,6 +1567,7 @@ export class CoordinatorEngine {
   // 7. 实时多 Session 协同图谱 (Live Collaboration Graph)
   getCollaborationGraph(projectId = null) {
     const now = Date.now();
+    this.syncClaudeSessions(now);
     this.reapStaleIntentsAndAgents(now);
     this.reapDeadAgentLeases();
     this.expireLeases();
@@ -1449,22 +1615,14 @@ export class CoordinatorEngine {
     let departedCount = 0;
 
     for (const a of rawAgents) {
-      const isPidActive = a.pid ? isPidAlive(a.pid) : false;
-      const isHeartbeatFresh = (now - a.last_heartbeat) <= 120000;
-      const isOnline = isPidActive || isHeartbeatFresh;
+      const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now);
 
-      let lifecycleState = 'departed';
-      if (isOnline) {
-        if ((a.active_leases_count || 0) > 0 || a.status === 'running' || a.current_intent_status === 'running' || a.current_intent_status === 'granted' || isExecutingWorkingTool(a.last_tool, a.last_heartbeat, now)) {
-          lifecycleState = 'working';
-          workingCount++;
-        } else if (a.current_intent_status === 'waiting' || a.status === 'waiting' || a.blocked_reason) {
-          lifecycleState = 'waiting';
-          waitingCount++;
-        } else {
-          lifecycleState = 'idle';
-          idleCount++;
-        }
+      if (lifecycleState === 'working') {
+        workingCount++;
+      } else if (lifecycleState === 'waiting') {
+        waitingCount++;
+      } else if (lifecycleState === 'idle') {
+        idleCount++;
       } else {
         departedCount++;
       }
@@ -1474,7 +1632,7 @@ export class CoordinatorEngine {
         continue;
       }
 
-      const safeName = sanitizeAgentName(a.name, a.id, a.provider, a.session_id);
+      const safeName = sanitizeAgentName(a.name, a.id, a.provider, a.session_id, a.current_intent_summary);
       const safeIntent = cleanUtf8String(a.current_intent_summary, a.current_intent || (lifecycleState === 'idle' ? '待命中' : ''));
       const safeTool = cleanUtf8String(a.last_tool, null);
       const safeAction = cleanUtf8String(a.last_action, safeTool);
@@ -1561,6 +1719,37 @@ export class CoordinatorEngine {
       },
       nodes,
       edges: cleanEdges
+    };
+  }
+
+  // 8. 综合全览驾驶舱聚合快照 (Unified Cockpit Aggregate)
+  getUnifiedCockpit(projectId = null) {
+    const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
+    const dashboard = this.getDashboardSnapshot(finalProjectId);
+    const collab = this.getCollaborationGraph(finalProjectId);
+    const topology = this.topologyService
+      ? this.topologyService.getTopologyGraph(finalProjectId || 'default', { limit: 30 })
+      : { nodes: [], edges: [], totalNodes: 0 };
+
+    const onlineAgents = (dashboard.agents || []).filter(a => a.is_online);
+    const workingSessions = onlineAgents.filter(a => a.lifecycle_state === 'working');
+    const waitingSessions = onlineAgents.filter(a => a.lifecycle_state === 'waiting');
+    const idleSessions = onlineAgents.filter(a => a.lifecycle_state === 'idle');
+
+    return {
+      projectId: finalProjectId || 'all',
+      timestamp: Date.now(),
+      summary: {
+        totalOnline: onlineAgents.length,
+        workingCount: workingSessions.length,
+        waitingCount: waitingSessions.length,
+        idleCount: idleSessions.length,
+        activeLocksCount: dashboard.activeClaims?.length || 0,
+        topologyNodesCount: topology.totalNodes || topology.nodes?.length || 0
+      },
+      dashboard,
+      collab,
+      topology
     };
   }
 }

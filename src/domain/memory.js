@@ -76,6 +76,22 @@ export class ProjectMemoryService {
     const lim = Math.max(1, Math.min(limit || 50, 200));
     const off = Math.max(0, offset || 0);
 
+    if (pid === 'all') {
+      if (category) {
+        return this.db.prepare(`
+          SELECT * FROM project_memories
+          WHERE category = ?
+          ORDER BY updated_at DESC
+          LIMIT ? OFFSET ?
+        `).all(category, lim, off);
+      }
+      return this.db.prepare(`
+        SELECT * FROM project_memories
+        ORDER BY updated_at DESC
+        LIMIT ? OFFSET ?
+      `).all(lim, off);
+    }
+
     if (category) {
       return this.db.prepare(`
         SELECT * FROM project_memories
@@ -100,6 +116,23 @@ export class ProjectMemoryService {
 
     const pattern = `%${escapeSqlLike(q)}%`;
     const lim = Math.max(1, Math.min(limit || 20, 100));
+
+    if (pid === 'all') {
+      if (category) {
+        return this.db.prepare(`
+          SELECT * FROM project_memories
+          WHERE category = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `).all(category, pattern, pattern, lim);
+      }
+      return this.db.prepare(`
+        SELECT * FROM project_memories
+        WHERE key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\'
+        ORDER BY updated_at DESC
+        LIMIT ?
+      `).all(pattern, pattern, lim);
+    }
 
     if (category) {
       return this.db.prepare(`

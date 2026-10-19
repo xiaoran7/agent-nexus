@@ -165,7 +165,7 @@ export class MessageService {
 
   inbox(agentId, limit = 50, projectId = 'default') {
     requireString(agentId, 'to');
-    if (projectId) {
+    if (projectId && projectId !== 'all') {
       return this.db.prepare(`
         SELECT * FROM messages
         WHERE project_id = ? AND (to_agent = ? OR to_agent IS NULL)
@@ -180,7 +180,7 @@ export class MessageService {
   }
 
   list(limit = 50, projectId = null) {
-    if (projectId) {
+    if (projectId && projectId !== 'all') {
       return this.db.prepare('SELECT * FROM messages WHERE project_id = ? ORDER BY id DESC LIMIT ?').all(projectId, limit);
     }
     return this.db.prepare('SELECT * FROM messages ORDER BY id DESC LIMIT ?').all(limit);
@@ -189,6 +189,16 @@ export class MessageService {
   getThread(threadId, projectId = 'default') {
     requireString(threadId, 'thread_id');
     const finalProjectId = projectId || 'default';
+    if (finalProjectId === 'all') {
+      return this.db.prepare(`
+        SELECT m.*, fa.name as from_agent_name, ta.name as to_agent_name
+        FROM messages m
+        LEFT JOIN agents fa ON m.from_agent = fa.id
+        LEFT JOIN agents ta ON m.to_agent = ta.id
+        WHERE m.thread_id = ?
+        ORDER BY m.id ASC
+      `).all(threadId);
+    }
     return this.db.prepare(`
       SELECT m.*, fa.name as from_agent_name, ta.name as to_agent_name
       FROM messages m
@@ -204,14 +214,25 @@ export class MessageService {
     const finalProjectId = projectId || 'default';
     const limitNum = Math.min(Math.max(1, Number(limit) || 50), 200);
 
+    const isAll = finalProjectId === 'all';
     let query = `
       SELECT m.*, fa.name as from_agent_name, ta.name as to_agent_name
       FROM messages m
       LEFT JOIN agents fa ON m.from_agent = fa.id
       LEFT JOIN agents ta ON m.to_agent = ta.id
-      WHERE m.project_id = ? AND (m.to_agent = ? OR m.to_agent IS NULL)
+      WHERE (m.to_agent = ? OR m.to_agent IS NULL)
     `;
-    const params = [finalProjectId, agentId];
+    const params = [agentId];
+    if (!isAll) {
+      query = `
+        SELECT m.*, fa.name as from_agent_name, ta.name as to_agent_name
+        FROM messages m
+        LEFT JOIN agents fa ON m.from_agent = fa.id
+        LEFT JOIN agents ta ON m.to_agent = ta.id
+        WHERE m.project_id = ? AND (m.to_agent = ? OR m.to_agent IS NULL)
+      `;
+      params.unshift(finalProjectId);
+    }
 
     if (threadId) {
       query += ` AND m.thread_id = ?`;

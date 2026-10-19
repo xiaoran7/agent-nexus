@@ -84,6 +84,7 @@
 
     <div class="top-right-meta">
       <select id="project-selector" class="proj-select">
+        <option value="all">🌐 全部项目 (跨工程协同全景)</option>
         <option value="default">Default Project</option>
       </select>
 
@@ -127,6 +128,154 @@
 
   <!-- Main Content -->
   <main class="app-main">
+    <!-- ========================================== -->
+    <!-- VIEW 0: Unified Cockpit (综合全览驾驶舱)    -->
+    <!-- ========================================== -->
+    <div id="view-unified" class="view-pane">
+      <!-- 1. 全局态势聚合顶栏 -->
+      <section class="cockpit-hero-panel">
+        <div class="collab-hero-header">
+          <div class="collab-title-group">
+            <div class="collab-icon-badge" style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(99, 102, 241, 0.2)); color: var(--primary);">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+            </div>
+            <div>
+              <div class="collab-main-title">
+                <span>综合全览驾驶舱 (Unified Cockpit)</span>
+                <span class="badge-collab-live">全景统揽</span>
+              </div>
+              <div class="collab-sub-title">一屏聚合多助手施工动态、功能演进脉络、资源排他持锁与架构师跨会话协调</div>
+            </div>
+          </div>
+
+          <div class="collab-controls-group">
+            <div class="collab-health-capsule">
+              <span id="cockpit-live-dot" class="pulse-dot"></span>
+              <span id="cockpit-conn-status" style="font-weight: 700;">全双工推送</span>
+              <span class="capsule-divider"></span>
+              <span id="cockpit-last-sync">实时</span>
+            </div>
+            <button id="cockpit-refresh-btn" class="modern-btn-primary" title="刷新综合全览数据">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>立即同步</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="collab-metric-grid">
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="cockpit-stat-working" style="color: #34d399;">0</span>
+            <span class="collab-metric-desc">在线施工助手</span>
+          </div>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="cockpit-stat-waiting" style="color: #fbbf24;">0</span>
+            <span class="collab-metric-desc">排队阻塞请求</span>
+          </div>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="cockpit-stat-locks" style="color: #c084fc;">0</span>
+            <span class="collab-metric-desc">活跃排他锁</span>
+          </div>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="cockpit-stat-nodes" style="color: #38bdf8;">0</span>
+            <span class="collab-metric-desc">演进拓扑节点</span>
+          </div>
+          <div class="collab-metric-box">
+            <span class="collab-metric-num" id="cockpit-stat-messages" style="color: #a78bfa;">0</span>
+            <span class="collab-metric-desc">跨会话调度记录</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 四象限聚合核心网格 -->
+      <div class="cockpit-grid">
+        <!-- 象限 1 (左上): 实时施工态势矩阵 -->
+        <section class="modern-card cockpit-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-title-icon" style="background: rgba(52, 211, 153, 0.15); color: #059669;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                </svg>
+              </div>
+              <span>实时施工态势矩阵</span>
+            </div>
+            <span class="panel-meta" id="cockpit-working-meta">0 个助手在线</span>
+          </div>
+          <div class="cockpit-scroll-content" id="cockpit-agents-list">
+            <!-- 动态注入助手施工卡片 -->
+          </div>
+        </section>
+
+        <!-- 象限 2 (右上): 演进拓扑主线缩影 -->
+        <section class="modern-card cockpit-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-title-icon" style="background: rgba(56, 189, 248, 0.15); color: #0284c7;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="18" cy="5" r="3"></circle>
+                  <circle cx="6" cy="12" r="3"></circle>
+                  <circle cx="18" cy="19" r="3"></circle>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                </svg>
+              </div>
+              <span>演进拓扑主线脉络</span>
+            </div>
+            <button class="modern-btn-subtle" id="cockpit-goto-topo-btn" style="padding: 4px 10px; font-size: 12px;">查看完整图谱 &rarr;</button>
+          </div>
+          <div class="cockpit-scroll-content" id="cockpit-topology-list">
+            <!-- 动态注入拓扑前驱节点 -->
+          </div>
+        </section>
+
+        <!-- 象限 3 (左下): 资源锁与冲突争用看板 -->
+        <section class="modern-card cockpit-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-title-icon" style="background: rgba(192, 132, 252, 0.15); color: #9333ea;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+              </div>
+              <span>独占资源锁与排队争用看板</span>
+            </div>
+            <span class="panel-meta" id="cockpit-locks-meta">0 个活跃锁定</span>
+          </div>
+          <div class="cockpit-scroll-content" id="cockpit-locks-list">
+            <!-- 动态注入锁与排队项 -->
+          </div>
+        </section>
+
+        <!-- 象限 4 (右下): 跨会话调度与流水 -->
+        <section class="modern-card cockpit-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-title-icon" style="background: rgba(251, 191, 36, 0.15); color: #d97706;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+              </div>
+              <span>跨会话对话与调度广播</span>
+            </div>
+            <span class="panel-meta">实时协同</span>
+          </div>
+          <div class="cockpit-scroll-content" id="cockpit-dialogue-list">
+            <!-- 动态注入对话与广播流水 -->
+          </div>
+        </section>
+      </div>
+    </div>
+
     <!-- ========================================== -->
     <!-- VIEW 1: War Room (多 Agent 协同与泳道)      -->
     <!-- ========================================== -->
@@ -496,7 +645,15 @@
         </div>
         <div class="topo-stat-divider"></div>
         <div class="topo-stat-item" style="flex: 1; text-align: right; color: var(--text-faint); font-size: 13px;">
-          <span>悬停节点卡片高亮因果链路，点击查看解决问题与改动文件快照</span>
+          <span>按功能分支分类布局，点击节点卡片展开详细档案与因果快照</span>
+        </div>
+      </div>
+
+      <!-- 模块子系统分支筛选栏 -->
+      <div class="topo-filter-bar" id="topo-filter-bar">
+        <span class="topo-filter-label">分支视图:</span>
+        <div class="topo-filter-chips" id="topo-module-chips">
+          <button class="topo-filter-chip active" data-module="all">全景总览</button>
         </div>
       </div>
 
@@ -504,6 +661,82 @@
         <div class="topo-canvas-inner" id="topo-canvas-inner">
           <svg class="topo-svg-layer" id="topo-svg-layer"></svg>
           <div class="topo-nodes-layer" id="topo-nodes-layer"></div>
+        </div>
+
+        <!-- 节点点击展开详细档案抽屉 (详略得当) -->
+        <div id="topo-node-drawer" class="topo-drawer" style="display: none;">
+          <div class="topo-drawer-header">
+            <div class="topo-drawer-title-group">
+              <span id="drawer-node-type-badge" class="badge-collab-live">milestone</span>
+              <h3 id="drawer-node-title" class="topo-drawer-title">节点详情</h3>
+            </div>
+            <button id="topo-drawer-close" class="topo-drawer-close-btn" title="关闭详情">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+
+          <div class="topo-drawer-body">
+            <!-- 模块与因果关系 -->
+            <div class="drawer-section">
+              <div class="drawer-section-title">功能子系统与因果关系</div>
+              <div class="drawer-tags-row">
+                <span class="drawer-meta-tag" id="drawer-module-tag">模块: core</span>
+                <span class="drawer-meta-tag" id="drawer-causality-tag">因果: sequence</span>
+                <span class="drawer-meta-tag" id="drawer-depth-tag">DAG 层级: 0</span>
+              </div>
+            </div>
+
+            <!-- 执行责任人与时间 -->
+            <div class="drawer-section">
+              <div class="drawer-section-title">施工会话与责任归属</div>
+              <div class="drawer-info-grid">
+                <div class="drawer-info-item">
+                  <span class="drawer-info-k">执行 Agent:</span>
+                  <span class="drawer-info-v" id="drawer-agent-id">-</span>
+                </div>
+                <div class="drawer-info-item">
+                  <span class="drawer-info-k">完成时间:</span>
+                  <span class="drawer-info-v" id="drawer-time">-</span>
+                </div>
+                <div class="drawer-info-item" style="grid-column: span 2;">
+                  <span class="drawer-info-k">关联合同/意向:</span>
+                  <span class="drawer-info-v" id="drawer-intent-id">无特定 Intent</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 详细描述与问题解决说明 -->
+            <div class="drawer-section">
+              <div class="drawer-section-title">问题解决说明与闭环产出</div>
+              <div class="drawer-desc-box" id="drawer-description">暂无详细说明</div>
+            </div>
+
+            <!-- 触达与修改的核心文件快照 (Claims) -->
+            <div class="drawer-section">
+              <div class="drawer-section-title">涉及核心资源与文件快照 (<span id="drawer-claims-count">0</span>)</div>
+              <div class="drawer-files-list" id="drawer-claims-list">
+                <!-- 动态注入改动文件 -->
+              </div>
+            </div>
+
+            <!-- 因果前驱与后继节点 -->
+            <div class="drawer-section">
+              <div class="drawer-section-title">因果脉络追溯</div>
+              <div class="drawer-causality-grid">
+                <div>
+                  <div class="drawer-sub-title">直接前驱节点 (Predecessors)</div>
+                  <div id="drawer-parents-list" class="drawer-node-links">无前驱 (初始源点)</div>
+                </div>
+                <div>
+                  <div class="drawer-sub-title">后续衍生推进 (Successors)</div>
+                  <div id="drawer-children-list" class="drawer-node-links">无衍生分支</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

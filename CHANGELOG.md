@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-19 根除会话闪烁消失缺陷、全自动语义化会话命名与跨工程协同全景总览 (Session Lifecycle Persistence & Semantic Naming)
+
+### 改了什么
+
+- **彻底根除会话“时有时无、自动消失又出现”的生命周期缺陷 (`src/daemon/coordinator.js`, `src/hook/nexus-hook.mjs`)**：
+  - 深度排查并定位先前会话闪烁的根本原因：PreToolUse Hook 每次执行时上报的 PID 是生命周期仅几十毫秒的瞬态子进程 PID，进程退出后协调器静默心跳在 120 秒超时后误判会话离线（`departed`）并在协同图谱中剔除；当下一次调用工具时又因心跳刷新而短暂复现；
+  - 打通与 Claude Code Desktop 真实常驻 worker 进程（`~/.claude/sessions/<pid>.json`）长效绑定的探活与常驻注册机制，通过 `getClaudeSessionRegistry` 与 `syncClaudeSessions` 提取真实持久化 `pid`、`sessionId`、工作目录与会话主题；
+  - 接入 `process.kill(pid, 0)` 无感探活；只要底层常驻 worker 进程处于运行状态，系统自动维持心跳刷新，解除 120 秒静态超时限制，杜绝反复闪烁、消失与重现。
+- **全面淘汰截断哈希与机械编号，采用语义化总结主题命名 (`src/daemon/coordinator.js`, `src/hook/nexus-hook.mjs`, `src/ui/app.js`)**：
+  - 彻底清理 `claude-4fcfc1`、`Claude (02da4c9d)`、`Claude 1` 等十六进制哈希与数字编号，建立 `isMechanicalAgentName` 过滤层；
+  - 优先读取并回填 Claude Code 原生总结标题（如“AgentHub 移动端 UI”、“Magpie风格runtime设置”、“AgentHub Claude Code 审批权限”）；
+  - 无原生标题时优先继承意图摘要 `intent_summary`（如“AI检索优化”）；兜底回退为 `Claude 助手` 等友好语义角色名，严禁拼接十六进制哈希与数字编号；
+  - Universal Hook 拦截提示同步透传语义化名称，如 `Lock Holder: [拓扑全览与状态优化]`，提升协作体感。
+- **跨工程协同全景总览与 DAG 演进拓扑升级 (`src/domain/topology.js`, `src/domain/memory.js`, `src/domain/messages.js`, `src/ui/app.js`, `src/ui/index.html`)**：
+  - 工程下拉菜单中增加 `🌐 全部项目 (跨工程协同全景)`（`value="all"`），配合后端服务在 `projectId === 'all'` 时返回全部活跃会话、跨项目冲突大盘与演进拓扑；
+  - 拓扑服务升级多分支有向无环图 (DAG) 智能因果前驱推导算法（优先代码同文件延续因果链 -> 次选同模块主线分支延续 -> 再次关联合并阶段里程碑因果枢纽 -> 兜底最近前驱），坚决打破单一单线链表；
+  - 记忆检索与消息会话总览全面支持跨项目汇聚展示。
+- **全量测试与工程闭环 (`test/collaboration-lifecycle.test.js`)**：
+  - 隔离测试环境与宿主常驻会话注册表，保证单测纯净性；
+  - 242 项测试用例 100% 全部通过。
+
+---
+
 ## 2026-10-19 离线会话过滤、后端施工态势打通、响应式布局修复与协同图谱默认主视图 (Active-Only Filtering & Responsive Graph)
 
 ### 改了什么

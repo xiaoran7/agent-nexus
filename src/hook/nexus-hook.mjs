@@ -4,8 +4,9 @@
 // =============================================================================
 
 import { request } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { basename, isAbsolute, join, relative } from 'node:path';
+import { homedir } from 'node:os';
 import { resolveProject } from '../domain/project.js';
 import { readSessionToken } from '../transport/auth.js';
 
@@ -24,6 +25,27 @@ function readStdinJson() {
   }
 }
 
+function findClaudeSessionInfo(sessionId) {
+  try {
+    const dir = join(homedir(), '.claude', 'sessions');
+    if (!existsSync(dir)) return null;
+    const files = readdirSync(dir);
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const fullPath = join(dir, f);
+        const data = JSON.parse(readFileSync(fullPath, 'utf8'));
+        if (data && data.sessionId) {
+          if (sessionId && (data.sessionId === sessionId || data.sessionId.startsWith(sessionId) || sessionId.startsWith(data.sessionId))) {
+            return data;
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
 function resolveAgentIdentity(payload) {
   const provider = process.env.NEXUS_AGENT_PROVIDER ||
                    (process.env.CLAUDE_CODE_SESSION_ID ? 'claude' : null) ||
@@ -40,9 +62,33 @@ function resolveAgentIdentity(payload) {
 
   const agentId = `${provider}-${sessionId}`;
   const promptHint = process.env.NEXUS_AGENT_PROMPT || payload.prompt || null;
-  const pid = payload.pid || process.ppid || process.pid;
 
-  return { provider, sessionId, agentId, promptHint, pid };
+  // 核心安全防线：短生命周期的 Hook 进程自身 PID (process.pid) 或瞬态 shell (process.ppid)
+  // 绝不能作为常驻 Agent 会话存活探针 PID 上报！否则 Hook 进程一旦退出，
+  // 服务端 reapDeadAgentLeases 会在毫秒级内误判 Agent 死亡并提前回收租约（导致 Edit 锁瞬间消失）。
+  // 只有在明确提供持久化宿主 PID (如 payload.pid、payload.agent_pid、AGENT_PID 环境变量) 时才上报有效数字。
+  const rawPid = payload.pid || payload.agent_pid || process.env.NEXUS_AGENT_PID || process.env.CLAUDE_PID || null;
+  const parsedPid = rawPid ? parseInt(rawPid, 10) : null;
+  let pid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
+  let name = payload.name || null;
+  let finalPrompt = promptHint;
+
+  if (provider === 'claude') {
+    const claudeInfo = findClaudeSessionInfo(sessionId);
+    if (claudeInfo) {
+      if (!pid && claudeInfo.pid) {
+        pid = claudeInfo.pid;
+      }
+      if (claudeInfo.name && !name) {
+        name = claudeInfo.name;
+      }
+      if (!finalPrompt && claudeInfo.name) {
+        finalPrompt = claudeInfo.name;
+      }
+    }
+  }
+
+  return { provider, sessionId, agentId, promptHint: finalPrompt, pid, name };
 }
 
 // 只有真正改文件的工具才值得去问协调库。Read/Grep/Glob/LS 之类拿到 file_path
@@ -325,6 +371,7 @@ async function main() {
         agent_id: identity.agentId,
         provider: identity.provider,
         session_id: identity.sessionId,
+        name: identity.name,
         tool: toolName,
         action: toolAction,
         target: toolTarget,
@@ -356,6 +403,7 @@ async function main() {
       agent_id: identity.agentId,
       provider: identity.provider,
       session_id: identity.sessionId,
+      name: identity.name,
       prompt_hint: identity.promptHint,
       resource_name: targetResource,
       project_id: projectInfo.projectId,
@@ -393,6 +441,7 @@ async function main() {
     agent_id: identity.agentId,
     provider: identity.provider,
     session_id: identity.sessionId,
+    name: identity.name,
     prompt_hint: identity.promptHint,
     file_path: targetFile,
     project_id: projectInfo.projectId,

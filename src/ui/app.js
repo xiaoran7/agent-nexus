@@ -37,33 +37,52 @@ function debounce(fn, delay = 200) {
   };
 }
 
+// 判定会话名称是否为机械截断哈希、编号或系统默认占位符
+function isMechanicalAgentName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const t = name.trim();
+  if (!t) return true;
+  if (/^(Claude|Claude\s+Fable|Claude\s+Sonnet|Claude\s+Opus|Agent|Codex|ZCode|System|Nexus)\s*\([a-z0-9_\-]{1,16}\)$/i.test(t)) return true;
+  if (/^(claude|agent|codex|zcode|nexus)-[a-z0-9]{4,}/i.test(t)) return true;
+  if (/^[a-f0-9]{6,}$/i.test(t)) return true;
+  if (/^(claude|agent|codex|zcode)\s*\d+$/i.test(t)) return true;
+  if (/^(unknown|agent|default)[-_\s]*(default|\(default\))?$/i.test(t)) return true;
+  return false;
+}
+
 // 规范化 Agent 显示名称，剔除乱码/损坏字符并提供标准化身份标识
-function formatAgentDisplayName(name, agentId, provider, sessionId) {
+function formatAgentDisplayName(name, agentId, provider, sessionId, intentSummary = null) {
   if (name && typeof name === 'string' && name.trim()) {
     const trimmed = name.trim();
-    if (!/[�-\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed) && !/^[?\s.\-=_]+$/.test(trimmed)) {
-      return trimmed;
+    if (!/[-\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed) && !/^[?\s.\-=_]+$/.test(trimmed)) {
+      if (!isMechanicalAgentName(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
+
+  // 优先尝试使用意图摘要进行语义化命名 (如 "AI检索优化")
+  if (intentSummary && typeof intentSummary === 'string' && intentSummary.trim()) {
+    const cleanIntent = intentSummary.trim();
+    if (!isMechanicalAgentName(cleanIntent) && !/^[?\s.\-=_]+$/.test(cleanIntent)) {
+      return cleanIntent.length > 40 ? cleanIntent.slice(0, 40) : cleanIntent;
     }
   }
 
   const parts = (agentId || '').split('-');
   const prov = (provider || parts[0] || 'agent').toLowerCase();
   const provMap = {
-    'claude': 'Claude',
-    'claude-fable': 'Claude Fable',
-    'claude-sonnet': 'Claude Sonnet',
-    'claude-opus': 'Claude Opus',
-    'codex': 'Codex',
-    'zcode': 'ZCode',
-    'agent': 'Agent'
+    'claude': 'Claude 助手',
+    'claude-fable': 'Claude Fable 助手',
+    'claude-sonnet': 'Claude Sonnet 助手',
+    'claude-opus': 'Claude Opus 助手',
+    'codex': 'Codex 助手',
+    'zcode': 'ZCode 助手',
+    'system': 'Nexus 协调器',
+    'nexus': 'Nexus 协调器',
+    'agent': '协同助手'
   };
-  const provLabel = provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
-  const rawSession = sessionId || (parts.length > 1 ? parts.slice(1).join('-') : '');
-  if (!rawSession || rawSession === 'default') {
-    return provLabel;
-  }
-  const cleanSession = rawSession.length > 8 ? rawSession.slice(0, 8) : rawSession;
-  return `${provLabel} (${cleanSession})`;
+  return provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1) + ' 助手');
 }
 
 // DOM 元素缓存
@@ -233,7 +252,7 @@ async function loadProjects() {
 
     // 优先读取本地持久化项目，若无则优先选取有真实活跃度或非 default 的有效项目
     const savedProjectId = localStorage.getItem('nexusProjectId');
-    let targetProject = list.find(p => p.id === savedProjectId);
+    let targetProject = savedProjectId === 'all' ? { id: 'all' } : list.find(p => p.id === savedProjectId);
     if (!targetProject) {
       targetProject = list.find(p => p.id === 'Agent-Nexus') ||
                       list.find(p => p.id !== 'default' && (p.last_activity > 0 || p.node_count > 0)) ||
@@ -246,12 +265,15 @@ async function loadProjects() {
       localStorage.setItem('nexusProjectId', currentProjectId);
     }
 
-    dom.projectSelector.innerHTML = list.map(p => {
+    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>🌐 全部项目 (跨工程协同全景)</option>`;
+    const projectOptions = list.map(p => {
       const idSafe = escapeHtml(p.id);
       const nameSafe = escapeHtml(p.display_name || p.id);
       const selected = p.id === currentProjectId ? 'selected' : '';
       return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
     }).join('');
+
+    dom.projectSelector.innerHTML = allOption + projectOptions;
 
     // 项目切换就绪后，立即拉取一次该项目的专属数据
     fetchDashboard();
@@ -456,7 +478,7 @@ function renderAgents(agents, activeClaims) {
   }
 
   function renderSingleAgentCard(a) {
-    const displayName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id);
+    const displayName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id, a.current_intent || a.current_intent_summary);
     const nameSafe = escapeHtml(displayName);
     const providerShort = escapeHtml((a.provider || displayName || 'A').toUpperCase().slice(0, 2));
     const claims = a.resolvedClaims || [];
