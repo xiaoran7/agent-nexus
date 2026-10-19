@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-10-19 完工待命会话展示权衡、陈旧遥测去噪、施工优先分层与双视口切换胶囊 (Completed Session UX & Telemetry De-noising)
+
+### 改了什么
+
+- **完工待命会话展示深度权衡与双视口切换架构 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - 针对 Claude Code Desktop 中多会话工作完工转入 `idle` 待命后的展示痛点，实行深度权衡重构：
+    - *不全量直接隐藏抹杀*：避免用户对照 Claude 桌面端产生“我的会话怎么突然掉线挂掉了”的虚无感，且待命会话若仍持有临时租约或随后被下达新指令唤醒，必须保持在席被 Nexus 统一纳管；
+    - *不平铺混排展示*：平铺展示会造成严重的低信噪比与视线抢占，尤其历史遗留的 `BASH`、修改关键交付文件等标签会制造“后台还在偷跑修改”的虚假恐慌；
+  - **双视口快速切换胶囊**：在协同看板顶部 Hero 区域与态势巡检表表头分别新增直观切换按钮——`🌐 全景在席 (含待命)`（默认保持全员在席，分层展示）与 `🔥 仅看活跃施工`（一键过滤全部待命会话，视线极致聚焦在正在改代码改文件和排队阻塞的会话上）。
+- **陈旧遥测彻底去噪与活跃/历史工具严格解耦 (`src/daemon/coordinator.js`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - 服务端 `getCollaborationGraph` 彻底解耦 `current_tool`/`current_action`/`current_target` 与历史审计字段 `last_tool`/`last_action`/`last_target`：只有当 `lifecycle_state === 'working'` 时才填充活跃工具信息；当会话进入 `idle` 待命时，活跃调用信息一律置为 `null`；
+  - 前端态势巡检表与协同卡片全面过滤历史遥测：当会话处于待命状态时，工具列输出弱化灰底的 `<span class="tool-tag idle-standby">待命中 (无调用)</span>`，触达目标输出淡色 `-`，彻底清除误导。
+- **施工优先分层排序与在席待命池 (Standby Pool) 收拢 (`src/ui/app.js`, `src/ui/style.css`)**：
+  - **协同画布分层重构**：左侧会话列严格拆分为顶部的“活跃施工与排队会话”重点监控区与底部的“在席待命池 (Standby Pool)”；
+  - **在席待命池折叠机制**：待命卡片采用 Compact 紧凑规格与对齐 Claude Desktop 原生的空心圆环指示灯（`○`），隐去工具大号徽标，并支持一键折叠/展开；
+  - **态势巡检表权重排序**：实行 `working`（施工中 0）-> `waiting`（排队争用 1）-> `idle`（就绪待命 2）绝对优先级排序，确保干活会话与阻塞会话始终置顶，待命会话自动下沉并辅以透明度弱化（`collab-row-idle`）。
+- **修复 Claude Code 完工状态实时同步与持久化缺陷 (`src/daemon/coordinator.js`)**：
+  - 排查并修复 `syncClaudeSessions` 中由于 SQL 状态保留逻辑导致会话一旦被标记为 `running` 后无法自动回写为 `idle` 的问题，确保与本地 `sess.status === 'busy' ? 'running' : 'idle'` 精准实时双向同步。
+
+---
+
 ## 2026-10-19 多分支因果 DAG 拓扑重构、详略分级抽屉、综合全览驾驶舱与 WebSocket 实时长连接 (Multi-Branch DAG, Cockpit & Live WS)
 
 ### 改了什么

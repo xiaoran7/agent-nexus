@@ -409,15 +409,19 @@ export class CoordinatorEngine {
         const shouldUpdateName = cleanName && (isMechanicalAgentName(agent.name) || !agent.name);
         const targetName = shouldUpdateName ? cleanName : agent.name;
         const newHeartbeat = Math.max(agent.last_heartbeat || 0, sess.updatedAt || now);
+        const mappedStatus = sess.status === 'busy' ? 'running' : 'idle';
 
         this.db.prepare(`
           UPDATE agents
           SET pid = ?,
               name = ?,
               last_heartbeat = ?,
-              status = CASE WHEN status = 'departed' THEN (CASE WHEN ? = 'busy' THEN 'running' ELSE 'idle' END) ELSE status END
+              status = CASE
+                WHEN status = 'waiting' THEN status
+                ELSE ?
+              END
           WHERE id = ?
-        `).run(sess.pid, targetName, newHeartbeat, sess.status, agent.id);
+        `).run(sess.pid, targetName, newHeartbeat, mappedStatus, agent.id);
       } else {
         let projectId = 'default';
         let projectRoot = sess.cwd || '';
@@ -442,7 +446,10 @@ export class CoordinatorEngine {
             name = CASE WHEN excluded.name != '' THEN excluded.name ELSE agents.name END,
             pid = excluded.pid,
             last_heartbeat = excluded.last_heartbeat,
-            status = CASE WHEN agents.status = 'departed' THEN excluded.status ELSE agents.status END
+            status = CASE
+              WHEN agents.status = 'waiting' THEN agents.status
+              ELSE excluded.status
+            END
         `).run(agentId, projectId, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid);
 
         if (sess.cwd && projectId) {
@@ -1645,6 +1652,10 @@ export class CoordinatorEngine {
       const safeAction = cleanUtf8String(a.last_action, safeTool);
       const safeTarget = cleanUtf8String(a.last_target, null);
 
+      const activeTool = lifecycleState === 'working' ? safeTool : null;
+      const activeAction = lifecycleState === 'working' ? safeAction : null;
+      const activeTarget = lifecycleState === 'working' ? safeTarget : null;
+
       nodes.push({
         id: a.id,
         node_type: 'session',
@@ -1660,9 +1671,9 @@ export class CoordinatorEngine {
         last_tool: safeTool,
         last_action: safeAction,
         last_target: safeTarget,
-        current_tool: safeTool,
-        current_action: safeAction,
-        current_target: safeTarget,
+        current_tool: activeTool,
+        current_action: activeAction,
+        current_target: activeTarget,
         last_heartbeat: a.last_heartbeat,
         active_leases_count: a.active_leases_count || 0
       });

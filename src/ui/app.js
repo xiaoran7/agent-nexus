@@ -1551,6 +1551,45 @@ window.addEventListener('resize', debounce(() => {
 // Multi-Session Collaboration Graph Controller (多会话实时协同防撞车图谱)
 // ==========================================
 let currentCollabData = null;
+let collabFilterMode = 'all'; // 'all' (全景在席含待命) or 'working' (仅看活跃施工与排队)
+let standbyPoolCollapsed = false; // 是否折叠在席待命池
+
+window.setCollabFilterMode = function(mode) {
+  collabFilterMode = mode;
+  const btnAll = document.getElementById('collab-filter-all');
+  const btnWorking = document.getElementById('collab-filter-working');
+  const btnTableAll = document.getElementById('collab-table-filter-all');
+  const btnTableWorking = document.getElementById('collab-table-filter-working');
+
+  if (btnAll) btnAll.classList.toggle('active', mode === 'all');
+  if (btnWorking) btnWorking.classList.toggle('active', mode === 'working');
+  if (btnTableAll) btnTableAll.classList.toggle('active', mode === 'all');
+  if (btnTableWorking) btnTableWorking.classList.toggle('active', mode === 'working');
+
+  if (currentCollabData) {
+    renderCollabCanvas(currentCollabData);
+    renderCollabTable(currentCollabData);
+  }
+};
+
+window.toggleStandbyPool = function() {
+  standbyPoolCollapsed = !standbyPoolCollapsed;
+  if (currentCollabData) {
+    renderCollabCanvas(currentCollabData);
+  }
+};
+
+function initCollabFilters() {
+  const btnAll = document.getElementById('collab-filter-all');
+  const btnWorking = document.getElementById('collab-filter-working');
+  const btnTableAll = document.getElementById('collab-table-filter-all');
+  const btnTableWorking = document.getElementById('collab-table-filter-working');
+
+  if (btnAll) btnAll.onclick = () => window.setCollabFilterMode('all');
+  if (btnWorking) btnWorking.onclick = () => window.setCollabFilterMode('working');
+  if (btnTableAll) btnTableAll.onclick = () => window.setCollabFilterMode('all');
+  if (btnTableWorking) btnTableWorking.onclick = () => window.setCollabFilterMode('working');
+}
 
 async function fetchCollabGraph() {
   try {
@@ -1609,63 +1648,118 @@ function renderCollabCanvas(data) {
     return;
   }
 
-  const sessionNodes = nodes.filter(n => n.node_type === 'session');
+  // 严格过滤离线会话，只感知在席会话
+  const allSessionNodes = nodes.filter(n => n.node_type === 'session' && n.lifecycle_state !== 'departed');
   const resourceNodes = nodes.filter(n => n.node_type === 'resource');
+
+  // 分层划分：活跃施工与排队 vs 在席完工待命
+  const activeSessions = allSessionNodes.filter(s => s.lifecycle_state === 'working' || s.lifecycle_state === 'waiting');
+  const idleSessions = allSessionNodes.filter(s => s.lifecycle_state === 'idle');
+
+  const showIdle = (collabFilterMode === 'all');
+  const displayedSessionCount = showIdle ? allSessionNodes.length : activeSessions.length;
+
+  let sessionCardsHtml = '';
+
+  // 1. 活跃施工与排队会话 (绝对置顶并突出显示)
+  if (activeSessions.length > 0) {
+    sessionCardsHtml += activeSessions.map(s => {
+      const shortTarget = s.current_target ? s.current_target.split(/[\/\\]/).pop() : (s.last_target ? s.last_target.split(/[\/\\]/).pop() : null);
+      const provShort = escapeHtml((s.provider || 'A').toUpperCase().slice(0, 2));
+      const stateLabels = {
+        working: '🛠️ 施工中',
+        waiting: '⏳ 排队中'
+      };
+      const stateLabel = stateLabels[s.lifecycle_state] || s.lifecycle_state;
+      const toolName = s.current_tool || s.last_tool;
+
+      return `
+        <div class="collab-card session-card state-${escapeHtml(s.lifecycle_state)}" data-node-id="${escapeHtml(s.id)}">
+          <div class="collab-card-top">
+            <div class="collab-agent-info">
+              <span class="collab-agent-avatar">${provShort}</span>
+              <span class="collab-agent-name" title="${escapeHtml(s.name)}">
+                ${escapeHtml(s.name)}
+                ${s.pid ? `<small class="collab-pid">(PID: ${s.pid})</small>` : ''}
+              </span>
+            </div>
+            <span class="collab-state-pill ${escapeHtml(s.lifecycle_state)}">${stateLabel}</span>
+          </div>
+
+          ${toolName ? `
+            <div class="collab-tool-badge-row">
+              <span class="tool-tag ${escapeHtml(toolName.toLowerCase())}">${escapeHtml(toolName)}</span>
+              <span class="tool-target-text" title="${escapeHtml(s.current_target || s.last_target || s.current_action || '')}">
+                ${escapeHtml(shortTarget || s.current_action || '执行中')}
+              </span>
+            </div>
+          ` : ''}
+
+          <div class="collab-intent-text">
+            ${s.current_intent ? escapeHtml(s.current_intent) : '<span style="color: var(--text-faint); font-style: italic;">暂无意图声明</span>'}
+          </div>
+
+          ${s.active_leases_count > 0 ? `
+            <div class="collab-lock-badge">
+              <span>独占持锁: ${s.active_leases_count} 项</span>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+  } else if (!showIdle || idleSessions.length === 0) {
+    sessionCardsHtml += `
+      <div class="collab-empty-column" style="padding: 24px 14px; text-align: center; color: var(--text-faint); font-size: 13px;">
+        当前暂无正在修改代码或排队争用的活跃会话。
+      </div>
+    `;
+  }
+
+  // 2. 在席待命池 (Standby Pool) - 完工会话收拢，去噪不干扰
+  if (showIdle && idleSessions.length > 0) {
+    sessionCardsHtml += `
+      <div class="collab-standby-pool">
+        <div class="collab-standby-header" onclick="window.toggleStandbyPool()">
+          <div class="collab-standby-title">
+            <span class="status-hollow-dot"></span>
+            <span>在席待命池 (${idleSessions.length})</span>
+            <span class="collab-standby-tag">任务已完成 · 就绪</span>
+          </div>
+          <span class="collab-standby-toggle-btn">${standbyPoolCollapsed ? '展开 ▼' : '收起 ▲'}</span>
+        </div>
+        ${!standbyPoolCollapsed ? `
+          <div class="collab-standby-list">
+            ${idleSessions.map(s => `
+              <div class="collab-card session-card state-idle compact" data-node-id="${escapeHtml(s.id)}">
+                <div class="collab-card-top">
+                  <div class="collab-agent-info">
+                    <span class="collab-agent-avatar idle">${escapeHtml((s.provider || 'A').toUpperCase().slice(0, 2))}</span>
+                    <span class="collab-agent-name" title="${escapeHtml(s.name)}">
+                      ${escapeHtml(s.name)}
+                      ${s.pid ? `<small class="collab-pid">(PID: ${s.pid})</small>` : ''}
+                    </span>
+                  </div>
+                  <span class="collab-state-pill idle"><span class="status-hollow-dot"></span>待命中</span>
+                </div>
+                <div class="collab-idle-hint-text">会话待命就绪 · 无独占锁争用</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
 
   let html = `
     <div class="collab-columns-wrapper">
       <!-- 左列：协同会话节点 (Sessions) -->
       <div class="collab-column sessions-column">
         <div class="collab-column-header">
-          <span class="collab-col-title">🤖 在席助手会话 (${sessionNodes.length})</span>
-          <span class="collab-col-hint">按生命周期与当前工具实时感知</span>
+          <span class="collab-col-title">🤖 在席助手会话 (${displayedSessionCount})</span>
+          <span class="collab-col-hint">${showIdle ? '施工置顶 · 完工自动收拢待命池' : '已过滤待命会话 · 仅看活跃施工'}</span>
         </div>
         <div class="collab-cards-list">
-          ${sessionNodes.length > 0 ? sessionNodes.map(s => {
-            const shortTarget = s.last_target ? s.last_target.split(/[\/\\]/).pop() : null;
-            const provShort = escapeHtml((s.provider || 'A').toUpperCase().slice(0, 2));
-            const stateLabels = {
-              working: '🛠️ 施工中',
-              waiting: '⏳ 排队中',
-              idle: '💤 待命中',
-              departed: '⏹️ 已离线'
-            };
-            const stateLabel = stateLabels[s.lifecycle_state] || s.lifecycle_state;
-
-            return `
-              <div class="collab-card session-card state-${escapeHtml(s.lifecycle_state)}" data-node-id="${escapeHtml(s.id)}">
-                <div class="collab-card-top">
-                  <div class="collab-agent-info">
-                    <span class="collab-agent-avatar">${provShort}</span>
-                    <span class="collab-agent-name" title="${escapeHtml(s.name)}">
-                      ${escapeHtml(s.name)}
-                      ${s.pid ? `<small class="collab-pid">(PID: ${s.pid})</small>` : ''}
-                    </span>
-                  </div>
-                  <span class="collab-state-pill ${escapeHtml(s.lifecycle_state)}">${stateLabel}</span>
-                </div>
-
-                ${s.last_tool ? `
-                  <div class="collab-tool-badge-row">
-                    <span class="tool-tag ${escapeHtml(s.last_tool.toLowerCase())}">${escapeHtml(s.last_tool)}</span>
-                    <span class="tool-target-text" title="${escapeHtml(s.last_target || s.last_action || '')}">
-                      ${escapeHtml(shortTarget || s.last_action || '执行中')}
-                    </span>
-                  </div>
-                ` : ''}
-
-                <div class="collab-intent-text">
-                  ${s.current_intent ? escapeHtml(s.current_intent) : '<span style="color: var(--text-faint); font-style: italic;">暂无意图声明</span>'}
-                </div>
-
-                ${s.active_leases_count > 0 ? `
-                  <div class="collab-lock-badge">
-                    <span>独占持锁: ${s.active_leases_count} 项</span>
-                  </div>
-                ` : ''}
-              </div>
-            `;
-          }).join('') : '<div class="collab-empty-column">暂无在席会话</div>'}
+          ${sessionCardsHtml}
         </div>
       </div>
 
@@ -1842,26 +1936,41 @@ function redrawCollabEdges() {
 function renderCollabTable(data) {
   if (!dom.collabTableBody) return;
 
-  // 严格过滤掉已离线会话，只展示活跃协同会话
-  const sessionNodes = (data.nodes || []).filter(n => n.node_type === 'session' && n.lifecycle_state !== 'departed');
+  // 严格过滤掉已离线会话，只感知在席会话
+  let sessionNodes = (data.nodes || []).filter(n => n.node_type === 'session' && n.lifecycle_state !== 'departed');
+
+  if (collabFilterMode === 'working') {
+    sessionNodes = sessionNodes.filter(s => s.lifecycle_state === 'working' || s.lifecycle_state === 'waiting');
+  }
+
   if (sessionNodes.length === 0) {
     dom.collabTableBody.innerHTML = `
       <tr>
         <td colspan="7" style="text-align: center; color: var(--text-faint); padding: 30px;">
-          当前项目暂无在席施工或待命会话记录（离线会话已自动隐去）。
+          ${collabFilterMode === 'working' ? '当前项目暂无活跃施工或排队会话（待命会话已隐去）。' : '当前项目暂无在席会话记录。'}
         </td>
       </tr>
     `;
     return;
   }
 
+  // 权重排序：施工中 (0) -> 排队中 (1) -> 在席待命 (2)
+  const stateWeight = { working: 0, waiting: 1, idle: 2, departed: 3 };
+  sessionNodes.sort((a, b) => {
+    const wa = stateWeight[a.lifecycle_state] ?? 99;
+    const wb = stateWeight[b.lifecycle_state] ?? 99;
+    if (wa !== wb) return wa - wb;
+    return (b.last_heartbeat || 0) - (a.last_heartbeat || 0);
+  });
+
   const now = Date.now();
   dom.collabTableBody.innerHTML = sessionNodes.map(s => {
-    const shortTarget = s.last_target ? s.last_target.split(/[\/\\]/).pop() : '-';
+    const isIdle = s.lifecycle_state === 'idle';
+    const shortTarget = s.current_target ? s.current_target.split(/[\/\\]/).pop() : (s.last_target ? s.last_target.split(/[\/\\]/).pop() : '-');
     const stateMap = {
       working: '<span class="status-tag working"><span class="status-pulse-dot"></span>在线施工中</span>',
       waiting: '<span class="status-tag waiting">排队等待中</span>',
-      idle: '<span class="status-tag idle">在线待命</span>',
+      idle: '<span class="status-tag idle"><span class="status-hollow-dot"></span>在线待命</span>',
       departed: '<span class="status-tag departed">历史离线</span>'
     };
     const stateBadge = stateMap[s.lifecycle_state] || s.lifecycle_state;
@@ -1875,8 +1984,23 @@ function renderCollabTable(data) {
       else heartbeatText = `${Math.floor(diffSec / 3600)} 小时前`;
     }
 
+    // 状态与工具展示清洗：idle 状态彻底去噪，消除误导
+    let toolBadgeHtml = '<span style="color: var(--text-faint);">-</span>';
+    let targetPillHtml = '<span style="color: var(--text-faint);">-</span>';
+
+    if (!isIdle && (s.current_tool || s.last_tool)) {
+      const t = s.current_tool || s.last_tool;
+      toolBadgeHtml = `<span class="tool-tag ${escapeHtml(t.toLowerCase())}">${escapeHtml(t)}</span>`;
+      targetPillHtml = (s.current_target || s.last_target)
+        ? `<code class="target-code-pill" title="${escapeHtml(s.current_target || s.last_target)}">${escapeHtml(shortTarget)}</code>`
+        : (s.current_action ? `<span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(s.current_action)}</span>` : '<span style="color: var(--text-faint);">-</span>');
+    } else if (isIdle) {
+      toolBadgeHtml = '<span class="tool-tag idle-standby" title="会话已执行完当前任务，处于在席待命状态">待命中 (无调用)</span>';
+      targetPillHtml = '<span style="color: var(--text-faint);">-</span>';
+    }
+
     return `
-      <tr>
+      <tr class="${isIdle ? 'collab-row-idle' : ''}">
         <td>
           <div style="display: flex; align-items: center; gap: 8px;">
             <strong style="color: var(--text-title);">${escapeHtml(s.name)}</strong>
@@ -1884,18 +2008,8 @@ function renderCollabTable(data) {
           </div>
         </td>
         <td>${stateBadge}</td>
-        <td>
-          ${s.last_tool
-            ? `<span class="tool-tag ${escapeHtml(s.last_tool.toLowerCase())}">${escapeHtml(s.last_tool)}</span>`
-            : '<span style="color: var(--text-faint);">-</span>'
-          }
-        </td>
-        <td>
-          ${s.last_target
-            ? `<code class="target-code-pill" title="${escapeHtml(s.last_target)}">${escapeHtml(shortTarget)}</code>`
-            : (s.last_action ? `<span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(s.last_action)}</span>` : '<span style="color: var(--text-faint);">-</span>')
-          }
-        </td>
+        <td>${toolBadgeHtml}</td>
+        <td>${targetPillHtml}</td>
         <td>
           <span style="font-size: 13px; color: var(--text-main);">${escapeHtml(s.current_intent || '-')}</span>
         </td>
@@ -1914,6 +2028,7 @@ function renderCollabTable(data) {
 }
 
 // 初始化
+initCollabFilters();
 const statusEl = document.getElementById('daemon-status');
 if (statusEl && window.location.host) {
   statusEl.textContent = window.location.host;

@@ -486,6 +486,15 @@
           </div>
 
           <div class="collab-controls-group">
+            <div class="collab-filter-capsule">
+              <button id="collab-filter-all" class="collab-filter-btn active" title="展示全部在席会话（含在线待命池）">
+                <span>🌐 全景在席 (含待命)</span>
+              </button>
+              <button id="collab-filter-working" class="collab-filter-btn" title="仅看正在施工与排队争用的活跃会话">
+                <span>🔥 仅看活跃施工</span>
+              </button>
+            </div>
+
             <div class="collab-health-capsule">
               <span id="collab-live-dot" class="pulse-dot"></span>
               <span id="collab-live-status" style="font-weight: 700;">实时联调监控中</span>
@@ -572,7 +581,13 @@
             </div>
             <span>会话实时态势巡检表 (各助手当前执行工具与触达目标)</span>
           </div>
-          <span class="panel-meta" id="collab-table-meta">实时追踪</span>
+          <div class="panel-meta-actions" style="display: flex; align-items: center; gap: 10px;">
+            <div class="collab-filter-capsule mini">
+              <button id="collab-table-filter-all" class="collab-filter-btn active" title="展示全景（含待命会话）">🌐 全景</button>
+              <button id="collab-table-filter-working" class="collab-filter-btn" title="仅展示施工与排队会话">🔥 仅施工</button>
+            </div>
+            <span class="panel-meta" id="collab-table-meta">实时追踪</span>
+          </div>
         </div>
         <div class="collab-table-container">
           <table class="collab-table">

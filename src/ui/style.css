@@ -1811,7 +1811,160 @@ header {
   }
 }
 
-/* Collab Telemetry Table */
+/* Collab Telemetry Table & Filters */
+.collab-filter-capsule {
+  display: inline-flex;
+  align-items: center;
+  background: var(--capsule-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  padding: 3px;
+  gap: 3px;
+}
+
+.collab-filter-capsule.mini {
+  padding: 2px;
+}
+
+.collab-filter-btn {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.collab-filter-capsule.mini .collab-filter-btn {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+.collab-filter-btn:hover {
+  color: var(--text-title);
+  background: var(--capsule-hover);
+}
+
+.collab-filter-btn.active {
+  background: rgba(56, 189, 248, 0.18);
+  color: var(--sky-primary);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+/* Standby Pool Container */
+.collab-standby-pool {
+  margin-top: 14px;
+  background: rgba(148, 163, 184, 0.04);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  transition: all 0.2s ease;
+}
+
+.collab-standby-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  user-select: none;
+}
+
+.collab-standby-header:hover {
+  background: var(--card-hover);
+}
+
+.collab-standby-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.collab-standby-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-faint);
+  background: rgba(148, 163, 184, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.collab-standby-toggle-btn {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.collab-standby-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.collab-card.session-card.compact {
+  padding: 8px 12px;
+  min-height: auto;
+  opacity: 0.88;
+}
+
+.collab-card.session-card.compact:hover {
+  opacity: 1;
+}
+
+.collab-card.session-card.compact .collab-agent-avatar.idle {
+  background: #64748b;
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+
+.collab-idle-hint-text {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.status-hollow-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid #38bdf8;
+  background: transparent;
+  display: inline-block;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.collab-state-pill.idle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.tool-tag.idle-standby {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--text-faint);
+  border: 1px dashed var(--border-subtle);
+  font-weight: 500;
+  text-transform: none;
+}
+
 .collab-table-container {
   background: var(--card-bg);
   border: 1px solid var(--border-subtle);
@@ -1867,6 +2020,14 @@ header {
 
 .collab-table tr:hover td {
   background: var(--card-hover);
+}
+
+.collab-table tr.collab-row-idle td {
+  opacity: 0.78;
+}
+
+.collab-table tr.collab-row-idle:hover td {
+  opacity: 1;
 }
 
 .status-tag {
