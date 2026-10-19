@@ -238,7 +238,8 @@ function assertClaimTarget(raw, claimType, baseDir, projectRoot) {
   return { type: claimType, target: normalized };
 }
 
-// 只有真正修改文件的写工具才计入施工活跃状态（避免只读工具如 Read/Grep 误判为施工中）
+// 只有真正修改代码/文件的写工具（Write/Edit/MultiEdit/NotebookEdit/Update/apply_patch）才计入施工活跃状态；
+// 只读或查询工具（Read/Grep/Glob）不引起代码修改冲突，在席保持在线待命 (idle)
 export const WRITE_TOOLS_SET = new Set([
   'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update', 'apply_patch'
 ]);
@@ -246,7 +247,7 @@ export const WRITE_TOOLS_SET = new Set([
 export function isExecutingWorkingTool(tool, heartbeat, now) {
   if (!tool || typeof tool !== 'string' || !tool.trim()) return false;
   if (WRITE_TOOLS_SET.has(tool)) {
-    return (now - heartbeat) <= 60000;
+    return (now - (heartbeat || 0)) <= 60000;
   }
   return false;
 }
@@ -590,10 +591,16 @@ export class CoordinatorEngine {
   }
 
   getAgent(id, projectId = null) {
-    if (projectId) {
-      return this.db.prepare('SELECT * FROM agents WHERE id = ? AND project_id = ?').get(id, projectId);
-    }
-    return this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
+    const raw = projectId
+      ? this.db.prepare('SELECT * FROM agents WHERE id = ? AND project_id = ?').get(id, projectId)
+      : this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
+    if (!raw) return null;
+    const { lifecycleState, isOnline } = computeAgentLifecycleState(raw, Date.now());
+    return {
+      ...raw,
+      lifecycle_state: lifecycleState,
+      is_online: isOnline
+    };
   }
 
   listAgents(projectId = null) {
@@ -1653,6 +1660,9 @@ export class CoordinatorEngine {
         last_tool: safeTool,
         last_action: safeAction,
         last_target: safeTarget,
+        current_tool: safeTool,
+        current_action: safeAction,
+        current_target: safeTarget,
         last_heartbeat: a.last_heartbeat,
         active_leases_count: a.active_leases_count || 0
       });
@@ -1729,22 +1739,54 @@ export class CoordinatorEngine {
     const collab = this.getCollaborationGraph(finalProjectId);
     const topology = this.topologyService
       ? this.topologyService.getTopologyGraph(finalProjectId || 'default', { limit: 30 })
-      : { nodes: [], edges: [], totalNodes: 0 };
+      : { nodes: [], edges: [], totalNodes: 0, modules: [] };
 
     const onlineAgents = (dashboard.agents || []).filter(a => a.is_online);
     const workingSessions = onlineAgents.filter(a => a.lifecycle_state === 'working');
     const waitingSessions = onlineAgents.filter(a => a.lifecycle_state === 'waiting');
     const idleSessions = onlineAgents.filter(a => a.lifecycle_state === 'idle');
 
+    // 活跃施工与排队中工作者
+    const activeWorkers = (collab.nodes || []).filter(n => n.lifecycle_state === 'working' || n.lifecycle_state === 'waiting');
+
+    // 冲突与排他资源锁
+    const activeClaims = dashboard.activeClaims || [];
+    const resourceLocks = collab.exclusiveLocks || [];
+    const waitQueue = dashboard.waitQueue || [];
+
+    // 对话与广播
+    const dialogues = dashboard.recentDialogues || [];
+    const broadcasts = dashboard.recentBroadcasts || [];
+
+    const metrics = {
+      workingAgents: workingSessions.length,
+      waitingAgents: waitingSessions.length,
+      idleAgents: idleSessions.length,
+      totalOnline: onlineAgents.length,
+      activeLocks: activeClaims.length + resourceLocks.length,
+      topologyNodes: topology.totalNodes || topology.nodes?.length || 0,
+      dialogueCount: dialogues.length + broadcasts.length
+    };
+
     return {
       projectId: finalProjectId || 'all',
       timestamp: Date.now(),
+      metrics,
+      activeWorkers,
+      topologySnapshot: topology,
+      lockContention: {
+        activeClaims,
+        resourceLocks,
+        waitQueue
+      },
+      dialogues,
+      broadcasts,
       summary: {
         totalOnline: onlineAgents.length,
         workingCount: workingSessions.length,
         waitingCount: waitingSessions.length,
         idleCount: idleSessions.length,
-        activeLocksCount: dashboard.activeClaims?.length || 0,
+        activeLocksCount: activeClaims.length + resourceLocks.length,
         topologyNodesCount: topology.totalNodes || topology.nodes?.length || 0
       },
       dashboard,

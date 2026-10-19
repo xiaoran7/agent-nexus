@@ -2598,6 +2598,633 @@ footer {
   background: var(--sky-primary);
 }
 
+/* =============================================================================
+   Unified Cockpit (综合全览驾驶舱 - 四象限高密全景聚合)
+   ============================================================================= */
+
+#view-unified {
+  display: none;
+  flex-direction: column;
+  gap: 22px;
+}
+
+#view-unified.active {
+  display: flex;
+}
+
+.cockpit-hero-panel {
+  background: var(--collab-hero-bg);
+  border: 1px solid var(--collab-hero-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 24px 28px;
+}
+
+.cockpit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  width: 100%;
+}
+
+@media (max-width: 1024px) {
+  .cockpit-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cockpit-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 380px;
+  max-height: 440px;
+}
+
+.cockpit-scroll-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 6px;
+  margin-top: 12px;
+}
+
+.cockpit-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin: auto 0;
+}
+
+/* 象限 1: 施工助手态势卡片 */
+.cockpit-worker-card {
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, border-color 0.2s ease;
+  transform: translateZ(0);
+}
+
+.cockpit-worker-card:hover {
+  background: var(--card-subtle-hover);
+  border-color: var(--border-hover);
+  transform: translateY(-1px) translateZ(0);
+}
+
+.cockpit-worker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cockpit-worker-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(135deg, #0284c7 0%, #6366f1 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.cockpit-worker-identity {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cockpit-worker-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cockpit-worker-id {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cockpit-worker-action-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  margin-top: 4px;
+}
+
+.cockpit-worker-tool {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #0284c7;
+  color: white;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.cockpit-worker-action {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cockpit-worker-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--sky-primary);
+  margin-top: 6px;
+  padding-left: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 象限 2: 拓扑节点脉络条目 */
+.cockpit-topo-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, border-color 0.2s ease;
+  transform: translateZ(0);
+}
+
+.cockpit-topo-item:hover {
+  background: var(--card-subtle-hover);
+  border-color: var(--sky-primary);
+  transform: translateX(2px) translateZ(0);
+}
+
+.cockpit-topo-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cockpit-topo-module {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--sky-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.cockpit-topo-causality {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.cockpit-topo-main {
+  flex: 1;
+  overflow: hidden;
+}
+
+.cockpit-topo-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cockpit-topo-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+.cockpit-topo-arrow {
+  color: var(--text-faint);
+  font-size: 14px;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.cockpit-topo-item:hover .cockpit-topo-arrow {
+  color: var(--sky-primary);
+  transform: translateX(3px);
+}
+
+/* 象限 3: 锁看板卡片 */
+.cockpit-lock-card {
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid #34d399;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.cockpit-lock-card.waiting {
+  border-left-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.cockpit-lock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.cockpit-lock-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+}
+
+.cockpit-lock-tag.file {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+}
+
+.cockpit-lock-tag.resource {
+  background: rgba(192, 132, 252, 0.15);
+  color: #c084fc;
+}
+
+.cockpit-lock-tag.wait {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.cockpit-lock-holder {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+.cockpit-lock-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 象限 4: 跨会话调度条目 */
+.cockpit-dialogue-item {
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.cockpit-dialogue-item.broadcast {
+  border-left: 3px solid #38bdf8;
+  background: rgba(56, 189, 248, 0.04);
+}
+
+.cockpit-dialogue-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.cockpit-dialogue-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.cockpit-dialogue-badge.broadcast {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+}
+
+.cockpit-dialogue-badge.direct {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.cockpit-dialogue-sender {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-title);
+}
+
+.cockpit-dialogue-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.cockpit-dialogue-content {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* =============================================================================
+   Topology Subsystem Filters & Detail Drawer (详略得当因果抽屉)
+   ============================================================================= */
+
+.topo-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.topo-filter-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+
+.topo-filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.topo-filter-chip {
+  background: var(--capsule-bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.topo-filter-chip:hover {
+  background: var(--capsule-hover);
+  color: var(--text-title);
+  border-color: var(--border-hover);
+}
+
+.topo-filter-chip.active {
+  background: rgba(56, 189, 248, 0.18);
+  color: var(--sky-primary);
+  border-color: var(--sky-primary);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+}
+
+/* 抽屉浮层 (Slide-out Detail Drawer) */
+.topo-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 440px;
+  max-width: 90%;
+  height: 100%;
+  background: var(--card-bg-elevated);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid var(--border-focus);
+  border-top-right-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-xl);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  animation: topoDrawerSlide 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateZ(0);
+}
+
+@keyframes topoDrawerSlide {
+  from {
+    transform: translateX(100%) translateZ(0);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0) translateZ(0);
+    opacity: 1;
+  }
+}
+
+.topo-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.topo-drawer-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  padding-right: 12px;
+}
+
+.topo-drawer-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-title);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.topo-drawer-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topo-drawer-close-btn:hover {
+  color: var(--text-title);
+  background: var(--card-hover);
+}
+
+.topo-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drawer-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+}
+
+.drawer-tags-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.drawer-meta-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--sky-primary);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.drawer-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.drawer-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.drawer-info-k {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.drawer-info-v {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-title);
+}
+
+.drawer-desc-box {
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.drawer-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drawer-file-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--sky-primary);
+  word-break: break-all;
+}
+
+.drawer-causality-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.drawer-sub-title {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.drawer-node-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drawer-node-link-btn {
+  background: var(--card-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text-main);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.drawer-node-link-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--sky-primary);
+  color: var(--sky-primary);
+}
+
 ::selection {
   background: rgba(56, 189, 248, 0.28);
   color: var(--text-title);

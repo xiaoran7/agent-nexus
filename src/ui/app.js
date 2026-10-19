@@ -1,6 +1,9 @@
 // Agent-Nexus War Room UI Controller
 
 function getNexusToken() {
+  if (typeof window !== 'undefined' && window.__NEXUS_TOKEN__) {
+    return window.__NEXUS_TOKEN__;
+  }
   const fromQuery = new URLSearchParams(location.search).get('token');
   if (fromQuery) {
     sessionStorage.setItem('nexusToken', fromQuery);
@@ -127,10 +130,29 @@ const dom = {
   viewWarRoom: document.getElementById('view-war-room'),
   viewTopology: document.getElementById('view-topology'),
   viewCollab: document.getElementById('view-collab'),
+  viewUnified: document.getElementById('view-unified'),
   collabTabBadge: document.getElementById('collab-tab-badge'),
   topologyTabBadge: document.getElementById('topology-tab-badge'),
 
-  // Functional Topology DOM Elements
+  // Unified Cockpit Elements
+  cockpitLiveDot: document.getElementById('cockpit-live-dot'),
+  cockpitConnStatus: document.getElementById('cockpit-conn-status'),
+  cockpitLastSync: document.getElementById('cockpit-last-sync'),
+  cockpitRefreshBtn: document.getElementById('cockpit-refresh-btn'),
+  cockpitStatWorking: document.getElementById('cockpit-stat-working'),
+  cockpitStatWaiting: document.getElementById('cockpit-stat-waiting'),
+  cockpitStatLocks: document.getElementById('cockpit-stat-locks'),
+  cockpitStatNodes: document.getElementById('cockpit-stat-nodes'),
+  cockpitStatMessages: document.getElementById('cockpit-stat-messages'),
+  cockpitWorkingMeta: document.getElementById('cockpit-working-meta'),
+  cockpitAgentsList: document.getElementById('cockpit-agents-list'),
+  cockpitGotoTopoBtn: document.getElementById('cockpit-goto-topo-btn'),
+  cockpitTopologyList: document.getElementById('cockpit-topology-list'),
+  cockpitLocksMeta: document.getElementById('cockpit-locks-meta'),
+  cockpitLocksList: document.getElementById('cockpit-locks-list'),
+  cockpitDialogueList: document.getElementById('cockpit-dialogue-list'),
+
+  // Functional Topology DOM Elements & Detail Drawer
   topoStatNodes: document.getElementById('topo-stat-nodes'),
   topoStatEdges: document.getElementById('topo-stat-edges'),
   topoStatAgents: document.getElementById('topo-stat-agents'),
@@ -140,6 +162,22 @@ const dom = {
   topoCanvasInner: document.getElementById('topo-canvas-inner'),
   topoSvgLayer: document.getElementById('topo-svg-layer'),
   topoNodesLayer: document.getElementById('topo-nodes-layer'),
+  topoModuleChips: document.getElementById('topo-module-chips'),
+  topoNodeDrawer: document.getElementById('topo-node-drawer'),
+  topoDrawerClose: document.getElementById('topo-drawer-close'),
+  drawerNodeTypeBadge: document.getElementById('drawer-node-type-badge'),
+  drawerNodeTitle: document.getElementById('drawer-node-title'),
+  drawerModuleTag: document.getElementById('drawer-module-tag'),
+  drawerCausalityTag: document.getElementById('drawer-causality-tag'),
+  drawerDepthTag: document.getElementById('drawer-depth-tag'),
+  drawerAgentId: document.getElementById('drawer-agent-id'),
+  drawerTime: document.getElementById('drawer-time'),
+  drawerIntentId: document.getElementById('drawer-intent-id'),
+  drawerDescription: document.getElementById('drawer-description'),
+  drawerClaimsCount: document.getElementById('drawer-claims-count'),
+  drawerClaimsList: document.getElementById('drawer-claims-list'),
+  drawerParentsList: document.getElementById('drawer-parents-list'),
+  drawerChildrenList: document.getElementById('drawer-children-list'),
 
   // Multi-Session Collaboration Graph DOM Elements
   collabLiveDot: document.getElementById('collab-live-dot'),
@@ -734,11 +772,13 @@ if (dom.masterBroadcastBtn) {
   };
 }
 
-// 刷新防抖，避免事件风暴冲击服务端
-const debouncedFetchDashboard = debounce(fetchDashboard, 100);
-const debouncedFetchMemories = debounce(fetchMemories, 150);
-const debouncedFetchDialogues = debounce(fetchDialogues, 150);
-const debouncedFetchCollab = debounce(fetchCollabGraph, 120);
+// 刷新防抖，严格遵循 60 FPS 性能铁律（>=500ms），避免高频 DOM 重排与事件风暴冲击
+const debouncedFetchDashboard = debounce(fetchDashboard, 500);
+const debouncedFetchMemories = debounce(fetchMemories, 500);
+const debouncedFetchDialogues = debounce(fetchDialogues, 500);
+const debouncedFetchCollab = debounce(fetchCollabGraph, 500);
+const debouncedFetchTopology = debounce(fetchTopologyGraph, 500);
+const debouncedFetchCockpit = debounce(fetchCockpit, 500);
 
 // 会话间对话网络拉取与渲染
 async function fetchDialogues() {
@@ -799,11 +839,12 @@ let currentViewMode = 'collab';
 function setViewMode(mode) {
   currentViewMode = mode;
   [dom.tabWarRoom, dom.tabTopology, dom.tabCollab, dom.tabUnified].forEach(t => t?.classList.remove('active'));
-  [dom.viewWarRoom, dom.viewTopology, dom.viewCollab].forEach(v => v?.classList.remove('active'));
+  [dom.viewWarRoom, dom.viewTopology, dom.viewCollab, dom.viewUnified].forEach(v => v?.classList.remove('active'));
 
   if (mode === 'war-room') {
     dom.tabWarRoom?.classList.add('active');
     dom.viewWarRoom?.classList.add('active');
+    fetchDashboard();
   } else if (mode === 'topology') {
     dom.tabTopology?.classList.add('active');
     dom.viewTopology?.classList.add('active');
@@ -816,15 +857,8 @@ function setViewMode(mode) {
     requestAnimationFrame(() => redrawCollabEdges());
   } else if (mode === 'unified') {
     dom.tabUnified?.classList.add('active');
-    dom.viewWarRoom?.classList.add('active');
-    dom.viewTopology?.classList.add('active');
-    dom.viewCollab?.classList.add('active');
-    fetchTopologyGraph();
-    fetchCollabGraph();
-    requestAnimationFrame(() => {
-      redrawTopologyEdges();
-      redrawCollabEdges();
-    });
+    dom.viewUnified?.classList.add('active');
+    fetchCockpit();
   }
 }
 
@@ -834,10 +868,244 @@ if (dom.tabCollab) dom.tabCollab.onclick = () => setViewMode('collab');
 if (dom.tabUnified) dom.tabUnified.onclick = () => setViewMode('unified');
 
 // ==========================================
-// Functional Topology Controller (功能演进拓扑大屏)
+// Unified Cockpit Controller (综合全览驾驶舱)
+// ==========================================
+let currentCockpitData = null;
+
+async function fetchCockpit() {
+  try {
+    const res = await fetch(`/api/cockpit?project_id=${encodeURIComponent(currentProjectId)}`, {
+      headers: authHeaders()
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    currentCockpitData = data;
+    renderUnifiedCockpit(data);
+  } catch (err) {
+    console.error('Fetch cockpit error:', err);
+  }
+}
+
+if (dom.cockpitRefreshBtn) {
+  dom.cockpitRefreshBtn.onclick = () => fetchCockpit();
+}
+
+if (dom.cockpitGotoTopoBtn) {
+  dom.cockpitGotoTopoBtn.onclick = () => setViewMode('topology');
+}
+
+function renderUnifiedCockpit(cockpit) {
+  if (!cockpit) return;
+  const metrics = cockpit.metrics || {};
+
+  // 1. 顶栏指标
+  if (dom.cockpitStatWorking) dom.cockpitStatWorking.textContent = metrics.workingAgents || 0;
+  if (dom.cockpitStatWaiting) dom.cockpitStatWaiting.textContent = metrics.waitingAgents || 0;
+  if (dom.cockpitStatLocks) dom.cockpitStatLocks.textContent = metrics.activeLocks || 0;
+  if (dom.cockpitStatNodes) dom.cockpitStatNodes.textContent = metrics.topologyNodes || 0;
+  if (dom.cockpitStatMessages) dom.cockpitStatMessages.textContent = metrics.dialogueCount || 0;
+  if (dom.cockpitLastSync) dom.cockpitLastSync.textContent = new Date().toLocaleTimeString([], { hour12: false });
+
+  // 2. 象限 1: 实时施工助手态势矩阵
+  const activeWorkers = cockpit.activeWorkers || [];
+  if (dom.cockpitWorkingMeta) {
+    dom.cockpitWorkingMeta.textContent = `${activeWorkers.length} 个助手施工中`;
+  }
+  if (dom.cockpitAgentsList) {
+    if (activeWorkers.length === 0) {
+      dom.cockpitAgentsList.innerHTML = `
+        <div class="cockpit-empty-state">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <div style="font-weight: 600; margin-top: 8px;">当前暂无施工中助手</div>
+          <div style="font-size: 12px; color: var(--text-faint); margin-top: 4px;">所有工作区处于就绪状态，无排他修改冲突</div>
+        </div>
+      `;
+    } else {
+      dom.cockpitAgentsList.innerHTML = activeWorkers.map(w => {
+        const name = escapeHtml(formatAgentDisplayName(w.name, w.id, w.provider, w.session_id, w.intent_summary));
+        const tool = escapeHtml(w.current_tool || 'Working');
+        const action = escapeHtml(w.current_action || '执行任务中');
+        const target = w.current_target ? escapeHtml(w.current_target.split('/').pop() || w.current_target) : null;
+        const stateBadge = w.lifecycle_state === 'waiting'
+          ? '<span class="status-pill waiting" style="margin-left: auto;">待命中 (排队)</span>'
+          : '<span class="status-pill working" style="margin-left: auto;">工作中 (施工)</span>';
+
+        return `
+          <div class="cockpit-worker-card">
+            <div class="cockpit-worker-head">
+              <span class="cockpit-worker-avatar">${name.slice(0, 2)}</span>
+              <div class="cockpit-worker-identity">
+                <div class="cockpit-worker-name">${name}</div>
+                <div class="cockpit-worker-id">${escapeHtml(w.id)}</div>
+              </div>
+              ${stateBadge}
+            </div>
+            <div class="cockpit-worker-action-box">
+              <div class="cockpit-worker-tool">${tool}</div>
+              <div class="cockpit-worker-action" title="${escapeHtml(w.current_action || '')}">${action}</div>
+            </div>
+            ${target ? `
+              <div class="cockpit-worker-target">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>${target}</span>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 3. 象限 2: 演进拓扑主线脉络
+  const topologyNodes = (cockpit.topologySnapshot && cockpit.topologySnapshot.nodes) || [];
+  if (dom.cockpitTopologyList) {
+    if (topologyNodes.length === 0) {
+      dom.cockpitTopologyList.innerHTML = `
+        <div class="cockpit-empty-state">
+          <div style="font-weight: 600;">暂无演进拓扑节点</div>
+          <div style="font-size: 12px; color: var(--text-faint); margin-top: 4px;">完成任务或提交 Git 后将自动记录拓扑</div>
+        </div>
+      `;
+    } else {
+      const recentNodes = [...topologyNodes].reverse().slice(0, 10);
+      dom.cockpitTopologyList.innerHTML = recentNodes.map((n) => {
+        const timeStr = new Date(n.createdAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
+        const moduleTag = escapeHtml(n.module || 'core');
+        const causalityLabel = n.causalityType === 'causal_file' ? '同文件延续' :
+                               n.causalityType === 'module_branch' ? '模块分支' :
+                               n.causalityType === 'milestone_convergence' ? '阶段汇聚' :
+                               n.causalityType === 'handoff' ? '交接' : '时序演进';
+        return `
+          <div class="cockpit-topo-item" onclick="openTopologyDrawerById('${escapeHtml(n.id)}')">
+            <div class="cockpit-topo-left">
+              <span class="cockpit-topo-module">${moduleTag}</span>
+              <span class="cockpit-topo-causality">${causalityLabel}</span>
+            </div>
+            <div class="cockpit-topo-main">
+              <div class="cockpit-topo-title">${escapeHtml(n.title)}</div>
+              <div class="cockpit-topo-meta">
+                <span>${escapeHtml(formatAgentDisplayName(n.agentName, n.agentId))}</span>
+                <span>•</span>
+                <span>${timeStr}</span>
+              </div>
+            </div>
+            <span class="cockpit-topo-arrow">&rarr;</span>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 4. 象限 3: 独占资源锁与排队争用看板
+  const lockContention = cockpit.lockContention || {};
+  const activeClaims = lockContention.activeClaims || [];
+  const resourceLocks = lockContention.resourceLocks || [];
+  const waitQueue = lockContention.waitQueue || [];
+  const totalLocks = activeClaims.length + resourceLocks.length;
+
+  if (dom.cockpitLocksMeta) {
+    dom.cockpitLocksMeta.textContent = `${totalLocks} 个锁定, ${waitQueue.length} 个排队`;
+  }
+  if (dom.cockpitLocksList) {
+    if (totalLocks === 0 && waitQueue.length === 0) {
+      dom.cockpitLocksList.innerHTML = `
+        <div class="cockpit-empty-state">
+          <div style="font-weight: 600;">资源通道完全畅通</div>
+          <div style="font-size: 12px; color: var(--text-faint); margin-top: 4px;">无锁争用，支持多 Agent 无冲突并行施工</div>
+        </div>
+      `;
+    } else {
+      let itemsHtml = '';
+      for (const c of activeClaims) {
+        const shortFile = escapeHtml(c.claim_target.split('/').pop() || c.claim_target);
+        itemsHtml += `
+          <div class="cockpit-lock-card">
+            <div class="cockpit-lock-header">
+              <span class="cockpit-lock-tag file">文件锁: ${shortFile}</span>
+              <span class="cockpit-lock-holder">${escapeHtml(c.agent_id)}</span>
+            </div>
+            <div class="cockpit-lock-path" title="${escapeHtml(c.claim_target)}">${escapeHtml(c.claim_target)}</div>
+          </div>
+        `;
+      }
+      for (const r of resourceLocks) {
+        itemsHtml += `
+          <div class="cockpit-lock-card">
+            <div class="cockpit-lock-header">
+              <span class="cockpit-lock-tag resource">命名资源: ${escapeHtml(r.resource_name)}</span>
+              <span class="cockpit-lock-holder">${escapeHtml(r.agent_id)}</span>
+            </div>
+            <div class="cockpit-lock-path">${escapeHtml(r.reason || 'Exclusive resource')}</div>
+          </div>
+        `;
+      }
+      for (const w of waitQueue) {
+        itemsHtml += `
+          <div class="cockpit-lock-card waiting">
+            <div class="cockpit-lock-header">
+              <span class="cockpit-lock-tag wait">排队中 (等待释放)</span>
+              <span class="cockpit-lock-holder">${escapeHtml(w.agent_id)}</span>
+            </div>
+            <div class="cockpit-lock-path">等待资源: ${escapeHtml(w.resource_target || w.target || 'locked resource')}</div>
+          </div>
+        `;
+      }
+      dom.cockpitLocksList.innerHTML = itemsHtml;
+    }
+  }
+
+  // 5. 象限 4: 跨会话调度与流水
+  const dialogues = cockpit.dialogues || [];
+  const broadcasts = cockpit.broadcasts || [];
+  const combined = [
+    ...broadcasts.map(b => ({ ...b, isBroadcast: true })),
+    ...dialogues.map(d => ({ ...d, isBroadcast: false }))
+  ].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 15);
+
+  if (dom.cockpitDialogueList) {
+    if (combined.length === 0) {
+      dom.cockpitDialogueList.innerHTML = `
+        <div class="cockpit-empty-state">
+          <div style="font-weight: 600;">暂无跨会话调度记录</div>
+          <div style="font-size: 12px; color: var(--text-faint); margin-top: 4px;">架构师调度广播与 Agent 间协同消息将实时流式展示</div>
+        </div>
+      `;
+    } else {
+      dom.cockpitDialogueList.innerHTML = combined.map(item => {
+        const timeStr = new Date(item.created_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' });
+        const sender = escapeHtml(item.from_agent_id || item.agent_id || 'System');
+        const content = escapeHtml(item.content || item.description || '');
+        const badge = item.isBroadcast
+          ? '<span class="cockpit-dialogue-badge broadcast">全员广播</span>'
+          : '<span class="cockpit-dialogue-badge direct">协同对话</span>';
+
+        return `
+          <div class="cockpit-dialogue-item ${item.isBroadcast ? 'broadcast' : ''}">
+            <div class="cockpit-dialogue-header">
+              ${badge}
+              <span class="cockpit-dialogue-sender">${sender}</span>
+              <span class="cockpit-dialogue-time">${timeStr}</span>
+            </div>
+            <div class="cockpit-dialogue-content">${content}</div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+}
+
+// ==========================================
+// Functional Topology Controller (功能演进拓扑大屏与详略得当抽屉)
 // ==========================================
 let currentTopologyData = null;
 let topoSearchQuery = '';
+let selectedTopoModule = 'all';
 
 async function fetchTopologyGraph() {
   try {
@@ -847,6 +1115,7 @@ async function fetchTopologyGraph() {
     if (!res.ok) return;
     const data = await res.json();
     currentTopologyData = data;
+    renderModuleChips(data.modules || []);
     renderTopologyView(data);
   } catch (err) {
     console.error('Fetch topology error:', err);
@@ -866,14 +1135,166 @@ if (dom.topoSearchInput) {
   };
 }
 
+if (dom.topoDrawerClose) {
+  dom.topoDrawerClose.onclick = () => {
+    if (dom.topoNodeDrawer) dom.topoNodeDrawer.style.display = 'none';
+  };
+}
+
+function renderModuleChips(modules = []) {
+  if (!dom.topoModuleChips) return;
+  const moduleLabels = {
+    'all': '全景总览',
+    'daemon': 'daemon 守护调度',
+    'transport': 'transport 传输通信',
+    'domain': 'domain 领域协同',
+    'ui': 'ui 前端交互',
+    'hook': 'hook 拦截门禁',
+    'mcp': 'mcp 协议工具',
+    'tests': 'tests 自动化测试',
+    'docs': 'docs 架构规范',
+    'core': 'core 核心工程'
+  };
+
+  const list = ['all', ...modules.filter(m => m !== 'all')];
+  dom.topoModuleChips.innerHTML = list.map(m => {
+    const label = moduleLabels[m] || m;
+    const active = m === selectedTopoModule ? 'active' : '';
+    return `<button class="topo-filter-chip ${active}" data-module="${escapeHtml(m)}">${escapeHtml(label)}</button>`;
+  }).join('');
+
+  dom.topoModuleChips.querySelectorAll('.topo-filter-chip').forEach(btn => {
+    btn.onclick = () => {
+      selectedTopoModule = btn.getAttribute('data-module') || 'all';
+      renderModuleChips(modules);
+      if (currentTopologyData) {
+        renderTopologyView(currentTopologyData);
+      }
+    };
+  });
+}
+
+function openTopologyDrawer(node) {
+  if (!node || !dom.topoNodeDrawer) return;
+
+  if (dom.drawerNodeTypeBadge) {
+    dom.drawerNodeTypeBadge.textContent = node.nodeType === 'milestone' ? '里程碑达成' :
+                                         node.nodeType === 'handoff' ? '会话交接' : '功能完工释放';
+    dom.drawerNodeTypeBadge.className = node.nodeType === 'milestone' ? 'badge-collab-live' : 'badge-collab-waiting';
+  }
+  if (dom.drawerNodeTitle) dom.drawerNodeTitle.textContent = node.title || '节点详情';
+  if (dom.drawerModuleTag) dom.drawerModuleTag.textContent = `模块: ${node.module || 'core'}`;
+
+  const causalityMap = {
+    'causal_file': '同文件延续',
+    'module_branch': '模块演进',
+    'milestone_convergence': '阶段汇聚',
+    'handoff': '任务交接',
+    'unblocked': '冲突解除唤醒',
+    'sequence': '时序演进'
+  };
+  if (dom.drawerCausalityTag) {
+    dom.drawerCausalityTag.textContent = `因果: ${causalityMap[node.causalityType] || node.causalityType || '演进'}`;
+  }
+  if (dom.drawerDepthTag) dom.drawerDepthTag.textContent = `DAG 层级: ${node.depth || 0}`;
+  if (dom.drawerAgentId) dom.drawerAgentId.textContent = formatAgentDisplayName(node.agentName, node.agentId);
+  if (dom.drawerTime) dom.drawerTime.textContent = new Date(node.createdAt).toLocaleString();
+  if (dom.drawerIntentId) dom.drawerIntentId.textContent = node.intentId || '无特定 Intent';
+  if (dom.drawerDescription) dom.drawerDescription.textContent = node.description || '暂无详细解决说明';
+
+  // 资源 Claims 快照
+  const claims = node.claims || [];
+  if (dom.drawerClaimsCount) dom.drawerClaimsCount.textContent = claims.length;
+  if (dom.drawerClaimsList) {
+    if (claims.length === 0) {
+      dom.drawerClaimsList.innerHTML = '<span style="color: var(--text-faint); font-size: 12px;">无具体修改文件快照</span>';
+    } else {
+      dom.drawerClaimsList.innerHTML = claims.map(c => {
+        const target = typeof c === 'string' ? c : (c?.target || '');
+        const type = typeof c === 'object' && c?.type ? `[${c.type}] ` : '';
+        return `
+          <div class="drawer-file-pill" title="${escapeHtml(target)}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>${escapeHtml(type + target)}</span>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 前驱节点
+  if (dom.drawerParentsList) {
+    const parentIds = node.parentNodeIds || [];
+    if (parentIds.length === 0) {
+      dom.drawerParentsList.innerHTML = '<span style="color: var(--text-faint); font-size: 12px;">无前驱 (初始源点)</span>';
+    } else {
+      dom.drawerParentsList.innerHTML = parentIds.map(pid => {
+        const parentNode = (currentTopologyData?.nodes || []).find(n => n.id === pid);
+        const title = parentNode ? parentNode.title : pid;
+        return `
+          <button class="drawer-node-link-btn" onclick="openTopologyDrawerById('${escapeHtml(pid)}')">
+            <span>&uarr; ${escapeHtml(title)}</span>
+          </button>
+        `;
+      }).join('');
+    }
+  }
+
+  // 后继节点
+  if (dom.drawerChildrenList) {
+    const childIds = node.childNodeIds || [];
+    if (childIds.length === 0) {
+      dom.drawerChildrenList.innerHTML = '<span style="color: var(--text-faint); font-size: 12px;">无衍生分支</span>';
+    } else {
+      dom.drawerChildrenList.innerHTML = childIds.map(cid => {
+        const childNode = (currentTopologyData?.nodes || []).find(n => n.id === cid);
+        const title = childNode ? childNode.title : cid;
+        return `
+          <button class="drawer-node-link-btn" onclick="openTopologyDrawerById('${escapeHtml(cid)}')">
+            <span>&darr; ${escapeHtml(title)}</span>
+          </button>
+        `;
+      }).join('');
+    }
+  }
+
+  dom.topoNodeDrawer.style.display = 'flex';
+}
+
+function openTopologyDrawerById(nodeId) {
+  if (!currentTopologyData) return;
+  const node = (currentTopologyData.nodes || []).find(n => n.id === nodeId);
+  if (node) {
+    if (currentViewMode !== 'topology') {
+      setViewMode('topology');
+    }
+    openTopologyDrawer(node);
+    requestAnimationFrame(() => {
+      const cardEl = document.getElementById(`card-${nodeId}`);
+      if (cardEl) {
+        cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        cardEl.classList.add('highlighted');
+        setTimeout(() => cardEl.classList.remove('highlighted'), 2000);
+      }
+    });
+  }
+}
+window.openTopologyDrawerById = openTopologyDrawerById;
+
 function renderTopologyView(data) {
   if (!dom.topoNodesLayer || !dom.topoSvgLayer) return;
 
   const rawNodes = data?.nodes || [];
   const edges = data?.edges || [];
 
-  // 过滤节点
+  // 双重过滤：模块分类分支 + 搜索关键词
   const filteredNodes = rawNodes.filter(n => {
+    if (selectedTopoModule !== 'all' && n.module !== selectedTopoModule) {
+      return false;
+    }
     if (!topoSearchQuery) return true;
     const matchTitle = (n.title || '').toLowerCase().includes(topoSearchQuery);
     const matchDesc = (n.description || '').toLowerCase().includes(topoSearchQuery);
@@ -910,7 +1331,7 @@ function renderTopologyView(data) {
         <div style="font-size: 13px; color: var(--text-faint);">
           ${rawNodes.length === 0
             ? '当各会话完成意图释放、上报里程碑或 Git 提交时，系统将自动按时间线绘制功能开发与问题解决拓扑图。'
-            : '尝试更换搜索关键词（支持按功能标题、Agent 名称或修改的文件路径筛选）。'
+            : '尝试更换模块分支或搜索关键词（支持按功能标题、Agent 名称或修改的文件路径筛选）。'
           }
         </div>
       </div>
@@ -918,12 +1339,23 @@ function renderTopologyView(data) {
     return;
   }
 
-  // 1. 渲染卡片 HTML
-  dom.topoNodesLayer.innerHTML = filteredNodes.map((node, index) => {
+  const causalityLabels = {
+    'causal_file': '同文件延续',
+    'module_branch': '模块分支',
+    'milestone_convergence': '阶段汇聚',
+    'handoff': '会话交接',
+    'unblocked': '解除冲突唤醒',
+    'sequence': '时序演进'
+  };
+
+  // 1. 渲染多分支 DAG 卡片 HTML
+  dom.topoNodesLayer.innerHTML = filteredNodes.map((node) => {
     const isMilestone = node.nodeType === 'milestone';
     const isHandoff = node.nodeType === 'handoff';
     const typeChipClass = isMilestone ? 'chip-topo-milestone' : isHandoff ? 'chip-topo-handoff' : 'chip-topo-completed';
     const typeLabel = isMilestone ? '里程碑达成' : isHandoff ? '会话交接' : '功能完工释放';
+    const moduleName = escapeHtml(node.module || 'core');
+    const causalityLabel = escapeHtml(causalityLabels[node.causalityType] || '演进');
 
     const timeStr = new Date(node.createdAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const dateStr = new Date(node.createdAt).toLocaleDateString([], { month: '2-digit', day: '2-digit' });
@@ -960,20 +1392,23 @@ function renderTopologyView(data) {
             </svg>
             <span>${escapeHtml(formatAgentDisplayName(node.agentName, node.agentId))}</span>
           </div>
-          <span class="topo-type-chip ${typeChipClass}">${typeLabel}</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="drawer-meta-tag" style="font-size: 10px; padding: 2px 7px;">${moduleName}</span>
+            <span class="topo-type-chip ${typeChipClass}">${typeLabel}</span>
+          </div>
         </div>
         <div class="topo-card-title">${escapeHtml(node.title)}</div>
         ${node.description ? `<div class="topo-card-desc">${escapeHtml(node.description)}</div>` : ''}
         ${claimsHtml}
-        <div class="topo-time-footer">
-          <span>${dateStr} ${timeStr} • 节点 #${index + 1}</span>
+        <div class="topo-time-footer" style="justify-content: space-between;">
+          <span style="color: var(--sky-primary); font-size: 11px;">因果: ${causalityLabel} • L${node.depth || 0}</span>
+          <span>${dateStr} ${timeStr} • 点击展开详情</span>
         </div>
       </div>
     `;
   }).join('');
 
   // 2. 动态计算并绘制平滑 SVG 贝塞尔曲线
-  // 等待 DOM 布局稳定后计算连线
   requestAnimationFrame(() => {
     drawTopologyEdges(filteredNodes, edges);
     bindTopologyInteractions(filteredNodes, edges);
@@ -1002,13 +1437,11 @@ function drawTopologyEdges(nodes, edges) {
     const fromRect = fromEl.getBoundingClientRect();
     const toRect = toEl.getBoundingClientRect();
 
-    // 锚点坐标相对 canvasRect
     const x1 = fromRect.left - canvasRect.left + (fromRect.width / 2);
     const y1 = fromRect.bottom - canvasRect.top;
     const x2 = toRect.left - canvasRect.left + (toRect.width / 2);
     const y2 = toRect.top - canvasRect.top;
 
-    // 平滑三次贝塞尔曲线
     const midY = (y1 + y2) / 2;
     const pathD = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
 
@@ -1027,12 +1460,21 @@ function drawTopologyEdges(nodes, edges) {
 function bindTopologyInteractions(nodes, edges) {
   const cards = dom.topoNodesLayer.querySelectorAll('.topo-card');
   const edgeLines = dom.topoSvgLayer.querySelectorAll('.topo-edge-line');
+  const nodeMap = new Map();
+  nodes.forEach(n => nodeMap.set(n.id, n));
 
   cards.forEach(card => {
     const nodeId = card.getAttribute('data-node-id');
+    const nodeObj = nodeMap.get(nodeId);
+
+    // 点击卡片展开详略得当详情抽屉 (点击展开详细)
+    card.onclick = () => {
+      if (nodeObj) {
+        openTopologyDrawer(nodeObj);
+      }
+    };
 
     card.onmouseenter = () => {
-      // 找出所有前驱与后继
       const relatedNodes = new Set([nodeId]);
       const relatedEdges = new Set();
 
@@ -1490,19 +1932,52 @@ fetchDialogues();
 fetchTopologyGraph();
 fetchCollabGraph();
 
-// 定时保底轮询（2500ms 刷新频率完全符合 60 FPS 规约）
-setInterval(() => {
-  fetchDashboard();
-  fetchDialogues();
-  if (currentViewMode === 'topology' || currentViewMode === 'unified') {
-    fetchTopologyGraph();
-  }
-  if (currentViewMode === 'collab' || currentViewMode === 'unified') {
-    fetchCollabGraph();
-  }
-}, 2500);
+// ==========================================
+// Full-Duplex WebSocket Long Connection & Zero-Polling Event Stream
+// ==========================================
+let activeWs = null;
+let isWsConnected = false;
+let fallbackPollTimer = null;
+let wsPingTimer = null;
 
-// WebSocket 协议自适应与自动重连
+function updateConnectionIndicators(connected) {
+  if (connected) {
+    if (dom.matrixStatus) dom.matrixStatus.textContent = 'LIVE WS (长连接)';
+    if (dom.cockpitConnStatus) dom.cockpitConnStatus.textContent = 'WS 实时长连接';
+    if (dom.cockpitLiveDot) {
+      dom.cockpitLiveDot.style.background = 'var(--emerald-border)';
+      dom.cockpitLiveDot.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.6)';
+    }
+  } else {
+    if (dom.matrixStatus) dom.matrixStatus.textContent = 'POLLING (降级)';
+    if (dom.cockpitConnStatus) dom.cockpitConnStatus.textContent = '保底轮询中';
+    if (dom.cockpitLiveDot) {
+      dom.cockpitLiveDot.style.background = '#f59e0b';
+      dom.cockpitLiveDot.style.boxShadow = '0 0 10px rgba(245, 158, 11, 0.6)';
+    }
+  }
+}
+
+function startFallbackPolling() {
+  if (fallbackPollTimer) return;
+  // 当且仅当 WebSocket 断开时，才启动保底慢轮询（10s），彻底告别暴力轮询
+  fallbackPollTimer = setInterval(() => {
+    if (isWsConnected) return;
+    fetchDashboard();
+    fetchDialogues();
+    if (currentViewMode === 'topology') debouncedFetchTopology();
+    else if (currentViewMode === 'collab') debouncedFetchCollab();
+    else if (currentViewMode === 'unified') debouncedFetchCockpit();
+  }, 10000);
+}
+
+function stopFallbackPolling() {
+  if (fallbackPollTimer) {
+    clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
+  }
+}
+
 function connectWebSocket() {
   try {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1512,46 +1987,118 @@ function connectWebSocket() {
       : `${protocol}//${location.host}`;
 
     const ws = new WebSocket(wsUrl);
+    activeWs = ws;
 
     ws.onopen = () => {
-      if (dom.matrixStatus) dom.matrixStatus.textContent = 'LIVE WS';
+      isWsConnected = true;
+      stopFallbackPolling();
+      updateConnectionIndicators(true);
+
+      // 启动心跳维持，避免代理或浏览器闲置关闭连接
+      if (wsPingTimer) clearInterval(wsPingTimer);
+      wsPingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          } catch {}
+        }
+      }, 25000);
+
+      // 请求最新快照
+      try {
+        ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
+      } catch {}
     };
 
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload.type && payload.type.startsWith('memory:')) {
-          debouncedFetchMemories();
-        } else if (payload.type === 'topology:node_created') {
-          fetchTopologyGraph();
-        } else if (payload.type === 'message:sent' || payload.type === 'messages:read') {
-          debouncedFetchDialogues();
+
+        // 1. 服务端直推的完整初始化状态与即时全景同步
+        if (payload.type === 'init:state' || payload.type === 'sync:response') {
+          if (payload.data?.snapshot) {
+            currentDashboardData = payload.data.snapshot;
+            renderDashboard(payload.data.snapshot);
+          }
+          if (payload.data?.cockpit) {
+            currentCockpitData = payload.data.cockpit;
+            renderUnifiedCockpit(payload.data.cockpit);
+          }
+          if (currentViewMode === 'topology') {
+            debouncedFetchTopology();
+          } else if (currentViewMode === 'collab') {
+            debouncedFetchCollab();
+          }
+          return;
+        }
+
+        // 2. 演进拓扑节点创建事件
+        if (payload.type === 'topology:node_created') {
+          debouncedFetchTopology();
+          debouncedFetchCockpit();
+          return;
+        }
+
+        // 3. Agent 施工遥测、状态转移、资源释放事件
+        if (payload.type === 'agent:telemetry' || payload.type === 'agent:status' || payload.type === 'resource:freed' || payload.type === 'agent:woken') {
           debouncedFetchDashboard();
           debouncedFetchCollab();
-        } else if (payload.type === 'lead:awakened') {
+          debouncedFetchCockpit();
+          return;
+        }
+
+        // 4. 跨会话调度、对话与架构师广播事件
+        if (payload.type === 'lead:broadcast' || payload.type === 'message:sent' || payload.type === 'messages:read') {
+          debouncedFetchDialogues();
+          debouncedFetchCockpit();
+          debouncedFetchDashboard();
+          return;
+        }
+
+        // 5. 记忆存取事件
+        if (payload.type && payload.type.startsWith('memory:')) {
+          debouncedFetchMemories();
+          return;
+        }
+
+        // 6. Lead 唤醒事件
+        if (payload.type === 'lead:awakened') {
           handleLeadAwakened(payload.data);
           debouncedFetchDashboard();
           debouncedFetchDialogues();
+          debouncedFetchCockpit();
           debouncedFetchCollab();
-        } else {
-          debouncedFetchDashboard();
-          debouncedFetchCollab();
+          return;
         }
-      } catch {
+
+        // 其他未知通知统一触发防抖刷新
         debouncedFetchDashboard();
         debouncedFetchCollab();
+        debouncedFetchCockpit();
+      } catch (err) {
+        console.error('Failed to parse WS event payload:', err);
       }
     };
 
     ws.onclose = () => {
-      if (dom.matrixStatus) dom.matrixStatus.textContent = 'POLLING';
+      isWsConnected = false;
+      if (wsPingTimer) {
+        clearInterval(wsPingTimer);
+        wsPingTimer = null;
+      }
+      updateConnectionIndicators(false);
+      startFallbackPolling();
       setTimeout(connectWebSocket, 3000);
     };
 
     ws.onerror = () => {
       ws.close();
     };
-  } catch {
+  } catch (err) {
+    console.error('WebSocket connection initialization error:', err);
+    isWsConnected = false;
+    updateConnectionIndicators(false);
+    startFallbackPolling();
     setTimeout(connectWebSocket, 5000);
   }
 }

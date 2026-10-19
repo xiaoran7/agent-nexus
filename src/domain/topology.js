@@ -91,65 +91,8 @@ export class TopologyService {
     let finalCausality = causalityType;
 
     if (finalParents.length === 0) {
-      const claimTargets = (claims || []).map(c => (typeof c === 'string' ? c : c.target || '')).filter(Boolean);
-
-      // 1. 优先寻找修改相同文件的最近前驱节点（真正的代码因果链）
-      if (claimTargets.length > 0) {
-        const candidateNodes = this.db.prepare(`
-          SELECT id, claims_snapshot, metadata FROM topology_nodes
-          WHERE project_id = ?
-          ORDER BY created_at DESC LIMIT 20
-        `).all(projectId);
-
-        for (const candidate of candidateNodes) {
-          try {
-            const prevClaims = JSON.parse(candidate.claims_snapshot || '[]');
-            const prevTargets = prevClaims.map(c => (typeof c === 'string' ? c : c.target || '')).filter(Boolean);
-            const hasCommonFile = claimTargets.some(t => prevTargets.includes(t));
-            if (hasCommonFile) {
-              finalParents.push(candidate.id);
-              finalCausality = 'causal_file';
-              break;
-            }
-          } catch {}
-        }
-      }
-
-      // 2. 次选同模块主线前驱（保持功能子系统分支的延续性）
-      if (finalParents.length === 0) {
-        const candidateNodes = this.db.prepare(`
-          SELECT id, metadata FROM topology_nodes
-          WHERE project_id = ?
-          ORDER BY created_at DESC LIMIT 20
-        `).all(projectId);
-
-        for (const candidate of candidateNodes) {
-          try {
-            const meta = JSON.parse(candidate.metadata || '{}');
-            if (meta.module && meta.module === moduleName) {
-              finalParents.push(candidate.id);
-              finalCausality = 'module_branch';
-              break;
-            }
-          } catch {}
-        }
-      }
-
-      // 3. 再次关联最近的里程碑节点（作为多分支汇聚的因果枢纽）
-      if (finalParents.length === 0) {
-        const milestone = this.db.prepare(`
-          SELECT id FROM topology_nodes
-          WHERE project_id = ? AND node_type = 'milestone'
-          ORDER BY created_at DESC LIMIT 1
-        `).get(projectId);
-        if (milestone) {
-          finalParents.push(milestone.id);
-          finalCausality = 'milestone_convergence';
-        }
-      }
-
-      // 4. 兜底使用最近的上一节点
-      if (finalParents.length === 0) {
+      if (nodeType === 'milestone') {
+        // 里程碑节点：作为阶段汇聚枢纽，汇聚前序分支成果
         const prev = this.db.prepare(`
           SELECT id FROM topology_nodes
           WHERE project_id = ?
@@ -157,6 +100,77 @@ export class TopologyService {
         `).get(projectId);
         if (prev) {
           finalParents.push(prev.id);
+        }
+        finalCausality = 'milestone_convergence';
+      } else {
+        const claimTargets = (claims || []).map(c => (typeof c === 'string' ? c : c.target || '')).filter(Boolean);
+
+        // 1. 优先寻找修改相同文件的最近前驱节点（真正的代码因果链）
+        if (claimTargets.length > 0) {
+          const candidateNodes = this.db.prepare(`
+            SELECT id, claims_snapshot, metadata FROM topology_nodes
+            WHERE project_id = ?
+            ORDER BY created_at DESC LIMIT 20
+          `).all(projectId);
+
+          for (const candidate of candidateNodes) {
+            try {
+              const prevClaims = JSON.parse(candidate.claims_snapshot || '[]');
+              const prevTargets = prevClaims.map(c => (typeof c === 'string' ? c : c.target || '')).filter(Boolean);
+              const hasCommonFile = claimTargets.some(t => prevTargets.includes(t));
+              if (hasCommonFile) {
+                finalParents.push(candidate.id);
+                finalCausality = 'causal_file';
+                break;
+              }
+            } catch {}
+          }
+        }
+
+        // 2. 次选同模块主线前驱（保持功能子系统分支的延续性）
+        if (finalParents.length === 0) {
+          const candidateNodes = this.db.prepare(`
+            SELECT id, metadata FROM topology_nodes
+            WHERE project_id = ?
+            ORDER BY created_at DESC LIMIT 20
+          `).all(projectId);
+
+          for (const candidate of candidateNodes) {
+            try {
+              const meta = JSON.parse(candidate.metadata || '{}');
+              if (meta.module && meta.module === moduleName) {
+                finalParents.push(candidate.id);
+                finalCausality = 'module_branch';
+                break;
+              }
+            } catch {}
+          }
+        }
+
+        // 3. 再次关联最近的里程碑节点（作为多分支汇聚的因果枢纽）
+        if (finalParents.length === 0) {
+          const milestone = this.db.prepare(`
+            SELECT id FROM topology_nodes
+            WHERE project_id = ? AND node_type = 'milestone'
+            ORDER BY created_at DESC LIMIT 1
+          `).get(projectId);
+          if (milestone) {
+            finalParents.push(milestone.id);
+            finalCausality = 'milestone_convergence';
+          }
+        }
+
+        // 4. 兜底使用最近的上一节点
+        if (finalParents.length === 0) {
+          const prev = this.db.prepare(`
+            SELECT id FROM topology_nodes
+            WHERE project_id = ?
+            ORDER BY created_at DESC LIMIT 1
+          `).get(projectId);
+          if (prev) {
+            finalParents.push(prev.id);
+            finalCausality = finalCausality || 'sequence';
+          }
         }
       }
     }

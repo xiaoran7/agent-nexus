@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-10-19 多分支因果 DAG 拓扑重构、详略分级抽屉、综合全览驾驶舱与 WebSocket 实时长连接 (Multi-Branch DAG, Cockpit & Live WS)
+
+### 改了什么
+
+- **多分支因果演进 DAG 拓扑重构与详略得当分级抽屉 (`src/domain/topology.js`, `src/ui/app.js`, `src/ui/style.css`, `src/ui/index.html`)**：
+  - 彻底打破先前拓扑图单一直线的生硬单一链表，建立基于子系统模块（`daemon`、`transport`、`domain`、`ui`、`hook`、`mcp`、`tests`、`docs`、`core`）与因果类型（`causal_file` 代码同文件延续、`module_branch` 子系统分支推进、`milestone_convergence` 里程碑阶段汇聚、`handoff` 任务交接、`unblocked` 冲突解锁唤醒、`sequence` 时序演进）的多分支有向无环图 (DAG)；
+  - 拓扑图顶部新增子系统模块交互式 Chip 筛选栏，可单选过滤或一键查看全量子系统分支；
+  - 节点设计兼顾宏观条理性与微观细节：画布节点简洁呈现模块标签、类型标识、标题、会话归属与时间；点击任意节点平滑滑出详略得当的侧边抽屉面板（`#topo-node-drawer`），清晰展示因果溯源理由、涉及文件快照、完整摘要以及前驱/后继因果关联链，支持点击直接跳转并高亮前驱/后继节点。
+- **综合全览多维驾驶舱功能与前端完整落地 (`src/daemon/coordinator.js`, `src/ui/app.js`, `src/ui/style.css`, `src/ui/index.html`)**：
+  - 彻底填补先前“综合全览”Tab 的空白视图，构建企业级高信息密度的四象限全局驾驶舱；
+  - 顶部聚合核心关键指标条（在线施工会话数、排队等待数、在席空闲数、排他文件/资源锁数、拓扑演进节点数、跨会话消息数）；
+  - 四大象限协同布局：
+    - 象限 1：当前活跃在席与施工会话监视舱（实时呈现当前施工工具、操作目标与意图）；
+    - 象限 2：演进拓扑简报与最新里程碑视口；
+    - 象限 3：资源互斥锁争用态势与等待队列走廊（动态监视锁持有者、剩余 TTL 倒计时、排队阻塞原因）；
+    - 象限 4：跨 Session 结构化对话网络与架构师指挥广播实时动态流。
+- **WebSocket 全双工长连接与零轮询事件驱动流 (`src/transport/ws.js`, `src/transport/rest.js`, `src/ui/app.js`)**：
+  - 根除前端原本每 2.5 秒一次的暴力 HTTP 轮询（`setInterval`），建立纯事件驱动的 WebSocket 全双工长连接通道；
+  - 服务端静态交付 HTML 时内置当前活动会话令牌（`window.__NEXUS_TOKEN__`），浏览器直连即刻握手鉴权，长连接首帧服务端自动下发初始化全量状态（`init:state`）；
+  - 客户端建立 15 秒心跳保活（`ping/pong`），当服务端主动广播 `agent:telemetry`、`agent:status`、`resource:freed`、`topology:node_created`、`lead:broadcast` 等事件时按需增量局部刷新，DOM 更新增加 500ms 防抖节流保护；
+  - 仅在 WebSocket 意外断开且重连中时，才自适应降级为 10 秒低频保底轮询，连上长连接后立即彻底静默 HTTP 轮询；顶栏新增长连接状态指示灯（绿色脉冲灯与状态标签）。
+- **四级状态机语义校准与排他锁误释放根除 (`src/daemon/coordinator.js`, `test/topology.test.js`, `test/collaboration-lifecycle.test.js`)**：
+  - 深度校准状态机语义：明确“施工中 (`working`)”与“待命中 (`waiting`)”的边界——只要有明确工作执行（包括持有有效代码租约、或执行工具并上报遥测在活跃窗口内），均属于工作施工状态；而“待命/等待 (`waiting`)”严格专指因资源互斥争用、锁排队被阻塞挂起的状态；
+  - 彻底修复 Edit 排他锁消失隐患：排查并确保 PreToolUse Hook 的短命子进程不会触发宿主常驻长效租约的提前回收，租约生命周期与常驻 Worker 进程 PID 及 Git Commit 生命周期紧密联动。
+- **全量测试与回归验证 (`test/topology.test.js`)**：
+  - 新增拓扑模块智能分类、多分支因果前驱推导、综合全览多维聚合数据结构、四级状态机语义校准测试用例；
+  - 245 项单元测试 100% 全部通过。
+
+---
+
 ## 2026-10-19 根除会话闪烁消失缺陷、全自动语义化会话命名与跨工程协同全景总览 (Session Lifecycle Persistence & Semantic Naming)
 
 ### 改了什么
