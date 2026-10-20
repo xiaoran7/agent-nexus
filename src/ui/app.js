@@ -143,14 +143,25 @@ const dom = {
   milestonesCounter: document.getElementById('milestones-counter'),
   milestonesContainer: document.getElementById('milestones-container'),
 
-  // View 3: Memory & Rules
-  memoryCounter: document.getElementById('memory-counter'),
-  memorySearchInput: document.getElementById('memory-search-input'),
-  memoryItemsContainer: document.getElementById('memory-items-container'),
-  newMemCat: document.getElementById('new-mem-cat'),
-  newMemKey: document.getElementById('new-mem-key'),
-  newMemContent: document.getElementById('new-mem-content'),
-  saveMemBtn: document.getElementById('save-mem-btn')
+  // View 3: Routing & Conflict Map (会话路由与走廊网关)
+  tabRouting: document.getElementById('tab-routing'),
+  viewRouting: document.getElementById('view-routing'),
+  routingSummaryMeta: document.getElementById('routing-summary-meta'),
+  btnRefreshRouting: document.getElementById('btn-refresh-routing'),
+  routingCanvasWrapper: document.getElementById('routing-canvas-wrapper'),
+  routingSvgLayer: document.getElementById('routing-svg-layer'),
+  routingSessionsContainer: document.getElementById('routing-sessions-container'),
+  badgeSessionsCount: document.getElementById('badge-sessions-count'),
+  nexusHubCard: document.getElementById('nexus-hub-card'),
+  hubMeterIntercepts: document.getElementById('hub-meter-intercepts'),
+  hubMeterLatency: document.getElementById('hub-meter-latency'),
+  hubMeterTtl: document.getElementById('hub-meter-ttl'),
+  hubMeterQueue: document.getElementById('hub-meter-queue'),
+  routingTargetsContainer: document.getElementById('routing-targets-container'),
+  badgeTargetsCount: document.getElementById('badge-targets-count'),
+  routingDecisionsStream: document.getElementById('routing-decisions-stream'),
+  decisionsCountBadge: document.getElementById('decisions-count-badge'),
+  decisionsFilterBtns: document.querySelectorAll('.d-filter-btn')
 };
 
 // =============================================================================
@@ -205,8 +216,8 @@ function switchView(viewName) {
   if (viewName === 'timeline') {
     fetchDialogues();
     fetchMilestones();
-  } else if (viewName === 'memory') {
-    fetchMemories();
+  } else if (viewName === 'routing') {
+    fetchRoutingTopology();
   } else {
     fetchDashboard();
   }
@@ -317,7 +328,9 @@ if (dom.btnRefresh) {
     fetchDashboard();
     fetchDialogues();
     fetchMilestones();
-    fetchMemories();
+    if (dom.viewRouting?.classList.contains('active')) {
+      fetchRoutingTopology();
+    }
   };
 }
 
@@ -331,7 +344,9 @@ if (dom.projectSelector) {
     fetchDashboard();
     fetchDialogues();
     fetchMilestones();
-    fetchMemories();
+    if (dom.viewRouting?.classList.contains('active')) {
+      fetchRoutingTopology();
+    }
   };
 }
 
@@ -380,7 +395,9 @@ async function loadProjects() {
     fetchDashboard();
     fetchDialogues();
     fetchMilestones();
-    fetchMemories();
+    if (dom.viewRouting?.classList.contains('active')) {
+      fetchRoutingTopology();
+    }
   } catch (err) {
     console.error('Failed to load projects:', err);
   }
@@ -763,78 +780,563 @@ async function fetchMilestones() {
 }
 
 // =============================================================================
-// Memory & Rules (View 3)
+// Routing Topology & Conflict Map (View 3: 会话路由与走廊网关)
 // =============================================================================
-async function fetchMemories(query = '') {
+let lastRoutingData = null;
+let currentDecisionFilter = 'all';
+
+async function fetchRoutingTopology() {
   try {
-    const url = query
-      ? `/api/projects/${encodeURIComponent(currentProjectId)}/memories?q=${encodeURIComponent(query)}`
-      : `/api/projects/${encodeURIComponent(currentProjectId)}/memories`;
-    const res = await fetch(url, { headers: authHeaders() });
-    if (!res.ok) return;
-    const list = await res.json();
-    if (!Array.isArray(list)) return;
-
-    if (dom.memoryCounter) {
-      dom.memoryCounter.textContent = `${list.length} 项规约`;
-    }
-    if (!dom.memoryItemsContainer) return;
-
-    if (list.length === 0) {
-      dom.memoryItemsContainer.innerHTML = '<div class="empty-hint">暂无长期备忘或规约记录</div>';
+    const res = await fetch(`/api/cockpit?project_id=${encodeURIComponent(currentProjectId)}`, {
+      headers: authHeaders()
+    });
+    if (!res.ok) {
+      const fallbackRes = await fetch(`/api/dashboard?project_id=${encodeURIComponent(currentProjectId)}`, {
+        headers: authHeaders()
+      });
+      if (fallbackRes.ok) {
+        const dashboard = await fallbackRes.json();
+        renderRoutingDiagram({ dashboard, lockContention: dashboard, collab: { nodes: [], edges: [] } });
+      }
       return;
     }
-
-    dom.memoryItemsContainer.innerHTML = list.map(m => {
-      const catSafe = escapeHtml(m.category || 'general');
-      const keySafe = escapeHtml(m.key);
-      const contentSafe = escapeHtml(m.content);
-
-      return `
-        <div class="memory-card">
-          <div class="memory-card-head">
-            <span class="memory-cat-badge cat-${catSafe}">${catSafe}</span>
-            <span class="memory-key">${keySafe}</span>
-          </div>
-          <div class="memory-body">${contentSafe}</div>
-        </div>
-      `;
-    }).join('');
+    const data = await res.json();
+    renderRoutingDiagram(data);
   } catch (err) {
-    console.error('Fetch memories error:', err);
+    console.error('Fetch routing topology error:', err);
   }
 }
 
-if (dom.saveMemBtn) {
-  dom.saveMemBtn.onclick = async () => {
-    const category = dom.newMemCat?.value || 'general';
-    const key = dom.newMemKey?.value.trim() || '';
-    const content = dom.newMemContent?.value.trim() || '';
-    if (!key || !content) return alert('Key 和内容均为必填项');
+const debouncedFetchRoutingTopology = debounce(() => fetchRoutingTopology(), 200);
 
-    try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/memories`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ category, key, content, source_agent_id: 'sensei' })
-      });
-      if (res.ok) {
-        if (dom.newMemKey) dom.newMemKey.value = '';
-        if (dom.newMemContent) dom.newMemContent.value = '';
-        fetchMemories();
+function computeSafeCorridors(activeClaims, resourceLocks, topology) {
+  const lockedTargets = new Set();
+  (activeClaims || []).forEach(c => {
+    const t = c.claim_target || c.path || '';
+    if (t) lockedTargets.add(t.toLowerCase().replace(/\\/g, '/'));
+  });
+  (resourceLocks || []).forEach(l => {
+    const n = l.resource_name || l.name || '';
+    if (n) lockedTargets.add(n.toLowerCase());
+  });
+
+  const candidateCorridors = [
+    { id: 'corridor:test', name: 'test/ 单元与回归测试', desc: '测试用例套件 · 互不干扰推荐并发区', prefix: 'test/' },
+    { id: 'corridor:desktop', name: 'desktop/ 桌面主进程与托盘', desc: 'Electron 壳体与原生交互通道', prefix: 'desktop/' },
+    { id: 'corridor:docs', name: 'docs/ 架构文档与规约', desc: '工程文档与设计说明走廊', prefix: 'docs/' },
+    { id: 'corridor:scripts', name: 'scripts/ 构建与打包流水线', desc: 'CI/CD 与本地发布脚本走廊', prefix: 'scripts/' },
+    { id: 'corridor:gateway', name: 'src/gateway/ AI 弹性网关', desc: '模型故障转移与熔断路由器', prefix: 'src/gateway/' },
+    { id: 'corridor:transport', name: 'src/transport/ 通信传输层', desc: 'HTTP/REST 与 WebSocket 协议通道', prefix: 'src/transport/' }
+  ];
+
+  return candidateCorridors.map(cor => {
+    let hasContention = false;
+    for (const locked of lockedTargets) {
+      if (locked.startsWith(cor.prefix.toLowerCase()) || locked === cor.prefix.replace('/', '').toLowerCase()) {
+        hasContention = true;
+        break;
       }
-    } catch (err) {
-      alert('保存失败: ' + err.message);
     }
-  };
+    return {
+      ...cor,
+      status: hasContention ? 'contended' : 'safe'
+    };
+  });
 }
 
-const debouncedSearchMemories = debounce((q) => fetchMemories(q), 250);
-if (dom.memorySearchInput) {
-  dom.memorySearchInput.oninput = (e) => {
-    debouncedSearchMemories(e.target.value.trim());
-  };
+function renderRoutingDiagram(cockpitData) {
+  if (!dom.routingCanvasWrapper) return;
+  lastRoutingData = cockpitData;
+
+  const dashboard = cockpitData.dashboard || cockpitData;
+  const collab = cockpitData.collab || { nodes: [], edges: [] };
+  const rawAgents = dashboard.agents || collab.nodes?.filter(n => n.node_type === 'session') || [];
+  const activeClaims = cockpitData.lockContention?.activeClaims || dashboard.activeClaims || [];
+  const resourceLocks = cockpitData.lockContention?.resourceLocks || collab.exclusiveLocks || [];
+  const waitQueue = cockpitData.lockContention?.waitQueue || dashboard.waitQueue || [];
+  const timeline = dashboard.recentTimeline || dashboard.timeline || [];
+
+  // 过滤离线僵尸会话
+  const validAgents = [];
+  for (const a of rawAgents) {
+    if (a.lifecycle_state === 'departed' || a.status === 'departed') continue;
+    const claims = activeClaims.filter(c => c.agent_id === a.id);
+    const isWorking = a.lifecycle_state === 'working' || a.status === 'running' || claims.length > 0;
+    const isWaiting = !isWorking && (a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason);
+    const uiState = isWorking ? 'working' : (isWaiting ? 'waiting' : 'idle');
+    validAgents.push({ ...a, resolvedClaims: claims, uiState });
+  }
+
+  // 1. 顶部指标摘要
+  if (dom.routingSummaryMeta) {
+    dom.routingSummaryMeta.textContent = `${validAgents.length} 个在席会话 · ${activeClaims.length + resourceLocks.length} 项独占锁 · ${waitQueue.length} 处冲突等待`;
+  }
+  if (dom.badgeSessionsCount) dom.badgeSessionsCount.textContent = validAgents.length;
+
+  // 2. Nexus 中枢仪表盘更新
+  if (dom.hubMeterIntercepts) {
+    const intercepts = waitQueue.length + timeline.filter(t => t.type === 'conflict' || t.type === 'intercept').length;
+    dom.hubMeterIntercepts.textContent = intercepts;
+  }
+  if (dom.hubMeterLatency) dom.hubMeterLatency.textContent = '12ms';
+  if (dom.hubMeterTtl) dom.hubMeterTtl.textContent = '300s';
+  if (dom.hubMeterQueue) dom.hubMeterQueue.textContent = waitQueue.length;
+
+  // 3. 渲染左侧 Lane 1: 会话源 (Sessions)
+  if (dom.routingSessionsContainer) {
+    if (validAgents.length === 0) {
+      dom.routingSessionsContainer.innerHTML = '<div class="empty-hint">暂无在席会话，当 Claude Code / Codex 接入时自动路由</div>';
+    } else {
+      dom.routingSessionsContainer.innerHTML = validAgents.map(a => {
+        const idSafe = escapeHtml(a.id);
+        const nameSafe = escapeHtml(a.name || a.id);
+        const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude Code' : (a.id.includes('codex') ? 'Codex' : 'AI Agent')));
+        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命中' : '无明确意图'));
+        const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'none'));
+        const claimsCount = a.resolvedClaims.length;
+
+        let statusBadge = '<span class="session-status-tag status-idle"><span class="dot"></span>待命</span>';
+        if (a.uiState === 'working') {
+          statusBadge = '<span class="session-status-tag status-working"><span class="dot"></span>施工中</span>';
+        } else if (a.uiState === 'waiting') {
+          statusBadge = '<span class="session-status-tag status-waiting"><span class="dot"></span>排队避让</span>';
+        }
+
+        return `
+          <div class="session-route-card state-${a.uiState}" data-session-id="${idSafe}">
+            <div class="route-card-header">
+              <div class="route-card-identity">
+                <span class="route-agent-name" title="${idSafe}">${nameSafe}</span>
+                <span class="route-provider-badge">${providerSafe}</span>
+              </div>
+              ${statusBadge}
+            </div>
+            <div class="route-card-intent" title="${intentSafe}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+              </svg>
+              <span>${intentSafe}</span>
+            </div>
+            <div class="route-card-footer">
+              <span class="route-action-tag"><code>${toolSafe}</code></span>
+              <span class="route-leases-tag" title="持有独占锁数量">独占 ${claimsCount} 项</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 4. 计算走廊并渲染右侧 Lane 3: 目标文件与走廊 (Target Files & Corridors)
+  const safeCorridors = computeSafeCorridors(activeClaims, resourceLocks, cockpitData.topologySnapshot || {});
+  const targetsTotal = activeClaims.length + resourceLocks.length + safeCorridors.filter(c => c.status === 'safe').length;
+  if (dom.badgeTargetsCount) dom.badgeTargetsCount.textContent = targetsTotal;
+
+  if (dom.routingTargetsContainer) {
+    let targetsHtml = '';
+
+    // A. 独占施工文件 (File Leases)
+    if (activeClaims.length > 0) {
+      targetsHtml += `<div class="target-group-label">独占施工文件 (${activeClaims.length})</div>`;
+      activeClaims.forEach(c => {
+        const pathSafe = escapeHtml(c.claim_target || c.path);
+        const agentSafe = escapeHtml(c.agent_id);
+        const now = Date.now();
+        const remainingSec = c.expires_at ? Math.max(0, Math.ceil((c.expires_at - now) / 1000)) : 300;
+        const resKey = `res:file:${pathSafe}`;
+
+        targetsHtml += `
+          <div class="target-route-card type-file" data-target-id="${resKey}" data-holder-id="${agentSafe}">
+            <div class="target-card-header">
+              <div class="target-icon-wrap file-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                  <polyline points="13 2 13 9 20 9"></polyline>
+                </svg>
+              </div>
+              <span class="target-path" title="${pathSafe}">${pathSafe}</span>
+              <span class="target-status-badge badge-locked">LOCKED</span>
+            </div>
+            <div class="target-card-meta">
+              <span class="target-holder" title="持有者">由 <strong>${agentSafe}</strong> 独占修改</span>
+              <span class="target-ttl-badge">~${remainingSec}s TTL</span>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    // B. 排他命名锁 (Named Locks)
+    if (resourceLocks.length > 0) {
+      targetsHtml += `<div class="target-group-label">排他命令与环境锁 (${resourceLocks.length})</div>`;
+      resourceLocks.forEach(l => {
+        const nameSafe = escapeHtml(l.resource_name || l.name);
+        const agentSafe = escapeHtml(l.agent_id);
+        const resKey = `res:resource:${nameSafe}`;
+
+        targetsHtml += `
+          <div class="target-route-card type-lock" data-target-id="${resKey}" data-holder-id="${agentSafe}">
+            <div class="target-card-header">
+              <div class="target-icon-wrap lock-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+              </div>
+              <span class="target-path">${nameSafe} (命令排他锁)</span>
+              <span class="target-status-badge badge-exclusive">EXCLUSIVE</span>
+            </div>
+            <div class="target-card-meta">
+              <span class="target-holder">由 <strong>${agentSafe}</strong> 持有</span>
+              <span class="target-hook-badge">PostToolUse 释放</span>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    // C. 安全施工走廊 (Safe Corridors) - "更深一层，因为我们知道在改什么文件"
+    const uncontendedCorridors = safeCorridors.filter(c => c.status === 'safe').slice(0, 3);
+    if (uncontendedCorridors.length > 0) {
+      targetsHtml += `<div class="target-group-label">安全施工走廊 (${uncontendedCorridors.length})</div>`;
+      uncontendedCorridors.forEach(cor => {
+        const corIdSafe = escapeHtml(cor.id);
+        const corNameSafe = escapeHtml(cor.name);
+        const corDescSafe = escapeHtml(cor.desc);
+
+        targetsHtml += `
+          <div class="target-route-card type-corridor" data-target-id="${corIdSafe}">
+            <div class="target-card-header">
+              <div class="target-icon-wrap corridor-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                  <polyline points="2 17 12 22 22 17"></polyline>
+                  <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+              </div>
+              <span class="target-path">${corNameSafe}</span>
+              <span class="target-status-badge badge-safe">SAFE 走廊</span>
+            </div>
+            <div class="target-card-meta">
+              <span class="target-desc">${corDescSafe}</span>
+              <span class="target-free-badge">零竞争可并发</span>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    if (!targetsHtml) {
+      targetsHtml = '<div class="empty-hint">当前工作区无活跃独占锁，所有施工走廊均安全畅通</div>';
+    }
+    dom.routingTargetsContainer.innerHTML = targetsHtml;
+  }
+
+  // 5. 渲染底部路由与裁决决策流
+  renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors);
+
+  // 6. 绘制动态 Bezier 曲线连接器
+  requestAnimationFrame(drawRoutingConnectors);
+
+  // 7. 绑定卡片双向 Hover 高亮交互
+  attachRouteHighlightEvents();
 }
+
+function drawRoutingConnectors() {
+  if (!dom.routingSvgLayer || !dom.routingCanvasWrapper || !dom.nexusHubCard) return;
+
+  const wrapperRect = dom.routingCanvasWrapper.getBoundingClientRect();
+  if (wrapperRect.width === 0 || wrapperRect.height === 0) return;
+
+  dom.routingSvgLayer.setAttribute('viewBox', `0 0 ${wrapperRect.width} ${wrapperRect.height}`);
+  dom.routingSvgLayer.style.width = `${wrapperRect.width}px`;
+  dom.routingSvgLayer.style.height = `${wrapperRect.height}px`;
+
+  const hubRect = dom.nexusHubCard.getBoundingClientRect();
+  const hubLeftX = hubRect.left - wrapperRect.left;
+  const hubRightX = hubRect.right - wrapperRect.left;
+  const hubCenterY = hubRect.top - wrapperRect.top + hubRect.height / 2;
+
+  const sessionCards = dom.routingSessionsContainer?.querySelectorAll('.session-route-card') || [];
+  const targetCards = dom.routingTargetsContainer?.querySelectorAll('.target-route-card') || [];
+
+  let svgHtml = '';
+
+  // 1. Sessions -> Nexus Hub 连线
+  const sessionCount = sessionCards.length;
+  sessionCards.forEach((card, idx) => {
+    const sRect = card.getBoundingClientRect();
+    const x1 = sRect.right - wrapperRect.left;
+    const y1 = sRect.top - wrapperRect.top + sRect.height / 2;
+
+    const spread = Math.min(hubRect.height * 0.6, sessionCount * 14);
+    const startY = hubCenterY - spread / 2;
+    const stepY = sessionCount > 1 ? spread / (sessionCount - 1) : 0;
+    const y2 = sessionCount === 1 ? hubCenterY : startY + idx * stepY;
+    const x2 = hubLeftX;
+
+    const dx = Math.max(30, (x2 - x1) * 0.5);
+    const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+
+    const sessionId = card.dataset.sessionId || '';
+    const isWorking = card.classList.contains('state-working');
+    const isWaiting = card.classList.contains('state-waiting');
+
+    let lineClass = 'route-path route-idle';
+    if (isWorking) lineClass = 'route-path route-active';
+    else if (isWaiting) lineClass = 'route-path route-waiting';
+
+    svgHtml += `
+      <path d="${d}" class="${lineClass}" data-from-session="${escapeHtml(sessionId)}" data-edge-type="session-hub" />
+    `;
+  });
+
+  // 2. Nexus Hub -> Target Files / Corridors 连线
+  const targetCount = targetCards.length;
+  targetCards.forEach((card, idx) => {
+    const tRect = card.getBoundingClientRect();
+    const x2 = tRect.left - wrapperRect.left;
+    const y2 = tRect.top - wrapperRect.top + tRect.height / 2;
+
+    const spread = Math.min(hubRect.height * 0.7, targetCount * 14);
+    const startY = hubCenterY - spread / 2;
+    const stepY = targetCount > 1 ? spread / (targetCount - 1) : 0;
+    const y1 = targetCount === 1 ? hubCenterY : startY + idx * stepY;
+    const x1 = hubRightX;
+
+    const dx = Math.max(30, (x2 - x1) * 0.5);
+    const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+
+    const targetId = card.dataset.targetId || '';
+    const holderId = card.dataset.holderId || '';
+    const isCorridor = card.classList.contains('type-corridor');
+    const isFile = card.classList.contains('type-file');
+
+    let lineClass = 'route-path route-idle';
+    if (isCorridor) {
+      lineClass = 'route-path route-corridor';
+    } else if (isFile || card.classList.contains('type-lock')) {
+      lineClass = 'route-path route-active';
+    }
+
+    svgHtml += `
+      <path d="${d}" class="${lineClass}" data-to-target="${escapeHtml(targetId)}" data-holder-id="${escapeHtml(holderId)}" data-edge-type="hub-target" />
+    `;
+  });
+
+  dom.routingSvgLayer.innerHTML = svgHtml;
+}
+
+function attachRouteHighlightEvents() {
+  const sessionCards = dom.routingSessionsContainer?.querySelectorAll('.session-route-card') || [];
+  const targetCards = dom.routingTargetsContainer?.querySelectorAll('.target-route-card') || [];
+
+  sessionCards.forEach(card => {
+    const sId = card.dataset.sessionId;
+    card.onmouseenter = () => highlightSessionRoutes(sId);
+    card.onmouseleave = resetRouteHighlights;
+  });
+
+  targetCards.forEach(card => {
+    const tId = card.dataset.targetId;
+    const hId = card.dataset.holderId;
+    card.onmouseenter = () => highlightTargetRoutes(tId, hId);
+    card.onmouseleave = resetRouteHighlights;
+  });
+}
+
+function highlightSessionRoutes(sessionId) {
+  if (!dom.routingSvgLayer) return;
+  const paths = dom.routingSvgLayer.querySelectorAll('.route-path');
+  paths.forEach(p => {
+    const fromSession = p.dataset.fromSession;
+    const holderId = p.dataset.holderId;
+    if (fromSession === sessionId || holderId === sessionId) {
+      p.classList.add('route-highlighted');
+      p.classList.remove('route-dimmed');
+    } else {
+      p.classList.add('route-dimmed');
+      p.classList.remove('route-highlighted');
+    }
+  });
+
+  dom.routingTargetsContainer?.querySelectorAll('.target-route-card').forEach(tc => {
+    if (tc.dataset.holderId === sessionId) {
+      tc.classList.add('card-highlighted');
+    } else {
+      tc.classList.add('card-dimmed');
+    }
+  });
+}
+
+function highlightTargetRoutes(targetId, holderId) {
+  if (!dom.routingSvgLayer) return;
+  const paths = dom.routingSvgLayer.querySelectorAll('.route-path');
+  paths.forEach(p => {
+    const toTarget = p.dataset.toTarget;
+    const fromSession = p.dataset.fromSession;
+    if (toTarget === targetId || (holderId && fromSession === holderId)) {
+      p.classList.add('route-highlighted');
+      p.classList.remove('route-dimmed');
+    } else {
+      p.classList.add('route-dimmed');
+      p.classList.remove('route-highlighted');
+    }
+  });
+
+  if (holderId) {
+    dom.routingSessionsContainer?.querySelectorAll('.session-route-card').forEach(sc => {
+      if (sc.dataset.sessionId === holderId) {
+        sc.classList.add('card-highlighted');
+      } else {
+        sc.classList.add('card-dimmed');
+      }
+    });
+  }
+}
+
+function resetRouteHighlights() {
+  if (!dom.routingSvgLayer) return;
+  dom.routingSvgLayer.querySelectorAll('.route-path').forEach(p => {
+    p.classList.remove('route-highlighted', 'route-dimmed');
+  });
+  dom.routingSessionsContainer?.querySelectorAll('.session-route-card').forEach(sc => {
+    sc.classList.remove('card-highlighted', 'card-dimmed');
+  });
+  dom.routingTargetsContainer?.querySelectorAll('.target-route-card').forEach(tc => {
+    tc.classList.remove('card-highlighted', 'card-dimmed');
+  });
+}
+
+function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors) {
+  if (!dom.routingDecisionsStream) return;
+
+  const decisions = [];
+
+  (timeline || []).forEach(item => {
+    const type = item.type || '';
+    const desc = item.description || item.detail || '';
+    const agent = item.agent_id || 'system';
+    const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+
+    if (type.includes('grant') || type.includes('claim') || desc.includes('拿到租约') || desc.includes('声明')) {
+      decisions.push({
+        type: 'grant',
+        time,
+        badge: 'GRANT 授权',
+        title: `独占租约授予: 会话 <strong>${escapeHtml(agent)}</strong>`,
+        detail: escapeHtml(desc || '零冲突快速放行，写入租约已下发')
+      });
+    } else if (type.includes('conflict') || type.includes('intercept') || desc.includes('冲突') || desc.includes('拦截') || desc.includes('WAITING')) {
+      decisions.push({
+        type: 'intercept',
+        time,
+        badge: 'INTERCEPT 拦截',
+        title: `并发写入拦截: 会话 <strong>${escapeHtml(agent)}</strong>`,
+        detail: escapeHtml(desc || '检测到文件写冲突，已安全挂起至排队队列')
+      });
+    } else if (type.includes('freed') || type.includes('release') || desc.includes('释放') || desc.includes('PostToolUse')) {
+      decisions.push({
+        type: 'release',
+        time,
+        badge: 'RELEASE 释放',
+        title: `毫秒级租约释放: 会话 <strong>${escapeHtml(agent)}</strong>`,
+        detail: escapeHtml(desc || 'PostToolUse 触发毫秒级锁回收，并自动唤醒队首排队者')
+      });
+    }
+  });
+
+  if (decisions.length === 0) {
+    if ((activeClaims || []).length > 0) {
+      activeClaims.forEach(c => {
+        decisions.push({
+          type: 'grant',
+          time: new Date().toLocaleTimeString(),
+          badge: 'GRANT 授权',
+          title: `当前活跃独占租约: <strong>${escapeHtml(c.agent_id)}</strong>`,
+          detail: `锁定目标 <code>${escapeHtml(c.claim_target || c.path)}</code> · 滑动窗口 TTL 续期中`
+        });
+      });
+    }
+    if ((waitQueue || []).length > 0) {
+      waitQueue.forEach(w => {
+        decisions.push({
+          type: 'intercept',
+          time: new Date().toLocaleTimeString(),
+          badge: 'INTERCEPT 拦截',
+          title: `排队避障中: <strong>${escapeHtml(w.agent_id)}</strong>`,
+          detail: `目标 <code>${escapeHtml(w.target || '')}</code> 受保护 · 等待当前持有者释放`
+        });
+      });
+    }
+    const safeList = (safeCorridors || []).filter(c => c.status === 'safe').map(c => c.prefix).join(', ');
+    if (safeList) {
+      decisions.push({
+        type: 'grant',
+        time: new Date().toLocaleTimeString(),
+        badge: 'CORRIDOR 走廊',
+        title: `架构师空闲走廊计算就绪`,
+        detail: `安全并发走廊: <code>${escapeHtml(safeList)}</code> 均畅通无阻`
+      });
+    }
+  }
+
+  const filtered = currentDecisionFilter === 'all'
+    ? decisions
+    : decisions.filter(d => d.type === currentDecisionFilter);
+
+  if (dom.decisionsCountBadge) {
+    dom.decisionsCountBadge.textContent = `${filtered.length} 条`;
+  }
+
+  if (filtered.length === 0) {
+    dom.routingDecisionsStream.innerHTML = '<div class="empty-hint">暂无符合条件的路由裁决记录</div>';
+    return;
+  }
+
+  dom.routingDecisionsStream.innerHTML = filtered.map(d => `
+    <div class="decision-item item-${d.type}">
+      <span class="decision-badge badge-${d.type}">${d.badge}</span>
+      <span class="decision-time">${d.time}</span>
+      <div class="decision-body">
+        <div class="decision-title">${d.title}</div>
+        <div class="decision-detail">${d.detail}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+if (dom.btnRefreshRouting) {
+  dom.btnRefreshRouting.onclick = () => fetchRoutingTopology();
+}
+
+if (dom.decisionsFilterBtns) {
+  dom.decisionsFilterBtns.forEach(btn => {
+    btn.onclick = () => {
+      dom.decisionsFilterBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentDecisionFilter = btn.dataset.filter || 'all';
+      if (lastRoutingData) {
+        renderRoutingDiagram(lastRoutingData);
+      }
+    };
+  });
+}
+
+if (window.ResizeObserver && dom.routingCanvasWrapper) {
+  const ro = new ResizeObserver(() => {
+    if (dom.viewRouting?.classList.contains('active')) {
+      requestAnimationFrame(drawRoutingConnectors);
+    }
+  });
+  ro.observe(dom.routingCanvasWrapper);
+}
+window.addEventListener('resize', () => {
+  if (dom.viewRouting?.classList.contains('active')) {
+    requestAnimationFrame(drawRoutingConnectors);
+  }
+});
 
 // Master Broadcast 发送
 if (dom.masterBroadcastBtn) {
@@ -875,7 +1377,6 @@ let wsPingTimer = null;
 const debouncedFetchDashboard = debounce(fetchDashboard, 500);
 const debouncedFetchDialogues = debounce(fetchDialogues, 500);
 const debouncedFetchMilestones = debounce(fetchMilestones, 500);
-const debouncedFetchMemories = debounce(fetchMemories, 500);
 
 function updateConnectionIndicators(connected) {
   if (dom.liveDot) {
@@ -940,12 +1441,18 @@ function connectWebSocket() {
           if (payload.data?.snapshot) {
             currentDashboardData = payload.data.snapshot;
             renderDashboardSnapshot(payload.data.snapshot);
+            if (dom.viewRouting?.classList.contains('active')) {
+              debouncedFetchRoutingTopology();
+            }
           }
           return;
         }
 
         if (payload.type === 'agent:telemetry' || payload.type === 'agent:status' || payload.type === 'resource:freed' || payload.type === 'agent:woken') {
           debouncedFetchDashboard();
+          if (dom.viewRouting?.classList.contains('active')) {
+            debouncedFetchRoutingTopology();
+          }
           return;
         }
 
@@ -955,20 +1462,20 @@ function connectWebSocket() {
           return;
         }
 
-        if (payload.type && payload.type.startsWith('memory:')) {
-          debouncedFetchMemories();
-          debouncedFetchMilestones();
-          return;
-        }
-
         if (payload.type === 'lead:awakened') {
           handleLeadAwakened(payload.data);
           debouncedFetchDashboard();
           debouncedFetchDialogues();
+          if (dom.viewRouting?.classList.contains('active')) {
+            debouncedFetchRoutingTopology();
+          }
           return;
         }
 
         debouncedFetchDashboard();
+        if (dom.viewRouting?.classList.contains('active')) {
+          debouncedFetchRoutingTopology();
+        }
       } catch (err) {
         console.error('Failed to parse WS payload:', err);
       }

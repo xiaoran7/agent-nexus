@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-10-20 会话路由网关与动态资源走廊图重构 (Session Routing & Conflict Map v0.2.10)
+
+### 改了什么
+
+- **移除知识备忘，升级为多智能体会话路由与防撞拓扑图 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - **知识备忘彻底精简**：完全剔除原视图 3 冗余的记忆增删查逻辑与 DOM 结构（`#tab-memory`, `#view-memory`, `.memory-*`），收束控制台核心职责于多 Agent 实时并发协调与资源仲裁；
+  - **三列流式拓扑泳道架构 (3-Lane Routing Topology)**：
+    - **泳道 1 (左侧 - 在席会话源 Sessions)**：实时感知并呈现 Claude Code、Codex、Cursor、CLI 等进场会话，直观展示生命周期状态（`working`/`waiting`/`idle`）、施工意图目标、瞬时动作工具及租约数量；
+    - **泳道 2 (中间 - Nexus 仲裁中枢 Arbiter Hub)**：卡片聚合核心仲裁遥测指标，包含 🛡️ 冲突拦截计数、⚡ 毫秒级释放延迟、⏱️ 滑动窗口心跳续约（300s TTL）与 🚦 排队等待队列数；
+    - **泳道 3 (右侧 - 施工目标与安全走廊 Target Files & Corridors)**：
+      - *独占施工文件 (File Leases)*：实时展示当前处于修改中的确切文件路径、持有者身份与滑动 TTL 倒计时进度条；
+      - *排他命令资源锁 (Named Locks)*：展示 `tests`、`dev-server`、`build` 等排他命名锁，标明 PostToolUse 毫秒级释放标签；
+      - *安全施工走廊 (Safe Construction Corridors)*：依据当前持有意图与资源锁，动态推导并高亮无并发冲突的可用工程目录与模块（如 `test/`、`desktop/`、`docs/`、`scripts/` 等），为并行 Agent 与开发者提供清晰的免冲突施工通道指引。
+  - **动态 SVG 三次贝塞尔曲线与流动动效 (Dynamic SVG Connectors & Flow Dash)**：
+    - 采用立方贝塞尔曲线横向平滑连线 (`M x1 y1 C (x1+dx) y1, (x2-dx) y2, x2 y2`)，并在中枢端口按连接数动态分布锚点高度，杜绝多条连线聚拢成单一点；
+    - 活跃施工连线配备流水虚线动效 (`stroke-dasharray` + `flowDash`)，阻塞排队连线呈现琥珀色告警脉冲；
+    - **双向悬浮联动高亮**：鼠标悬停任意会话卡片即刻高亮其关联的路由流向与目标，反向悬停文件/资源卡片即时高亮上游持有会话，其余无关线条与卡片自适应半透明降级；
+    - **ResizeObserver 弹性锚定自适应**：在窗口缩放、分屏贴边或面板折叠时，动态感知容器几何变化并毫秒级重绘曲线。
+  - **底部仲裁决策实时流水 (Arbitration Decisions Stream)**：
+    - 汇聚展示网关最近的路由与裁决事件，细分 `全部决策`、`独占授权 GRANT`、`冲突拦截 INTERCEPT`、`毫秒释放 RELEASE` 四档筛选胶囊。
+- **构建与发版集成**：
+  - 更新版本号至 `v0.2.10`，保持全项目单一最新发版归档标准。
+
+### 验证
+
+- **全量测试套件验证**：`node --test "test/**/*.test.js"` 全量 249 项测试通过；
+- **前端与拓扑链路验证**：验证 `/api/cockpit` 综合数据聚合与安全施工走廊推导算法，动效与 SVG 连线计算边界严密无畸变。
+
+---
+
 ## 2026-10-20 弹窗关闭按钮交互修复与全尺寸自适应响应式重构 (Popover Close Fix & Multi-Tier Responsive Layout v0.2.9)
 
 ### 改了什么

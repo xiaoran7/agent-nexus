@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { ValidationError } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.2.9';
+let APP_VERSION = '0.2.10';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;

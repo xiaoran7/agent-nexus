@@ -52,12 +52,15 @@
         </svg>
         <span>动态与日志</span>
       </button>
-      <button class="seg-btn" data-view="memory" id="tab-memory">
+      <button class="seg-btn" data-view="routing" id="tab-routing">
         <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+          <circle cx="18" cy="5" r="3"></circle>
+          <circle cx="6" cy="12" r="3"></circle>
+          <circle cx="18" cy="19" r="3"></circle>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
         </svg>
-        <span>知识备忘</span>
+        <span>协同路由</span>
       </button>
     </nav>
 
@@ -270,33 +273,128 @@
       </div>
     </div>
 
-    <!-- VIEW 3: 知识备忘 (Memory & Rules) -->
-    <div id="view-memory" class="view-panel">
-      <section class="panel-card full-memory-panel">
-        <div class="panel-head memory-head">
-          <div class="memory-title-group">
-            <span class="panel-title">项目知识备忘录 (Memory & Rules)</span>
-            <span class="panel-meta" id="memory-counter">0 项规约</span>
+    <!-- VIEW 3: 协同路由图 (Session Routing & Conflict Map) -->
+    <div id="view-routing" class="view-panel">
+      <section class="panel-card routing-panel-card">
+        <div class="panel-head routing-head">
+          <div class="routing-title-group">
+            <span class="panel-title">会话路由与资源走廊 (Session Routing & Resource Map)</span>
+            <span class="panel-meta" id="routing-summary-meta">0 个在席会话 · 0 项独占锁 · 0 处冲突</span>
           </div>
-          <div class="memory-search-wrap">
-            <input type="search" id="memory-search-input" class="search-input" placeholder="搜索架构规约、开发规范或踩坑经验..." />
+          <div class="routing-actions-wrap">
+            <span class="routing-mode-tag">
+              <span class="pulse-dot-sm"></span>
+              动态防撞路由网关
+            </span>
+            <button id="btn-refresh-routing" class="btn-ghost-sm" title="刷新拓扑">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>刷新</span>
+            </button>
           </div>
         </div>
 
-        <div class="scroll-container memory-grid" id="memory-items-container"></div>
+        <!-- 3-Column Routing Canvas with SVG Connector Layer -->
+        <div class="routing-canvas-wrapper" id="routing-canvas-wrapper">
+          <svg class="routing-svg-layer" id="routing-svg-layer"></svg>
 
-        <!-- 底部紧凑新增备忘栏 -->
-        <div class="memory-add-bar" id="drawer-add-box">
-          <select id="new-mem-cat" class="mini-select">
-            <option value="architecture">架构设计 (Architecture)</option>
-            <option value="rule">开发铁律 (Rule)</option>
-            <option value="gotcha">踩坑排雷 (Gotcha)</option>
-            <option value="milestone">重要节点 (Milestone)</option>
-            <option value="general">常规备忘 (General)</option>
-          </select>
-          <input type="text" id="new-mem-key" class="mini-input" placeholder="标识/Slug (如 auth_protocol)" />
-          <input type="text" id="new-mem-content" class="mini-input-wide" placeholder="输入规约、代码规范或踩坑经验详情..." />
-          <button id="save-mem-btn" class="btn-primary-sm">保存</button>
+          <div class="routing-lanes">
+            <!-- Lane 1: 活跃会话源 (Active Sessions) -->
+            <div class="routing-lane lane-sessions" id="lane-sessions">
+              <div class="lane-header">
+                <span class="lane-title">在席会话 (Sessions)</span>
+                <span class="lane-badge" id="badge-sessions-count">0</span>
+              </div>
+              <div class="lane-content scroll-container" id="routing-sessions-container">
+                <div class="empty-hint">暂无在席会话</div>
+              </div>
+            </div>
+
+            <!-- Lane 2: Nexus 仲裁中枢 (Arbiter Hub) -->
+            <div class="routing-lane lane-hub" id="lane-hub">
+              <div class="lane-header">
+                <span class="lane-title">Nexus 协同中枢 (Arbiter Hub)</span>
+                <span class="hub-status-pill">127.0.0.1:4300</span>
+              </div>
+              <div class="lane-content hub-content-wrap" id="routing-hub-container">
+                <div class="nexus-hub-card" id="nexus-hub-card">
+                  <div class="hub-card-header">
+                    <div class="hub-avatar">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                      </svg>
+                    </div>
+                    <div class="hub-info">
+                      <div class="hub-name">Nexus Arbiter Core</div>
+                      <div class="hub-sub">零碰撞防撞网关 · CAS 租约引擎</div>
+                    </div>
+                  </div>
+                  <div class="hub-meters-grid">
+                    <div class="hub-meter">
+                      <span class="meter-label">🛡️ 冲突拦截</span>
+                      <span class="meter-value" id="hub-meter-intercepts">0</span>
+                    </div>
+                    <div class="hub-meter">
+                      <span class="meter-label">⚡ 释放延迟</span>
+                      <span class="meter-value" id="hub-meter-latency">12ms</span>
+                    </div>
+                    <div class="hub-meter">
+                      <span class="meter-label">⏱️ 心跳续约</span>
+                      <span class="meter-value" id="hub-meter-ttl">300s</span>
+                    </div>
+                    <div class="hub-meter">
+                      <span class="meter-label">🚦 排队等待</span>
+                      <span class="meter-value" id="hub-meter-queue">0</span>
+                    </div>
+                  </div>
+                  <div class="hub-card-footer">
+                    <span class="hub-mode-badge">抢占式并发仲裁</span>
+                    <span class="hub-hook-badge">PostToolUse 极速解禁</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Lane 3: 施工目标与走廊 (Target Files & Corridors) -->
+            <div class="routing-lane lane-targets" id="lane-targets">
+              <div class="lane-header">
+                <span class="lane-title">施工目标与走廊 (Files & Corridors)</span>
+                <span class="lane-badge" id="badge-targets-count">0</span>
+              </div>
+              <div class="lane-content scroll-container" id="routing-targets-container">
+                <div class="empty-hint">暂无独占文件或锁</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部裁决决策流水 (Arbitration Decisions Log) -->
+        <div class="routing-decisions-panel">
+          <div class="decisions-head">
+            <div class="decisions-title-wrap">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+              <span class="decisions-title">最近路由与裁决决策 (Arbitration Decisions)</span>
+              <span class="decisions-badge" id="decisions-count-badge">实时</span>
+            </div>
+            <div class="decisions-filters">
+              <button class="d-filter-btn active" data-filter="all">全部决策</button>
+              <button class="d-filter-btn" data-filter="grant">独占授权</button>
+              <button class="d-filter-btn" data-filter="intercept">冲突拦截</button>
+              <button class="d-filter-btn" data-filter="release">毫秒释放</button>
+            </div>
+          </div>
+          <div class="decisions-stream scroll-container" id="routing-decisions-stream">
+            <div class="empty-hint">暂无路由裁决记录</div>
+          </div>
         </div>
       </section>
     </div>
