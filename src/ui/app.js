@@ -844,6 +844,42 @@ function computeSafeCorridors(activeClaims, resourceLocks, topology) {
   });
 }
 
+function formatShortAgent(agentId) {
+  if (!agentId) return '未知会话';
+  const str = String(agentId);
+  if (str.startsWith('claude-')) {
+    const rest = str.slice(7);
+    const shortPart = rest.split('-')[0] || rest.slice(0, 8);
+    return `claude-${shortPart}`;
+  }
+  if (str.startsWith('codex-')) {
+    const rest = str.slice(6);
+    const shortPart = rest.split('-')[0] || rest.slice(0, 8);
+    return `codex-${shortPart}`;
+  }
+  if (str.length > 18) {
+    return str.slice(0, 14) + '...';
+  }
+  return str;
+}
+
+function splitPathForDisplay(fullPath) {
+  if (!fullPath) return { dir: '', name: '未知目标', full: '' };
+  const normalized = String(fullPath).replace(/\\/g, '/');
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash === -1) {
+    return { dir: '', name: normalized, full: normalized };
+  }
+  const dir = normalized.slice(0, lastSlash + 1);
+  const name = normalized.slice(lastSlash + 1);
+  const parts = dir.split('/').filter(Boolean);
+  let shortDir = dir;
+  if (parts.length > 2) {
+    shortDir = '.../' + parts.slice(-2).join('/') + '/';
+  }
+  return { dir: shortDir, name, full: normalized };
+}
+
 function renderRoutingDiagram(cockpitData) {
   if (!dom.routingCanvasWrapper) return;
   lastRoutingData = cockpitData;
@@ -890,9 +926,9 @@ function renderRoutingDiagram(cockpitData) {
       dom.routingSessionsContainer.innerHTML = validAgents.map(a => {
         const idSafe = escapeHtml(a.id);
         const nameSafe = escapeHtml(a.name || a.id);
-        const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude Code' : (a.id.includes('codex') ? 'Codex' : 'AI Agent')));
-        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命中' : '无明确意图'));
-        const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'none'));
+        const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude' : (a.id.includes('codex') ? 'Codex' : 'AI Agent')));
+        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命中 · 监听工作区变更' : '执行任务中'));
+        const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'idle'));
         const claimsCount = a.resolvedClaims.length;
 
         let statusBadge = '<span class="session-status-tag status-idle"><span class="dot"></span>待命</span>';
@@ -906,7 +942,7 @@ function renderRoutingDiagram(cockpitData) {
           <div class="session-route-card state-${a.uiState}" data-session-id="${idSafe}">
             <div class="route-card-header">
               <div class="route-card-identity">
-                <span class="route-agent-name" title="${idSafe}">${nameSafe}</span>
+                <span class="route-agent-name" title="完整会话标识: ${idSafe}">${nameSafe}</span>
                 <span class="route-provider-badge">${providerSafe}</span>
               </div>
               ${statusBadge}
@@ -920,7 +956,7 @@ function renderRoutingDiagram(cockpitData) {
             </div>
             <div class="route-card-footer">
               <span class="route-action-tag"><code>${toolSafe}</code></span>
-              <span class="route-leases-tag" title="持有独占锁数量">独占 ${claimsCount} 项</span>
+              <span class="route-leases-tag">${claimsCount > 0 ? `独占 ${claimsCount} 项` : '无独占锁'}</span>
             </div>
           </div>
         `;
@@ -940,8 +976,11 @@ function renderRoutingDiagram(cockpitData) {
     if (activeClaims.length > 0) {
       targetsHtml += `<div class="target-group-label">独占施工文件 (${activeClaims.length})</div>`;
       activeClaims.forEach(c => {
-        const pathSafe = escapeHtml(c.claim_target || c.path);
+        const rawPath = c.claim_target || c.path || '';
+        const pathSafe = escapeHtml(rawPath);
+        const pathInfo = splitPathForDisplay(rawPath);
         const agentSafe = escapeHtml(c.agent_id);
+        const shortAgent = escapeHtml(formatShortAgent(c.agent_id));
         const now = Date.now();
         const remainingSec = c.expires_at ? Math.max(0, Math.ceil((c.expires_at - now) / 1000)) : 300;
         const resKey = `res:file:${pathSafe}`;
@@ -955,11 +994,14 @@ function renderRoutingDiagram(cockpitData) {
                   <polyline points="13 2 13 9 20 9"></polyline>
                 </svg>
               </div>
-              <span class="target-path" title="${pathSafe}">${pathSafe}</span>
+              <div class="target-file-info" title="${pathSafe}">
+                <span class="target-file-name">${escapeHtml(pathInfo.name)}</span>
+                ${pathInfo.dir ? `<span class="target-file-dir">${escapeHtml(pathInfo.dir)}</span>` : ''}
+              </div>
               <span class="target-status-badge badge-locked">LOCKED</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder" title="持有者">由 <strong>${agentSafe}</strong> 独占修改</span>
+              <span class="target-holder">由 <strong class="holder-mono" title="完整会话: ${agentSafe}">${shortAgent}</strong> 独占</span>
               <span class="target-ttl-badge">~${remainingSec}s TTL</span>
             </div>
           </div>
@@ -971,8 +1013,10 @@ function renderRoutingDiagram(cockpitData) {
     if (resourceLocks.length > 0) {
       targetsHtml += `<div class="target-group-label">排他命令与环境锁 (${resourceLocks.length})</div>`;
       resourceLocks.forEach(l => {
-        const nameSafe = escapeHtml(l.resource_name || l.name);
+        const rawName = l.resource_name || l.name;
+        const nameSafe = escapeHtml(rawName);
         const agentSafe = escapeHtml(l.agent_id);
+        const shortAgent = escapeHtml(formatShortAgent(l.agent_id));
         const resKey = `res:resource:${nameSafe}`;
 
         targetsHtml += `
@@ -984,11 +1028,14 @@ function renderRoutingDiagram(cockpitData) {
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
               </div>
-              <span class="target-path">${nameSafe} (命令排他锁)</span>
+              <div class="target-file-info" title="${nameSafe}">
+                <span class="target-file-name">${nameSafe}</span>
+                <span class="target-file-dir">命令排他锁</span>
+              </div>
               <span class="target-status-badge badge-exclusive">EXCLUSIVE</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder">由 <strong>${agentSafe}</strong> 持有</span>
+              <span class="target-holder">由 <strong class="holder-mono" title="完整会话: ${agentSafe}">${shortAgent}</strong> 持有</span>
               <span class="target-hook-badge">PostToolUse 释放</span>
             </div>
           </div>
@@ -996,7 +1043,7 @@ function renderRoutingDiagram(cockpitData) {
       });
     }
 
-    // C. 安全施工走廊 (Safe Corridors) - "更深一层，因为我们知道在改什么文件"
+    // C. 安全施工走廊 (Safe Corridors)
     const uncontendedCorridors = safeCorridors.filter(c => c.status === 'safe').slice(0, 3);
     if (uncontendedCorridors.length > 0) {
       targetsHtml += `<div class="target-group-label">安全施工走廊 (${uncontendedCorridors.length})</div>`;
@@ -1015,11 +1062,14 @@ function renderRoutingDiagram(cockpitData) {
                   <polyline points="2 12 12 17 22 12"></polyline>
                 </svg>
               </div>
-              <span class="target-path">${corNameSafe}</span>
+              <div class="target-file-info" title="${corNameSafe}">
+                <span class="target-file-name">${corNameSafe}</span>
+                <span class="target-file-dir">${corDescSafe}</span>
+              </div>
               <span class="target-status-badge badge-safe">SAFE 走廊</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-desc">${corDescSafe}</span>
+              <span class="target-desc">架构师绿色通道</span>
               <span class="target-free-badge">零竞争可并发</span>
             </div>
           </div>
@@ -1056,7 +1106,6 @@ function drawRoutingConnectors() {
   const hubRect = dom.nexusHubCard.getBoundingClientRect();
   const hubLeftX = hubRect.left - wrapperRect.left;
   const hubRightX = hubRect.right - wrapperRect.left;
-  const hubCenterY = hubRect.top - wrapperRect.top + hubRect.height / 2;
 
   const sessionCards = dom.routingSessionsContainer?.querySelectorAll('.session-route-card') || [];
   const targetCards = dom.routingTargetsContainer?.querySelectorAll('.target-route-card') || [];
@@ -1064,19 +1113,16 @@ function drawRoutingConnectors() {
   let svgHtml = '';
 
   // 1. Sessions -> Nexus Hub 连线
-  const sessionCount = sessionCards.length;
-  sessionCards.forEach((card, idx) => {
+  sessionCards.forEach((card) => {
     const sRect = card.getBoundingClientRect();
     const x1 = sRect.right - wrapperRect.left;
     const y1 = sRect.top - wrapperRect.top + sRect.height / 2;
 
-    const spread = Math.min(hubRect.height * 0.6, sessionCount * 14);
-    const startY = hubCenterY - spread / 2;
-    const stepY = sessionCount > 1 ? spread / (sessionCount - 1) : 0;
-    const y2 = sessionCount === 1 ? hubCenterY : startY + idx * stepY;
+    // 平滑贴合中枢侧边锚点，避免生硬折角或扎堆
+    const y2 = Math.max(hubRect.top - wrapperRect.top + 24, Math.min(hubRect.bottom - wrapperRect.top - 24, y1));
     const x2 = hubLeftX;
 
-    const dx = Math.max(30, (x2 - x1) * 0.5);
+    const dx = Math.max(35, (x2 - x1) * 0.45);
     const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
     const sessionId = card.dataset.sessionId || '';
@@ -1093,19 +1139,15 @@ function drawRoutingConnectors() {
   });
 
   // 2. Nexus Hub -> Target Files / Corridors 连线
-  const targetCount = targetCards.length;
-  targetCards.forEach((card, idx) => {
+  targetCards.forEach((card) => {
     const tRect = card.getBoundingClientRect();
     const x2 = tRect.left - wrapperRect.left;
     const y2 = tRect.top - wrapperRect.top + tRect.height / 2;
 
-    const spread = Math.min(hubRect.height * 0.7, targetCount * 14);
-    const startY = hubCenterY - spread / 2;
-    const stepY = targetCount > 1 ? spread / (targetCount - 1) : 0;
-    const y1 = targetCount === 1 ? hubCenterY : startY + idx * stepY;
+    const y1 = Math.max(hubRect.top - wrapperRect.top + 24, Math.min(hubRect.bottom - wrapperRect.top - 24, y2));
     const x1 = hubRightX;
 
-    const dx = Math.max(30, (x2 - x1) * 0.5);
+    const dx = Math.max(35, (x2 - x1) * 0.45);
     const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
     const targetId = card.dataset.targetId || '';
@@ -1218,6 +1260,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
     const type = item.type || '';
     const desc = item.description || item.detail || '';
     const agent = item.agent_id || 'system';
+    const shortAgent = formatShortAgent(agent);
     const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
 
     if (type.includes('grant') || type.includes('claim') || desc.includes('拿到租约') || desc.includes('声明')) {
@@ -1225,7 +1268,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
         type: 'grant',
         time,
         badge: 'GRANT 授权',
-        title: `独占租约授予: 会话 <strong>${escapeHtml(agent)}</strong>`,
+        title: `独占租约授予: 会话 <strong title="${escapeHtml(agent)}">${escapeHtml(shortAgent)}</strong>`,
         detail: escapeHtml(desc || '零冲突快速放行，写入租约已下发')
       });
     } else if (type.includes('conflict') || type.includes('intercept') || desc.includes('冲突') || desc.includes('拦截') || desc.includes('WAITING')) {
@@ -1233,7 +1276,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
         type: 'intercept',
         time,
         badge: 'INTERCEPT 拦截',
-        title: `并发写入拦截: 会话 <strong>${escapeHtml(agent)}</strong>`,
+        title: `并发写入拦截: 会话 <strong title="${escapeHtml(agent)}">${escapeHtml(shortAgent)}</strong>`,
         detail: escapeHtml(desc || '检测到文件写冲突，已安全挂起至排队队列')
       });
     } else if (type.includes('freed') || type.includes('release') || desc.includes('释放') || desc.includes('PostToolUse')) {
@@ -1241,7 +1284,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
         type: 'release',
         time,
         badge: 'RELEASE 释放',
-        title: `毫秒级租约释放: 会话 <strong>${escapeHtml(agent)}</strong>`,
+        title: `毫秒级租约释放: 会话 <strong title="${escapeHtml(agent)}">${escapeHtml(shortAgent)}</strong>`,
         detail: escapeHtml(desc || 'PostToolUse 触发毫秒级锁回收，并自动唤醒队首排队者')
       });
     }
@@ -1250,34 +1293,38 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
   if (decisions.length === 0) {
     if ((activeClaims || []).length > 0) {
       activeClaims.forEach(c => {
+        const pathInfo = splitPathForDisplay(c.claim_target || c.path);
+        const shortAgent = formatShortAgent(c.agent_id);
         decisions.push({
           type: 'grant',
           time: new Date().toLocaleTimeString(),
           badge: 'GRANT 授权',
-          title: `当前活跃独占租约: <strong>${escapeHtml(c.agent_id)}</strong>`,
-          detail: `锁定目标 <code>${escapeHtml(c.claim_target || c.path)}</code> · 滑动窗口 TTL 续期中`
+          title: `当前活跃独占租约: <strong title="${escapeHtml(c.agent_id)}">${escapeHtml(shortAgent)}</strong>`,
+          detail: `锁定目标 <code>${escapeHtml(pathInfo.name)}</code> <span class="decision-path-dir">${escapeHtml(pathInfo.dir)}</span> · 滑动窗口 TTL 续期中`
         });
       });
     }
     if ((waitQueue || []).length > 0) {
       waitQueue.forEach(w => {
+        const pathInfo = splitPathForDisplay(w.target || '');
+        const shortAgent = formatShortAgent(w.agent_id);
         decisions.push({
           type: 'intercept',
           time: new Date().toLocaleTimeString(),
           badge: 'INTERCEPT 拦截',
-          title: `排队避障中: <strong>${escapeHtml(w.agent_id)}</strong>`,
-          detail: `目标 <code>${escapeHtml(w.target || '')}</code> 受保护 · 等待当前持有者释放`
+          title: `排队避障中: <strong title="${escapeHtml(w.agent_id)}">${escapeHtml(shortAgent)}</strong>`,
+          detail: `目标 <code>${escapeHtml(pathInfo.name)}</code> 受保护 · 等待当前持有者释放`
         });
       });
     }
-    const safeList = (safeCorridors || []).filter(c => c.status === 'safe').map(c => c.prefix).join(', ');
+    const safeList = (safeCorridors || []).filter(c => c.status === 'safe').map(c => c.name || c.prefix).join(', ');
     if (safeList) {
       decisions.push({
         type: 'grant',
         time: new Date().toLocaleTimeString(),
         badge: 'CORRIDOR 走廊',
         title: `架构师空闲走廊计算就绪`,
-        detail: `安全并发走廊: <code>${escapeHtml(safeList)}</code> 均畅通无阻`
+        detail: `安全并发走廊: <code>${escapeHtml(safeList)}</code> 畅通无阻`
       });
     }
   }

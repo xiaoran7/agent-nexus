@@ -83,6 +83,15 @@
   --popover-border: rgba(56, 189, 248, 0.35);
   --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
 
+  /* 协同拓扑 Hub 卡片体系 */
+  --hub-card-bg: linear-gradient(145deg, rgba(28, 39, 64, 0.92), rgba(15, 23, 42, 0.96));
+  --hub-card-border: rgba(56, 189, 248, 0.35);
+  --hub-card-shadow: 0 4px 20px -2px rgba(56, 189, 248, 0.16);
+  --hub-card-hover-border: rgba(56, 189, 248, 0.60);
+  --hub-card-hover-shadow: 0 6px 26px -2px rgba(56, 189, 248, 0.25);
+  --hub-meter-bg: rgba(11, 15, 25, 0.72);
+  --hub-meter-border: rgba(255, 255, 255, 0.08);
+
   /* 字体与圆角体系 */
   --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', "Cascadia Code", monospace;
@@ -133,17 +142,17 @@
   --schale-sky: #0284c7;
   --schale-blue: #0284c7;
 
-  /* 状态颜色 */
-  --status-running: #059669;
+  /* 状态颜色 (高对比度 WCAG AA 调优) */
+  --status-running: #047857;
   --status-running-bg: rgba(5, 150, 105, 0.12);
   --status-running-border: rgba(5, 150, 105, 0.30);
-  --status-waiting: #d97706;
+  --status-waiting: #b45309;
   --status-waiting-bg: rgba(217, 119, 6, 0.12);
   --status-waiting-border: rgba(217, 119, 6, 0.30);
   --status-blocked: #dc2626;
   --status-blocked-bg: rgba(220, 38, 38, 0.12);
   --status-blocked-border: rgba(220, 38, 38, 0.30);
-  --status-idle: #64748b;
+  --status-idle: #475569;
   --status-idle-bg: rgba(100, 116, 139, 0.12);
   --status-idle-border: rgba(100, 116, 139, 0.25);
   --status-locks: #7c3aed;
@@ -167,6 +176,15 @@
   --popover-bg: rgba(255, 255, 255, 0.98);
   --popover-border: rgba(14, 165, 233, 0.40);
   --popover-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+
+  /* 协同拓扑 Hub 卡片体系 */
+  --hub-card-bg: linear-gradient(145deg, #ffffff, rgba(240, 249, 255, 0.92));
+  --hub-card-border: rgba(14, 165, 233, 0.35);
+  --hub-card-shadow: 0 4px 20px -2px rgba(14, 165, 233, 0.14), 0 1px 4px rgba(15, 23, 42, 0.05);
+  --hub-card-hover-border: rgba(14, 165, 233, 0.55);
+  --hub-card-hover-shadow: 0 6px 26px -2px rgba(14, 165, 233, 0.22);
+  --hub-meter-bg: rgba(248, 250, 252, 0.95);
+  --hub-meter-border: rgba(226, 232, 240, 0.95);
 }
 
 /* =============================================================================
@@ -1331,7 +1349,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 30%, rgba(56, 189, 248, 0.04) 0%, transparent 65%),
+  background: radial-gradient(circle at 50% 25%, rgba(56, 189, 248, 0.05) 0%, transparent 65%),
               var(--card-nested);
 }
 
@@ -1346,61 +1364,62 @@ body {
 }
 
 @keyframes flowDash {
-  from { stroke-dashoffset: 20; }
+  from { stroke-dashoffset: 18; }
   to { stroke-dashoffset: 0; }
 }
 
 @keyframes flowDashReverse {
   from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: 18; }
+  to { stroke-dashoffset: 16; }
 }
 
 .route-path {
   fill: none;
-  transition: stroke-width 0.22s ease, opacity 0.22s ease, stroke 0.22s ease;
+  transition: stroke-width 0.22s var(--ease-smooth), opacity 0.22s var(--ease-smooth), stroke 0.22s var(--ease-smooth);
 }
 
 .route-active {
   stroke: var(--sky-primary);
-  stroke-width: 2.2px;
-  stroke-dasharray: 6 4;
-  animation: flowDash 1.2s linear infinite;
+  stroke-width: 1.8px;
+  stroke-dasharray: 5 4;
+  animation: flowDash 1.4s linear infinite;
 }
 
 .route-waiting {
-  stroke: #f59e0b;
-  stroke-width: 2.2px;
-  stroke-dasharray: 5 4;
+  stroke: var(--status-waiting);
+  stroke-width: 1.8px;
+  stroke-dasharray: 4 4;
   animation: flowDashReverse 1.4s linear infinite;
 }
 
 .route-corridor {
-  stroke: #10b981;
-  stroke-width: 1.8px;
+  stroke: var(--status-running);
+  stroke-width: 1.5px;
   stroke-dasharray: 4 4;
   opacity: 0.85;
 }
 
 .route-idle {
-  stroke: rgba(148, 163, 184, 0.35);
-  stroke-width: 1.4px;
+  stroke: var(--border-hover);
+  stroke-width: 1.2px;
   stroke-dasharray: 3 3;
+  opacity: 0.6;
 }
 
 .route-highlighted {
-  stroke-width: 3.6px !important;
+  stroke-width: 3.2px !important;
   opacity: 1 !important;
-  filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.75));
+  filter: drop-shadow(0 0 6px var(--sky-glow));
 }
 
 .route-dimmed {
-  opacity: 0.10 !important;
+  opacity: 0.12 !important;
 }
 
 /* 3 栏网格布局 */
 .routing-lanes {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) minmax(250px, 1.15fr) minmax(230px, 1.1fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.15fr) minmax(240px, 1.1fr);
   gap: 14px;
   padding: 12px 14px;
   height: 100%;
@@ -1414,10 +1433,11 @@ body {
   flex-direction: column;
   min-width: 0;
   height: 100%;
-  background: rgba(15, 23, 42, 0.45);
+  background: var(--card-subtle);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .lane-header {
@@ -1425,7 +1445,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: var(--card-subtle);
+  background: var(--header-bg);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
@@ -1442,7 +1462,8 @@ body {
   font-size: 11px;
   font-weight: 700;
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.15);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
   padding: 1px 7px;
   border-radius: var(--radius-pill);
 }
@@ -1451,9 +1472,9 @@ body {
   font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 600;
-  color: #34d399;
-  background: rgba(52, 211, 153, 0.15);
-  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
   padding: 2px 7px;
   border-radius: var(--radius-pill);
 }
@@ -1469,7 +1490,7 @@ body {
 
 /* Lane 1: 会话卡片 (Session Cards) */
 .session-route-card {
-  background: var(--card-nested);
+  background: var(--card-bg);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
@@ -1478,25 +1499,26 @@ body {
   gap: 6px;
   transition: all 0.2s var(--ease-smooth);
   cursor: pointer;
+  box-shadow: var(--shadow-sm);
 }
 
 .session-route-card:hover {
   background: var(--card-hover);
   border-color: var(--border-hover);
   transform: translateY(-1.5px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .session-route-card.state-working {
-  border-left: 3px solid #34d399;
+  border-left: 3px solid var(--status-running);
 }
 
 .session-route-card.state-waiting {
-  border-left: 3px solid #fbbf24;
+  border-left: 3px solid var(--status-waiting);
 }
 
 .session-route-card.state-idle {
-  border-left: 3px solid #94a3b8;
+  border-left: 3px solid var(--status-idle);
 }
 
 .route-card-header {
@@ -1528,7 +1550,8 @@ body {
   font-size: 9.5px;
   font-weight: 600;
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.14);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
@@ -1540,8 +1563,9 @@ body {
   gap: 4px;
   font-size: 10.5px;
   font-weight: 700;
-  padding: 1.5px 6px;
+  padding: 2px 7px;
   border-radius: var(--radius-pill);
+  white-space: nowrap;
 }
 
 .session-status-tag .dot {
@@ -1551,29 +1575,32 @@ body {
 }
 
 .session-status-tag.status-working {
-  color: #34d399;
-  background: rgba(52, 211, 153, 0.16);
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
 }
 .session-status-tag.status-working .dot {
-  background: #34d399;
-  box-shadow: 0 0 6px #34d399;
+  background: var(--status-running);
+  box-shadow: 0 0 6px var(--status-running);
 }
 
 .session-status-tag.status-waiting {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.16);
+  color: var(--status-waiting);
+  background: var(--status-waiting-bg);
+  border: 1px solid var(--status-waiting-border);
 }
 .session-status-tag.status-waiting .dot {
-  background: #fbbf24;
-  box-shadow: 0 0 6px #fbbf24;
+  background: var(--status-waiting);
+  box-shadow: 0 0 6px var(--status-waiting);
 }
 
 .session-status-tag.status-idle {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.14);
+  color: var(--status-idle);
+  background: var(--status-idle-bg);
+  border: 1px solid var(--status-idle-border);
 }
 .session-status-tag.status-idle .dot {
-  background: #94a3b8;
+  background: var(--status-idle);
 }
 
 .route-card-intent {
@@ -1587,27 +1614,36 @@ body {
   white-space: nowrap;
 }
 
+.route-card-intent svg {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
 .route-card-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
   font-size: 10.5px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 5px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .route-action-tag code {
   font-family: var(--font-mono);
+  font-size: 10px;
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.1);
-  padding: 1px 4px;
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
+  padding: 1px 5px;
   border-radius: 3px;
 }
 
 .route-leases-tag {
   color: var(--text-faint);
   font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
 }
 
 /* Lane 2: Nexus 协同中枢卡片 (Arbiter Hub) */
@@ -1620,21 +1656,21 @@ body {
 
 .nexus-hub-card {
   width: 100%;
-  background: linear-gradient(145deg, rgba(30, 41, 67, 0.88), rgba(20, 28, 48, 0.95));
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: var(--hub-card-bg);
+  border: 1px solid var(--hub-card-border);
   border-radius: var(--radius-md);
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  box-shadow: 0 4px 20px -2px rgba(56, 189, 248, 0.16);
+  box-shadow: var(--hub-card-shadow);
   position: relative;
   transition: all 0.25s var(--ease-smooth);
 }
 
 .nexus-hub-card:hover {
-  border-color: rgba(56, 189, 248, 0.6);
-  box-shadow: 0 6px 26px -2px rgba(56, 189, 248, 0.25);
+  border-color: var(--hub-card-hover-border);
+  box-shadow: var(--hub-card-hover-shadow);
 }
 
 .hub-card-header {
@@ -1647,14 +1683,14 @@ body {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-sm);
-  background: rgba(56, 189, 248, 0.16);
-  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--sky-primary);
   flex-shrink: 0;
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+  box-shadow: 0 0 12px var(--sky-glow);
 }
 
 .hub-info {
@@ -1674,6 +1710,7 @@ body {
 .hub-sub {
   font-size: 10.5px;
   color: var(--text-muted);
+  line-height: 1.3;
 }
 
 .hub-meters-grid {
@@ -1683,18 +1720,28 @@ body {
 }
 
 .hub-meter {
-  background: rgba(14, 21, 37, 0.7);
-  border: 1px solid var(--border-subtle);
+  background: var(--hub-meter-bg);
+  border: 1px solid var(--hub-meter-border);
   border-radius: var(--radius-sm);
   padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  box-shadow: var(--shadow-sm);
 }
 
 .meter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 10px;
+  font-weight: 600;
   color: var(--text-faint);
+}
+
+.meter-label svg {
+  color: var(--sky-primary);
+  flex-shrink: 0;
 }
 
 .meter-value {
@@ -1702,6 +1749,7 @@ body {
   font-size: 14px;
   font-weight: 700;
   color: var(--text-title);
+  letter-spacing: 0.2px;
 }
 
 .hub-card-footer {
@@ -1710,7 +1758,7 @@ body {
   justify-content: space-between;
   gap: 6px;
   padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .hub-mode-badge,
@@ -1723,14 +1771,14 @@ body {
 
 .hub-mode-badge {
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
 }
 
 .hub-hook-badge {
-  color: #34d399;
-  background: rgba(52, 211, 153, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.25);
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
 }
 
 /* Lane 3: 目标文件与走廊 (Target Files & Corridors) */
@@ -1745,7 +1793,7 @@ body {
 }
 
 .target-route-card {
-  background: var(--card-nested);
+  background: var(--card-bg);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
@@ -1754,26 +1802,27 @@ body {
   gap: 5px;
   transition: all 0.2s var(--ease-smooth);
   cursor: pointer;
+  box-shadow: var(--shadow-sm);
 }
 
 .target-route-card:hover {
   background: var(--card-hover);
   border-color: var(--border-hover);
   transform: translateY(-1.5px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .target-route-card.type-file {
-  border-left: 3px solid #38bdf8;
+  border-left: 3px solid var(--sky-primary);
 }
 
 .target-route-card.type-lock {
-  border-left: 3px solid #c084fc;
+  border-left: 3px solid var(--status-locks);
 }
 
 .target-route-card.type-corridor {
-  border-left: 3px solid #10b981;
-  background: rgba(16, 185, 129, 0.05);
+  border-left: 3px solid var(--status-running);
+  background: var(--status-running-bg);
 }
 
 .target-card-header {
@@ -1784,8 +1833,8 @@ body {
 }
 
 .target-icon-wrap {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -1795,17 +1844,47 @@ body {
 
 .target-icon-wrap.file-icon {
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.14);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
 }
 
 .target-icon-wrap.lock-icon {
-  color: #c084fc;
-  background: rgba(192, 132, 252, 0.14);
+  color: var(--status-locks);
+  background: var(--status-locks-bg);
+  border: 1px solid var(--status-locks-border);
 }
 
 .target-icon-wrap.corridor-icon {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.14);
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
+}
+
+.target-file-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.target-file-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-title);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-file-dir {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .target-path {
@@ -1829,21 +1908,21 @@ body {
 }
 
 .badge-locked {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.16);
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: var(--sky-primary);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
 }
 
 .badge-exclusive {
-  color: #c084fc;
-  background: rgba(192, 132, 252, 0.16);
-  border: 1px solid rgba(192, 132, 252, 0.35);
+  color: var(--status-locks);
+  background: var(--status-locks-bg);
+  border: 1px solid var(--status-locks-border);
 }
 
 .badge-safe {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.16);
-  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
 }
 
 .target-card-meta {
@@ -1853,6 +1932,12 @@ body {
   gap: 6px;
   font-size: 10px;
   color: var(--text-muted);
+}
+
+.holder-mono {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-title);
 }
 
 .target-ttl-badge,
@@ -1867,24 +1952,24 @@ body {
 
 .target-ttl-badge {
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.12);
+  background: var(--tab-active-bg);
 }
 
 .target-hook-badge {
-  color: #34d399;
-  background: rgba(52, 211, 153, 0.12);
+  color: var(--status-running);
+  background: var(--status-running-bg);
 }
 
 .target-free-badge {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.12);
+  color: var(--status-running);
+  background: var(--status-running-bg);
 }
 
 /* 高亮状态类 (Hover Mutual Highlighting) */
 .card-highlighted {
   border-color: var(--sky-primary) !important;
   transform: scale(1.02);
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.3) !important;
+  box-shadow: 0 0 12px var(--sky-glow) !important;
 }
 
 .card-dimmed {
@@ -1909,7 +1994,7 @@ body {
   justify-content: space-between;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border-subtle);
-  background: rgba(15, 23, 42, 0.5);
+  background: var(--header-bg);
   flex-shrink: 0;
 }
 
@@ -1929,7 +2014,8 @@ body {
   font-size: 9.5px;
   font-weight: 700;
   color: var(--sky-primary);
-  background: rgba(56, 189, 248, 0.15);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
   padding: 1px 6px;
   border-radius: var(--radius-pill);
 }
@@ -1954,13 +2040,13 @@ body {
 
 .d-filter-btn:hover {
   color: var(--text-title);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--tab-hover-bg);
 }
 
 .d-filter-btn.active {
-  color: var(--text-title);
-  background: var(--tabs-bg);
-  border-color: var(--border-accent);
+  color: var(--tab-active-color);
+  background: var(--tab-active-bg);
+  border-color: var(--tab-active-border);
 }
 
 .decisions-stream {
@@ -1976,11 +2062,17 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-radius: var(--radius-sm);
-  background: var(--card-nested);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
   font-size: 11px;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease;
+}
+
+.decision-item:hover {
+  background: var(--card-hover);
 }
 
 .decision-badge {
@@ -1994,21 +2086,21 @@ body {
 }
 
 .badge-grant {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.15);
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--sky-primary);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
 }
 
 .badge-intercept {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.15);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--status-waiting);
+  background: var(--status-waiting-bg);
+  border: 1px solid var(--status-waiting-border);
 }
 
 .badge-release {
-  color: #34d399;
-  background: rgba(52, 211, 153, 0.15);
-  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
 }
 
 .decision-time {
@@ -2043,10 +2135,18 @@ body {
 
 .decision-detail code {
   font-family: var(--font-mono);
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.08);
+  font-size: 10px;
+  color: var(--sky-primary);
+  background: var(--tab-active-bg);
+  border: 1px solid var(--border-accent);
   padding: 1px 4px;
   border-radius: 3px;
+}
+
+.decision-path-dir {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
 }
 
 /* =============================================================================
