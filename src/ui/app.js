@@ -168,6 +168,8 @@ const dom = {
 // Theme Management (暗色 / 亮色持久化与实时切换)
 // =============================================================================
 function getPreferredTheme() {
+  const qTheme = new URLSearchParams(location.search).get('theme');
+  if (qTheme === 'dark' || qTheme === 'light') return qTheme;
   const saved = localStorage.getItem('nexusTheme');
   if (saved === 'dark' || saved === 'light') return saved;
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -367,7 +369,8 @@ async function loadProjects() {
       }
     }
 
-    const savedProjectId = localStorage.getItem('nexusProjectId');
+    const qProject = new URLSearchParams(location.search).get('project') || new URLSearchParams(location.search).get('project_id');
+    const savedProjectId = qProject || localStorage.getItem('nexusProjectId');
     let targetProject = savedProjectId === 'all' ? { id: 'all' } : uniqueProjects.find(p => p.id === savedProjectId);
     if (!targetProject) {
       targetProject = uniqueProjects.find(p => p.id === 'Agent-Nexus') ||
@@ -1554,5 +1557,10 @@ function connectWebSocket() {
 // =============================================================================
 // Bootstrap Execution
 // =============================================================================
+const initialView = new URLSearchParams(location.search).get('view') || new URLSearchParams(location.search).get('tab');
+if (initialView && ['sessions', 'timeline', 'routing'].includes(initialView)) {
+  switchView(initialView);
+}
+
 loadProjects();
 connectWebSocket();
