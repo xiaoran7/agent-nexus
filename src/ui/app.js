@@ -216,7 +216,6 @@ const dom = {
   tabRouting: document.getElementById('tab-routing'),
   viewRouting: document.getElementById('view-routing'),
   routingSummaryMeta: document.getElementById('routing-summary-meta'),
-  btnRefreshRouting: document.getElementById('btn-refresh-routing'),
   routingCanvasWrapper: document.getElementById('routing-canvas-wrapper'),
   routingSvgLayer: document.getElementById('routing-svg-layer'),
   routingSessionsContainer: document.getElementById('routing-sessions-container'),
@@ -1456,10 +1455,6 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
       </div>
     </div>
   `).join('');
-}
-
-if (dom.btnRefreshRouting) {
-  dom.btnRefreshRouting.onclick = () => fetchRoutingTopology();
 }
 
 if (dom.decisionsFilterBtns) {
