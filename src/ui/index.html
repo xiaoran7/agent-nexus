@@ -191,11 +191,11 @@
   <main class="main-body">
     <!-- VIEW 1: 会话与防撞 (Sessions & Collision Prevention) -->
     <div id="view-sessions" class="view-panel active">
-      <div class="split-layout">
+      <div class="split-layout" id="sessions-split-layout">
         <!-- 左栏 56%: 活跃会话与锁看板 -->
-        <div class="pane-left">
+        <div class="pane-left" id="pane-sessions-left">
           <!-- 活跃会话卡片 -->
-          <section class="panel-card flex-agents">
+          <section class="panel-card flex-agents" id="section-agents">
             <div class="panel-head">
               <div class="panel-title-wrap">
                 <span class="panel-title">在席助手 (Active Agents)</span>
@@ -207,8 +207,13 @@
             </div>
           </section>
 
+          <!-- 助手与锁面板垂直拖拽调整条 -->
+          <div class="split-resizer resizer-row" id="resizer-agents-locks" title="上下拖动调整在席助手与锁面板高度 (双击重置)">
+            <div class="resizer-handle-bar"></div>
+          </div>
+
           <!-- 锁定文件与资源 -->
-          <section class="panel-card flex-locks">
+          <section class="panel-card flex-locks" id="section-locks">
             <div class="panel-head">
               <div class="panel-title-wrap">
                 <span class="panel-title">锁定资源与文件 (Locks & Claims)</span>
@@ -222,8 +227,13 @@
           </section>
         </div>
 
+        <!-- 左右栏水平拖拽调整条 -->
+        <div class="split-resizer resizer-col" id="resizer-sessions-split" title="左右拖动调整两栏宽度 (双击重置)">
+          <div class="resizer-handle-bar"></div>
+        </div>
+
         <!-- 右栏 44%: 实时协同与防撞流水 -->
-        <div class="pane-right">
+        <div class="pane-right" id="pane-sessions-right">
           <section class="panel-card flex-stream">
             <div class="panel-head">
               <div class="panel-title-wrap">
@@ -245,9 +255,9 @@
 
     <!-- VIEW 2: 动态与日志 (Dialogue & Milestones) -->
     <div id="view-timeline" class="view-panel">
-      <div class="split-v-layout">
+      <div class="split-v-layout" id="timeline-split-v-layout">
         <!-- 上部: 跨会话对话网络 -->
-        <section class="panel-card flex-dialogue">
+        <section class="panel-card flex-dialogue" id="section-dialogue">
           <div class="panel-head">
             <div class="panel-title-wrap">
               <span class="panel-title">跨会话对话与调度记录</span>
@@ -259,8 +269,13 @@
           </div>
         </section>
 
+        <!-- 对话与里程碑垂直拖拽调整条 -->
+        <div class="split-resizer resizer-row" id="resizer-dialogue-milestones" title="上下拖动调整对话网络与里程碑高度 (双击重置)">
+          <div class="resizer-handle-bar"></div>
+        </div>
+
         <!-- 下部: 演进里程碑历史 -->
-        <section class="panel-card flex-milestones">
+        <section class="panel-card flex-milestones" id="section-milestones">
           <div class="panel-head">
             <div class="panel-title-wrap">
               <span class="panel-title">工程演进里程碑 (Milestones)</span>
@@ -398,10 +413,20 @@
           </div>
         </div>
 
+        <!-- 可拖拽分割条 (上下拖动调整决策面板高度，双击折叠/展开) -->
+        <div class="split-resizer resizer-row" id="resizer-routing-decisions" title="上下拖动调整决策面板高度 (双击折叠/展开)">
+          <div class="resizer-handle-bar"></div>
+        </div>
+
         <!-- 底部裁决决策流水 (Arbitration Decisions Log) -->
-        <div class="routing-decisions-panel">
+        <div class="routing-decisions-panel" id="routing-decisions-panel">
           <div class="decisions-head">
             <div class="decisions-title-wrap">
+              <button id="btn-toggle-decisions" class="btn-icon-xs toggle-decisions-btn" title="折叠/展开决策面板 (快捷键或双击分割条)" aria-label="折叠/展开">
+                <svg class="toggle-icon-glyph" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                 <polyline points="14 2 14 8 20 8"></polyline>

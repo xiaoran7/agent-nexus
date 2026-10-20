@@ -94,6 +94,70 @@ function formatAgentDisplayName(name, agentId, provider, sessionId, intentSummar
   return provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1) + ' 助手');
 }
 
+// 全局在席 Agent 响应式注册表与精准名称解析器
+const globalAgentMap = new Map(); // agentId -> { id, name, displayName, provider }
+
+function updateGlobalAgentRegistry(agents = [], claims = [], timeline = []) {
+  (agents || []).forEach(a => {
+    if (!a || !a.id) return;
+    const resolvedName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id, a.current_intent_summary || a.current_intent);
+    globalAgentMap.set(a.id, {
+      id: a.id,
+      name: a.name || resolvedName,
+      displayName: resolvedName,
+      provider: a.provider
+    });
+  });
+
+  (claims || []).forEach(c => {
+    if (!c || !c.agent_id) return;
+    const candidateName = c.agent_name || (c.holder_name && !isMechanicalAgentName(c.holder_name) ? c.holder_name : null);
+    if (candidateName) {
+      const existing = globalAgentMap.get(c.agent_id);
+      if (!existing || isMechanicalAgentName(existing.name)) {
+        const resolved = formatAgentDisplayName(candidateName, c.agent_id);
+        globalAgentMap.set(c.agent_id, {
+          id: c.agent_id,
+          name: candidateName,
+          displayName: resolved
+        });
+      }
+    }
+  });
+
+  (timeline || []).forEach(t => {
+    if (!t || !t.agent_id) return;
+    if (t.agent_name && (!globalAgentMap.has(t.agent_id) || isMechanicalAgentName(globalAgentMap.get(t.agent_id).name))) {
+      globalAgentMap.set(t.agent_id, {
+        id: t.agent_id,
+        name: t.agent_name,
+        displayName: formatAgentDisplayName(t.agent_name, t.agent_id)
+      });
+    }
+  });
+}
+
+function resolveAgentName(agentId, fallbackName = null) {
+  if (!agentId || agentId === 'system' || agentId === 'nexus') {
+    return 'Nexus 协调器';
+  }
+  // 1. 若外部提供了合法的人类赋予名称，优先采用
+  if (fallbackName && typeof fallbackName === 'string' && fallbackName.trim()) {
+    const clean = fallbackName.trim();
+    if (!isMechanicalAgentName(clean)) {
+      return clean;
+    }
+  }
+  // 2. 从全局会话注册表查找
+  if (globalAgentMap.has(agentId)) {
+    const reg = globalAgentMap.get(agentId);
+    if (reg.name && !isMechanicalAgentName(reg.name)) return reg.name;
+    if (reg.displayName && !isMechanicalAgentName(reg.displayName)) return reg.displayName;
+  }
+  // 3. 回退至格式化标准化名称 (例如 Claude 助手，绝非机械编号)
+  return formatAgentDisplayName(fallbackName, agentId);
+}
+
 // DOM 元素缓存
 const dom = {
   // 顶栏与状态条
@@ -136,12 +200,17 @@ const dom = {
   conflictAlert: document.getElementById('conflict-alert'),
   timelineContainer: document.getElementById('timeline-container'),
   streamFilterBtns: document.querySelectorAll('.filter-pill'),
+  paneLeft: document.querySelector('.pane-left'),
+  flexAgents: document.querySelector('.flex-agents'),
+  resizerAgentsLocks: document.getElementById('resizer-agents-locks'),
+  resizerSessionsSplit: document.getElementById('resizer-sessions-split'),
 
   // View 2: Stream & Logs
   dialogueCounter: document.getElementById('dialogue-counter'),
   dialogueStream: document.getElementById('dialogue-stream'),
   milestonesCounter: document.getElementById('milestones-counter'),
   milestonesContainer: document.getElementById('milestones-container'),
+  resizerDialogueMilestones: document.getElementById('resizer-dialogue-milestones'),
 
   // View 3: Routing & Conflict Map (会话路由与走廊网关)
   tabRouting: document.getElementById('tab-routing'),
@@ -159,9 +228,12 @@ const dom = {
   hubMeterQueue: document.getElementById('hub-meter-queue'),
   routingTargetsContainer: document.getElementById('routing-targets-container'),
   badgeTargetsCount: document.getElementById('badge-targets-count'),
+  routingDecisionsPanel: document.getElementById('routing-decisions-panel'),
   routingDecisionsStream: document.getElementById('routing-decisions-stream'),
   decisionsCountBadge: document.getElementById('decisions-count-badge'),
-  decisionsFilterBtns: document.querySelectorAll('.d-filter-btn')
+  decisionsFilterBtns: document.querySelectorAll('.d-filter-btn'),
+  btnToggleDecisions: document.getElementById('btn-toggle-decisions'),
+  resizerRoutingDecisions: document.getElementById('resizer-routing-decisions')
 };
 
 // =============================================================================
@@ -220,6 +292,7 @@ function switchView(viewName) {
     fetchMilestones();
   } else if (viewName === 'routing') {
     fetchRoutingTopology();
+    setTimeout(() => requestAnimationFrame(drawRoutingConnectors), 60);
   } else {
     fetchDashboard();
   }
@@ -431,6 +504,7 @@ function renderDashboardSnapshot(data) {
   const activeClaims = data.activeClaims || [];
   const timeline = data.timeline || [];
 
+  updateGlobalAgentRegistry(agents, activeClaims, timeline);
   currentTimelineData = timeline;
 
   // 1. 统计计算
@@ -607,7 +681,8 @@ function renderActiveLocks(claims, agents) {
   const now = Date.now();
   dom.locksContainer.innerHTML = claims.map(c => {
     const holder = (agents || []).find(a => a.id === c.agent_id);
-    const holderName = escapeHtml(holder ? formatAgentDisplayName(holder.name, holder.id) : c.agent_id);
+    const resolvedHolder = resolveAgentName(c.agent_id, c.agent_name || holder?.name);
+    const holderName = escapeHtml(resolvedHolder);
     const shortTarget = escapeHtml(c.claim_target.split(/[\/\\]/).pop());
     const fullTarget = escapeHtml(c.claim_target);
     const remainingSec = Math.max(0, Math.ceil((c.expires_at - now) / 1000));
@@ -617,7 +692,7 @@ function renderActiveLocks(claims, agents) {
       <div class="lock-card-item">
         <div class="lock-target-info">
           <span class="lock-target-name" title="${fullTarget}">${shortTarget}</span>
-          <span class="lock-holder-desc">${holderName} · 剩余 ${remainingSec}s</span>
+          <span class="lock-holder-desc"><strong class="holder-name" title="完整会话标识: ${escapeHtml(c.agent_id)}">${holderName}</strong> · 剩余 ${remainingSec}s</span>
         </div>
         <div class="lock-actions">
           ${leaseId ? `<button class="btn-release-sm" onclick="releaseLock('${leaseId}', '${escapeHtml(c.agent_id)}')">释放</button>` : ''}
@@ -849,6 +924,11 @@ function computeSafeCorridors(activeClaims, resourceLocks, topology) {
 
 function formatShortAgent(agentId) {
   if (!agentId) return '未知会话';
+  if (agentId === 'system' || agentId === 'nexus') return 'Nexus 协调器';
+  const resolved = resolveAgentName(agentId);
+  if (resolved && !isMechanicalAgentName(resolved)) {
+    return resolved;
+  }
   const str = String(agentId);
   if (str.startsWith('claude-')) {
     const rest = str.slice(7);
@@ -895,6 +975,8 @@ function renderRoutingDiagram(cockpitData) {
   const waitQueue = cockpitData.lockContention?.waitQueue || dashboard.waitQueue || [];
   const timeline = dashboard.recentTimeline || dashboard.timeline || [];
 
+  updateGlobalAgentRegistry(rawAgents, activeClaims, timeline);
+
   // 过滤离线僵尸会话
   const validAgents = [];
   for (const a of rawAgents) {
@@ -928,7 +1010,8 @@ function renderRoutingDiagram(cockpitData) {
     } else {
       dom.routingSessionsContainer.innerHTML = validAgents.map(a => {
         const idSafe = escapeHtml(a.id);
-        const nameSafe = escapeHtml(a.name || a.id);
+        const resolvedName = resolveAgentName(a.id, a.name);
+        const nameSafe = escapeHtml(resolvedName);
         const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude' : (a.id.includes('codex') ? 'Codex' : 'AI Agent')));
         const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命中 · 监听工作区变更' : '执行任务中'));
         const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'idle'));
@@ -983,7 +1066,8 @@ function renderRoutingDiagram(cockpitData) {
         const pathSafe = escapeHtml(rawPath);
         const pathInfo = splitPathForDisplay(rawPath);
         const agentSafe = escapeHtml(c.agent_id);
-        const shortAgent = escapeHtml(formatShortAgent(c.agent_id));
+        const resolvedHolder = resolveAgentName(c.agent_id, c.agent_name);
+        const holderDisplay = escapeHtml(resolvedHolder);
         const now = Date.now();
         const remainingSec = c.expires_at ? Math.max(0, Math.ceil((c.expires_at - now) / 1000)) : 300;
         const resKey = `res:file:${pathSafe}`;
@@ -1004,7 +1088,7 @@ function renderRoutingDiagram(cockpitData) {
               <span class="target-status-badge badge-locked">LOCKED</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder">由 <strong class="holder-mono" title="完整会话: ${agentSafe}">${shortAgent}</strong> 独占</span>
+              <span class="target-holder">由 <strong class="holder-name" title="完整会话标识: ${agentSafe}">${holderDisplay}</strong> 独占</span>
               <span class="target-ttl-badge">~${remainingSec}s TTL</span>
             </div>
           </div>
@@ -1019,7 +1103,8 @@ function renderRoutingDiagram(cockpitData) {
         const rawName = l.resource_name || l.name;
         const nameSafe = escapeHtml(rawName);
         const agentSafe = escapeHtml(l.agent_id);
-        const shortAgent = escapeHtml(formatShortAgent(l.agent_id));
+        const resolvedHolder = resolveAgentName(l.agent_id, l.agent_name);
+        const holderDisplay = escapeHtml(resolvedHolder);
         const resKey = `res:resource:${nameSafe}`;
 
         targetsHtml += `
@@ -1038,7 +1123,7 @@ function renderRoutingDiagram(cockpitData) {
               <span class="target-status-badge badge-exclusive">EXCLUSIVE</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder">由 <strong class="holder-mono" title="完整会话: ${agentSafe}">${shortAgent}</strong> 持有</span>
+              <span class="target-holder">由 <strong class="holder-name" title="完整会话标识: ${agentSafe}">${holderDisplay}</strong> 持有</span>
               <span class="target-hook-badge">PostToolUse 释放</span>
             </div>
           </div>
@@ -1110,47 +1195,54 @@ function drawRoutingConnectors() {
   const hubLeftX = hubRect.left - wrapperRect.left;
   const hubRightX = hubRect.right - wrapperRect.left;
 
-  const sessionCards = dom.routingSessionsContainer?.querySelectorAll('.session-route-card') || [];
-  const targetCards = dom.routingTargetsContainer?.querySelectorAll('.target-route-card') || [];
+  const sessionCards = Array.from(dom.routingSessionsContainer?.querySelectorAll('.session-route-card') || []);
+  const targetCards = Array.from(dom.routingTargetsContainer?.querySelectorAll('.target-route-card') || []);
 
   let svgHtml = '';
 
-  // 1. Sessions -> Nexus Hub 连线
-  sessionCards.forEach((card) => {
+  const hubTopY = hubRect.top - wrapperRect.top + 24;
+  const hubBottomY = hubRect.bottom - wrapperRect.top - 24;
+  const hubAvailH = Math.max(30, hubBottomY - hubTopY);
+
+  // 1. Sessions -> Nexus Hub 连线 (阶梯式进站导轨，彻底消除同点重合)
+  sessionCards.forEach((card, idx) => {
     const sRect = card.getBoundingClientRect();
     const x1 = sRect.right - wrapperRect.left;
     const y1 = sRect.top - wrapperRect.top + sRect.height / 2;
 
-    // 平滑贴合中枢侧边锚点，避免生硬折角或扎堆
-    const y2 = Math.max(hubRect.top - wrapperRect.top + 24, Math.min(hubRect.bottom - wrapperRect.top - 24, y1));
+    const sStep = sessionCards.length > 1 ? hubAvailH / (sessionCards.length - 1) : 0;
+    const y2 = sessionCards.length > 1 ? (hubTopY + idx * sStep) : (hubTopY + hubAvailH / 2);
     const x2 = hubLeftX;
 
-    const dx = Math.max(35, (x2 - x1) * 0.45);
+    const span = Math.max(35, x2 - x1);
+    const dx = span * 0.45;
     const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
     const sessionId = card.dataset.sessionId || '';
     const isWorking = card.classList.contains('state-working');
     const isWaiting = card.classList.contains('state-waiting');
 
-    let lineClass = 'route-path route-idle';
-    if (isWorking) lineClass = 'route-path route-active';
-    else if (isWaiting) lineClass = 'route-path route-waiting';
+    let lineClass = 'route-path route-session-line route-idle';
+    if (isWorking) lineClass = 'route-path route-session-line route-active';
+    else if (isWaiting) lineClass = 'route-path route-session-line route-waiting';
 
     svgHtml += `
       <path d="${d}" class="${lineClass}" data-from-session="${escapeHtml(sessionId)}" data-edge-type="session-hub" />
     `;
   });
 
-  // 2. Nexus Hub -> Target Files / Corridors 连线
-  targetCards.forEach((card) => {
+  // 2. Nexus Hub -> Target Files / Corridors 连线 (阶梯式出站导轨，彻底消除汇聚重合)
+  targetCards.forEach((card, idx) => {
     const tRect = card.getBoundingClientRect();
     const x2 = tRect.left - wrapperRect.left;
     const y2 = tRect.top - wrapperRect.top + tRect.height / 2;
 
-    const y1 = Math.max(hubRect.top - wrapperRect.top + 24, Math.min(hubRect.bottom - wrapperRect.top - 24, y2));
+    const tStep = targetCards.length > 1 ? hubAvailH / (targetCards.length - 1) : 0;
+    const y1 = targetCards.length > 1 ? (hubTopY + idx * tStep) : (hubTopY + hubAvailH / 2);
     const x1 = hubRightX;
 
-    const dx = Math.max(35, (x2 - x1) * 0.45);
+    const span = Math.max(45, x2 - x1);
+    const dx = span * 0.48;
     const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
     const targetId = card.dataset.targetId || '';
@@ -1158,11 +1250,11 @@ function drawRoutingConnectors() {
     const isCorridor = card.classList.contains('type-corridor');
     const isFile = card.classList.contains('type-file');
 
-    let lineClass = 'route-path route-idle';
+    let lineClass = 'route-path route-target-line route-idle';
     if (isCorridor) {
-      lineClass = 'route-path route-corridor';
+      lineClass = 'route-path route-target-line route-corridor';
     } else if (isFile || card.classList.contains('type-lock')) {
-      lineClass = 'route-path route-active';
+      lineClass = 'route-path route-target-line route-active';
     }
 
     svgHtml += `
@@ -1263,7 +1355,8 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
     const type = item.type || '';
     const desc = item.description || item.detail || '';
     const agent = item.agent_id || 'system';
-    const shortAgent = formatShortAgent(agent);
+    const resolvedAgent = resolveAgentName(agent, item.agent_name);
+    const agentDisplay = escapeHtml(resolvedAgent);
     const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
 
     if (type.includes('grant') || type.includes('claim') || desc.includes('拿到租约') || desc.includes('声明')) {
@@ -1271,7 +1364,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
         type: 'grant',
         time,
         badge: 'GRANT 授权',
-        title: `独占租约授予: 会话 <strong title="${escapeHtml(agent)}">${escapeHtml(shortAgent)}</strong>`,
+        title: `独占租约授予: 会话 <strong class="decision-agent" title="完整会话标识: ${escapeHtml(agent)}">${agentDisplay}</strong>`,
         detail: escapeHtml(desc || '零冲突快速放行，写入租约已下发')
       });
     } else if (type.includes('conflict') || type.includes('intercept') || desc.includes('冲突') || desc.includes('拦截') || desc.includes('WAITING')) {
@@ -1279,7 +1372,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
         type: 'intercept',
         time,
         badge: 'INTERCEPT 拦截',
-        title: `并发写入拦截: 会话 <strong title="${escapeHtml(agent)}">${escapeHtml(shortAgent)}</strong>`,
+        title: `并发写入拦截: 会话 <strong class="decision-agent" title="完整会话标识: ${escapeHtml(agent)}">${agentDisplay}</strong>`,
         detail: escapeHtml(desc || '检测到文件写冲突，已安全挂起至排队队列')
       });
     } else if (type.includes('freed') || type.includes('release') || desc.includes('释放') || desc.includes('PostToolUse')) {
@@ -1287,7 +1380,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
         type: 'release',
         time,
         badge: 'RELEASE 释放',
-        title: `毫秒级租约释放: 会话 <strong title="${escapeHtml(agent)}">${escapeHtml(shortAgent)}</strong>`,
+        title: `毫秒级租约释放: 会话 <strong class="decision-agent" title="完整会话标识: ${escapeHtml(agent)}">${agentDisplay}</strong>`,
         detail: escapeHtml(desc || 'PostToolUse 触发毫秒级锁回收，并自动唤醒队首排队者')
       });
     }
@@ -1297,12 +1390,13 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
     if ((activeClaims || []).length > 0) {
       activeClaims.forEach(c => {
         const pathInfo = splitPathForDisplay(c.claim_target || c.path);
-        const shortAgent = formatShortAgent(c.agent_id);
+        const resolvedAgent = resolveAgentName(c.agent_id, c.agent_name);
+        const agentDisplay = escapeHtml(resolvedAgent);
         decisions.push({
           type: 'grant',
           time: new Date().toLocaleTimeString(),
           badge: 'GRANT 授权',
-          title: `当前活跃独占租约: <strong title="${escapeHtml(c.agent_id)}">${escapeHtml(shortAgent)}</strong>`,
+          title: `当前活跃独占租约: <strong class="decision-agent" title="完整会话标识: ${escapeHtml(c.agent_id)}">${agentDisplay}</strong>`,
           detail: `锁定目标 <code>${escapeHtml(pathInfo.name)}</code> <span class="decision-path-dir">${escapeHtml(pathInfo.dir)}</span> · 滑动窗口 TTL 续期中`
         });
       });
@@ -1310,12 +1404,13 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue, safeCorridors
     if ((waitQueue || []).length > 0) {
       waitQueue.forEach(w => {
         const pathInfo = splitPathForDisplay(w.target || '');
-        const shortAgent = formatShortAgent(w.agent_id);
+        const resolvedAgent = resolveAgentName(w.agent_id, w.agent_name);
+        const agentDisplay = escapeHtml(resolvedAgent);
         decisions.push({
           type: 'intercept',
           time: new Date().toLocaleTimeString(),
           badge: 'INTERCEPT 拦截',
-          title: `排队避障中: <strong title="${escapeHtml(w.agent_id)}">${escapeHtml(shortAgent)}</strong>`,
+          title: `排队避障中: <strong class="decision-agent" title="完整会话标识: ${escapeHtml(w.agent_id)}">${agentDisplay}</strong>`,
           detail: `目标 <code>${escapeHtml(pathInfo.name)}</code> 受保护 · 等待当前持有者释放`
         });
       });
@@ -1387,6 +1482,264 @@ window.addEventListener('resize', () => {
     requestAnimationFrame(drawRoutingConnectors);
   }
 });
+
+if (dom.routingTargetsContainer) {
+  dom.routingTargetsContainer.addEventListener('scroll', () => {
+    if (dom.viewRouting?.classList.contains('active')) {
+      requestAnimationFrame(drawRoutingConnectors);
+    }
+  });
+}
+if (dom.routingSessionsContainer) {
+  dom.routingSessionsContainer.addEventListener('scroll', () => {
+    if (dom.viewRouting?.classList.contains('active')) {
+      requestAnimationFrame(drawRoutingConnectors);
+    }
+  });
+}
+
+// =============================================================================
+// Panel Split-Resizers & Dynamic Layout Manager (多模块可拖拽缩放与折叠管理)
+// =============================================================================
+function setupPanelResizers() {
+  // 1. View 3: 底部裁决决策面板纵向拖拽与折叠 (#resizer-routing-decisions)
+  const resizerDecisions = dom.resizerRoutingDecisions;
+  const decisionsPanel = dom.routingDecisionsPanel;
+  const toggleBtn = dom.btnToggleDecisions;
+  const routingPanelCard = document.querySelector('.routing-panel-card');
+
+  const savedDecisionsHeight = localStorage.getItem('nexus_routing_decisions_height');
+  if (savedDecisionsHeight && decisionsPanel) {
+    document.documentElement.style.setProperty('--routing-decisions-height', savedDecisionsHeight);
+  }
+  const savedDecisionsCollapsed = localStorage.getItem('nexus_routing_decisions_collapsed');
+  if (savedDecisionsCollapsed === 'true' && decisionsPanel) {
+    decisionsPanel.classList.add('is-collapsed');
+  }
+
+  function toggleDecisionsPanel() {
+    if (!decisionsPanel) return;
+    const isCollapsed = decisionsPanel.classList.toggle('is-collapsed');
+    localStorage.setItem('nexus_routing_decisions_collapsed', isCollapsed ? 'true' : 'false');
+    requestAnimationFrame(drawRoutingConnectors);
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDecisionsPanel();
+    });
+  }
+
+  if (resizerDecisions && decisionsPanel && routingPanelCard) {
+    resizerDecisions.addEventListener('dblclick', () => {
+      toggleDecisionsPanel();
+    });
+
+    const onPointerDown = (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = decisionsPanel.getBoundingClientRect().height;
+      decisionsPanel.classList.remove('is-collapsed');
+      decisionsPanel.classList.add('is-dragging');
+      resizerDecisions.classList.add('is-dragging');
+      document.body.classList.add('resizing-row');
+      resizerDecisions.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (moveEvt) => {
+        const delta = startY - moveEvt.clientY; // 往上拉增大高度
+        const containerH = routingPanelCard.getBoundingClientRect().height;
+        const minH = 38;
+        const maxH = Math.max(140, containerH - 160);
+        const newH = Math.min(maxH, Math.max(minH, startH + delta));
+        document.documentElement.style.setProperty('--routing-decisions-height', `${Math.round(newH)}px`);
+        requestAnimationFrame(drawRoutingConnectors);
+      };
+
+      const onPointerUp = (upEvt) => {
+        resizerDecisions.releasePointerCapture(upEvt.pointerId);
+        resizerDecisions.removeEventListener('pointermove', onPointerMove);
+        resizerDecisions.removeEventListener('pointerup', onPointerUp);
+        resizerDecisions.removeEventListener('pointercancel', onPointerUp);
+        decisionsPanel.classList.remove('is-dragging');
+        resizerDecisions.classList.remove('is-dragging');
+        document.body.classList.remove('resizing-row');
+
+        const finalH = decisionsPanel.getBoundingClientRect().height;
+        if (finalH <= 45) {
+          decisionsPanel.classList.add('is-collapsed');
+          localStorage.setItem('nexus_routing_decisions_collapsed', 'true');
+        } else {
+          localStorage.setItem('nexus_routing_decisions_collapsed', 'false');
+          localStorage.setItem('nexus_routing_decisions_height', `${Math.round(finalH)}px`);
+        }
+        requestAnimationFrame(drawRoutingConnectors);
+      };
+
+      resizerDecisions.addEventListener('pointermove', onPointerMove);
+      resizerDecisions.addEventListener('pointerup', onPointerUp);
+      resizerDecisions.addEventListener('pointercancel', onPointerUp);
+    };
+
+    resizerDecisions.addEventListener('pointerdown', onPointerDown);
+  }
+
+  // 2. View 1: 会话列表与独占锁分割条 (#resizer-agents-locks)
+  const resizerAgentsLocks = dom.resizerAgentsLocks;
+  const paneLeft = dom.paneLeft;
+  const flexAgents = dom.flexAgents;
+
+  const savedAgentsH = localStorage.getItem('nexus_agents_section_height');
+  if (savedAgentsH) {
+    document.documentElement.style.setProperty('--agents-section-height', savedAgentsH);
+  }
+
+  if (resizerAgentsLocks && paneLeft && flexAgents) {
+    resizerAgentsLocks.addEventListener('dblclick', () => {
+      document.documentElement.style.setProperty('--agents-section-height', '52%');
+      localStorage.removeItem('nexus_agents_section_height');
+    });
+
+    resizerAgentsLocks.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = flexAgents.getBoundingClientRect().height;
+      const containerH = paneLeft.getBoundingClientRect().height;
+      resizerAgentsLocks.classList.add('is-dragging');
+      document.body.classList.add('resizing-row');
+      resizerAgentsLocks.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (mEvt) => {
+        const delta = mEvt.clientY - startY;
+        const minH = 110;
+        const maxH = containerH - 110;
+        const newH = Math.min(maxH, Math.max(minH, startH + delta));
+        const pct = Math.round((newH / containerH) * 100);
+        document.documentElement.style.setProperty('--agents-section-height', `${pct}%`);
+      };
+
+      const onPointerUp = (uEvt) => {
+        resizerAgentsLocks.releasePointerCapture(uEvt.pointerId);
+        resizerAgentsLocks.removeEventListener('pointermove', onPointerMove);
+        resizerAgentsLocks.removeEventListener('pointerup', onPointerUp);
+        resizerAgentsLocks.removeEventListener('pointercancel', onPointerUp);
+        resizerAgentsLocks.classList.remove('is-dragging');
+        document.body.classList.remove('resizing-row');
+        const finalPct = document.documentElement.style.getPropertyValue('--agents-section-height');
+        if (finalPct) localStorage.setItem('nexus_agents_section_height', finalPct);
+      };
+
+      resizerAgentsLocks.addEventListener('pointermove', onPointerMove);
+      resizerAgentsLocks.addEventListener('pointerup', onPointerUp);
+      resizerAgentsLocks.addEventListener('pointercancel', onPointerUp);
+    });
+  }
+
+  // 3. View 1: 左右两栏横向分割条 (#resizer-sessions-split)
+  const resizerSessionsSplit = dom.resizerSessionsSplit;
+  const splitLayout = document.querySelector('.split-layout');
+
+  const savedSessionsW = localStorage.getItem('nexus_sessions_left_width');
+  if (savedSessionsW) {
+    document.documentElement.style.setProperty('--sessions-left-width', savedSessionsW);
+  }
+
+  if (resizerSessionsSplit && splitLayout && paneLeft) {
+    resizerSessionsSplit.addEventListener('dblclick', () => {
+      document.documentElement.style.setProperty('--sessions-left-width', '56%');
+      localStorage.removeItem('nexus_sessions_left_width');
+    });
+
+    resizerSessionsSplit.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = paneLeft.getBoundingClientRect().width;
+      const containerW = splitLayout.getBoundingClientRect().width;
+      resizerSessionsSplit.classList.add('is-dragging');
+      document.body.classList.add('resizing-col');
+      resizerSessionsSplit.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (mEvt) => {
+        const delta = mEvt.clientX - startX;
+        const minW = 260;
+        const maxW = containerW - 260;
+        const newW = Math.min(maxW, Math.max(minW, startW + delta));
+        const pct = Math.round((newW / containerW) * 100);
+        document.documentElement.style.setProperty('--sessions-left-width', `${pct}%`);
+      };
+
+      const onPointerUp = (uEvt) => {
+        resizerSessionsSplit.releasePointerCapture(uEvt.pointerId);
+        resizerSessionsSplit.removeEventListener('pointermove', onPointerMove);
+        resizerSessionsSplit.removeEventListener('pointerup', onPointerUp);
+        resizerSessionsSplit.removeEventListener('pointercancel', onPointerUp);
+        resizerSessionsSplit.classList.remove('is-dragging');
+        document.body.classList.remove('resizing-col');
+        const finalPct = document.documentElement.style.getPropertyValue('--sessions-left-width');
+        if (finalPct) localStorage.setItem('nexus_sessions_left_width', finalPct);
+      };
+
+      resizerSessionsSplit.addEventListener('pointermove', onPointerMove);
+      resizerSessionsSplit.addEventListener('pointerup', onPointerUp);
+      resizerSessionsSplit.addEventListener('pointercancel', onPointerUp);
+    });
+  }
+
+  // 4. View 2: 对话与里程碑垂直分割条 (#resizer-dialogue-milestones)
+  const resizerDialogue = dom.resizerDialogueMilestones;
+  const sectionDialogue = document.getElementById('section-dialogue');
+  const splitVLayout = document.querySelector('.split-v-layout');
+
+  const savedDialogueH = localStorage.getItem('nexus_dialogue_section_height');
+  if (savedDialogueH) {
+    document.documentElement.style.setProperty('--dialogue-section-height', savedDialogueH);
+  }
+
+  if (resizerDialogue && sectionDialogue && splitVLayout) {
+    resizerDialogue.addEventListener('dblclick', () => {
+      document.documentElement.style.setProperty('--dialogue-section-height', '50%');
+      localStorage.removeItem('nexus_dialogue_section_height');
+    });
+
+    resizerDialogue.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = sectionDialogue.getBoundingClientRect().height;
+      const containerH = splitVLayout.getBoundingClientRect().height;
+      resizerDialogue.classList.add('is-dragging');
+      document.body.classList.add('resizing-row');
+      resizerDialogue.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (mEvt) => {
+        const delta = mEvt.clientY - startY;
+        const minH = 110;
+        const maxH = containerH - 110;
+        const newH = Math.min(maxH, Math.max(minH, startH + delta));
+        const pct = Math.round((newH / containerH) * 100);
+        document.documentElement.style.setProperty('--dialogue-section-height', `${pct}%`);
+      };
+
+      const onPointerUp = (uEvt) => {
+        resizerDialogue.releasePointerCapture(uEvt.pointerId);
+        resizerDialogue.removeEventListener('pointermove', onPointerMove);
+        resizerDialogue.removeEventListener('pointerup', onPointerUp);
+        resizerDialogue.removeEventListener('pointercancel', onPointerUp);
+        resizerDialogue.classList.remove('is-dragging');
+        document.body.classList.remove('resizing-row');
+        const finalPct = document.documentElement.style.getPropertyValue('--dialogue-section-height');
+        if (finalPct) localStorage.setItem('nexus_dialogue_section_height', finalPct);
+      };
+
+      resizerDialogue.addEventListener('pointermove', onPointerMove);
+      resizerDialogue.addEventListener('pointerup', onPointerUp);
+      resizerDialogue.addEventListener('pointercancel', onPointerUp);
+    });
+  }
+}
 
 // Master Broadcast 发送
 if (dom.masterBroadcastBtn) {
@@ -1557,6 +1910,8 @@ function connectWebSocket() {
 // =============================================================================
 // Bootstrap Execution
 // =============================================================================
+setupPanelResizers();
+
 const initialView = new URLSearchParams(location.search).get('view') || new URLSearchParams(location.search).get('tab');
 if (initialView && ['sessions', 'timeline', 'routing'].includes(initialView)) {
   switchView(initialView);

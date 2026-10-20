@@ -46,6 +46,12 @@ async function main() {
 
   console.log('Capturing View 3 in Dark Theme (Agent-Nexus project)...');
   await capture(`http://127.0.0.1:4300/?token=${encodeURIComponent(token)}&project=${proj}&view=routing&theme=dark`, 'routing-view-dark.png');
+
+  console.log('Capturing View 1 (Sessions & Locks) in Dark Theme...');
+  await capture(`http://127.0.0.1:4300/?token=${encodeURIComponent(token)}&project=${proj}&view=sessions&theme=dark`, 'sessions-view-dark.png');
+
+  console.log('Capturing View 2 (Timeline & Logs) in Dark Theme...');
+  await capture(`http://127.0.0.1:4300/?token=${encodeURIComponent(token)}&project=${proj}&view=timeline&theme=dark`, 'timeline-view-dark.png');
 }
 
 main().catch(err => {

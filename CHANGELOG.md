@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-20 多模块自适应拖拽分割与阶梯路由走廊 (Adaptive Split Resizers & Staggered Routing v0.2.11)
+
+### 改了什么
+
+- **多模块自适应分割条与折叠管理 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - **底部决策自由拖拽与一键折叠**：在 View 3 底部裁决面板顶部新增纵向手柄条 `#resizer-routing-decisions`，支持自由拉大或收缩，并配备 `#btn-toggle-decisions` 一键折叠至 38px 紧凑状态栏（双击手柄亦可切换折叠），所有高度偏好自动同步至 `localStorage`；
+  - **View 1 / View 2 全模块响应式自适应**：在会话主面板注入横向拖拽条 `#resizer-sessions-split`（调整会话区与流动态占比）与纵向拖拽条 `#resizer-agents-locks`（调整在席助手与独占锁卡片占比）；在动态日志视图注入纵向拖拽条 `#resizer-dialogue-milestones`；
+  - **Pointer Events 稳定捕获与重置**：拖拽手柄采用 `setPointerCapture`，杜绝鼠标出界丢帧与文本误选，支持双击一键恢复黄金比例。
+- **路由走廊拓宽与阶梯式曲线出站 (Staggered Bezier Rail Geometry)**：
+  - **网格间隙拓宽**：将 `.routing-lanes` 列间隙由 14px 拓宽至 36px，并修复响应式媒体查询中的作用域闭合问题；
+  - **阶梯出站导轨**：重构 `drawRoutingConnectors` 几何算法，中枢出发端采用线性分步位移 (`y = hubTopY + idx * step`)，彻底消除多文件独占时贝塞尔曲线重合成斑马线的问题；
+  - **双向聚焦高亮增强**：鼠标悬停任意会话或目标卡片时，关联路径瞬间明亮发光流动并附加阴影光晕，无关线条自动半透明淡化。
+- **会话真名优先呈现与 Hash 脱敏 (Human-Readable Agent Names)**：
+  - 建立全局响应式会话注册表 `globalAgentMap` 与 `resolveAgentName` 解析管道；
+  - 资源独占卡片（Lane 3）、会话源卡片（Lane 1）、View 1 锁列表以及底部裁决日志中，彻底剥离原始机械 Hash 截断（如 `claude-e044939b`），全面优先呈现人类可读真名或任务语义（如 `由 前端设计对比度与完成度 独占` 或 `由 Worker 助手 独占`），完整技术 ID 仅保留于 hover 浮层中。
+- **版本递增与发版归档**：
+  - 同步全工程版本至 `v0.2.11`。
+
+### 验证
+
+- **全量测试套件验证**：`node --test "test/**/*.test.js"` 全量 249 项测试通过；
+- **真机多视图无头捕获验证**：完成 View 1、View 2、View 3（Light/Dark 主题）全量真机渲染验证。
+
+---
+
 ## 2026-10-20 会话路由网关与动态资源走廊图重构 (Session Routing & Conflict Map v0.2.10)
 
 ### 改了什么
