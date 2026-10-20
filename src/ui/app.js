@@ -222,10 +222,8 @@ const dom = {
   routingSessionsContainer: document.getElementById('routing-sessions-container'),
   badgeSessionsCount: document.getElementById('badge-sessions-count'),
   nexusHubCard: document.getElementById('nexus-hub-card'),
-  hubMeterIntercepts: document.getElementById('hub-meter-intercepts'),
-  hubMeterLatency: document.getElementById('hub-meter-latency'),
-  hubMeterTtl: document.getElementById('hub-meter-ttl'),
-  hubMeterQueue: document.getElementById('hub-meter-queue'),
+  hubStatusText: document.getElementById('hub-status-text'),
+  hubStatusDot: document.getElementById('hub-status-dot'),
   routingTargetsContainer: document.getElementById('routing-targets-container'),
   badgeTargetsCount: document.getElementById('badge-targets-count'),
   routingDecisionsPanel: document.getElementById('routing-decisions-panel'),
@@ -994,14 +992,22 @@ function renderRoutingDiagram(cockpitData) {
   }
   if (dom.badgeSessionsCount) dom.badgeSessionsCount.textContent = validAgents.length;
 
-  // 2. Nexus 中枢仪表盘更新
-  if (dom.hubMeterIntercepts) {
-    const intercepts = waitQueue.length + timeline.filter(t => t.type === 'conflict' || t.type === 'intercept').length;
-    dom.hubMeterIntercepts.textContent = intercepts;
+  // 2. Nexus 中枢实时状态更新 (去除假数据与硬编码，真实响应排队与施工状态)
+  if (dom.hubStatusText) {
+    if (waitQueue.length > 0) {
+      dom.hubStatusText.textContent = `冲突排队避让中 (${waitQueue.length} 处)`;
+      dom.hubStatusDot?.classList.add('dot-waiting');
+      dom.nexusHubCard?.classList.add('hub-state-waiting');
+    } else if (activeClaims.length > 0 || resourceLocks.length > 0) {
+      dom.hubStatusText.textContent = '实时并发仲裁中 · 通道畅通';
+      dom.hubStatusDot?.classList.remove('dot-waiting');
+      dom.nexusHubCard?.classList.remove('hub-state-waiting');
+    } else {
+      dom.hubStatusText.textContent = '并发仲裁就绪 · 零碰撞保驾';
+      dom.hubStatusDot?.classList.remove('dot-waiting');
+      dom.nexusHubCard?.classList.remove('hub-state-waiting');
+    }
   }
-  if (dom.hubMeterLatency) dom.hubMeterLatency.textContent = '12ms';
-  if (dom.hubMeterTtl) dom.hubMeterTtl.textContent = '300s';
-  if (dom.hubMeterQueue) dom.hubMeterQueue.textContent = waitQueue.length;
 
   // 3. 渲染左侧 Lane 1: 会话源 (Sessions)
   if (dom.routingSessionsContainer) {
@@ -1200,9 +1206,9 @@ function drawRoutingConnectors() {
 
   let svgHtml = '';
 
-  const hubTopY = hubRect.top - wrapperRect.top + 24;
-  const hubBottomY = hubRect.bottom - wrapperRect.top - 24;
-  const hubAvailH = Math.max(30, hubBottomY - hubTopY);
+  const hubTopY = hubRect.top - wrapperRect.top + 16;
+  const hubBottomY = hubRect.bottom - wrapperRect.top - 16;
+  const hubAvailH = Math.max(20, hubBottomY - hubTopY);
 
   // 1. Sessions -> Nexus Hub 连线 (阶梯式进站导轨，彻底消除同点重合)
   sessionCards.forEach((card, idx) => {

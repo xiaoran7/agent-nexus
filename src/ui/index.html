@@ -329,13 +329,9 @@
               </div>
             </div>
 
-            <!-- Lane 2: Nexus 仲裁中枢 (Arbiter Hub) -->
+            <!-- Lane 2: Nexus 仲裁中枢浮动节点 (Arbiter Hub Floating Node) -->
             <div class="routing-lane lane-hub" id="lane-hub">
-              <div class="lane-header">
-                <span class="lane-title">Nexus 协同中枢 (Arbiter Hub)</span>
-                <span class="hub-status-pill">127.0.0.1:4300</span>
-              </div>
-              <div class="lane-content hub-content-wrap" id="routing-hub-container">
+              <div class="hub-content-wrap" id="routing-hub-container">
                 <div class="nexus-hub-card" id="nexus-hub-card">
                   <div class="hub-card-header">
                     <div class="hub-avatar">
@@ -344,52 +340,17 @@
                       </svg>
                     </div>
                     <div class="hub-info">
-                      <div class="hub-name">Nexus Arbiter Core</div>
+                      <div class="hub-title-row">
+                        <span class="hub-name">Nexus Arbiter Core</span>
+                        <span class="hub-status-pill">127.0.0.1:4300</span>
+                      </div>
                       <div class="hub-sub">零碰撞防撞网关 · CAS 租约引擎</div>
                     </div>
                   </div>
-                  <div class="hub-meters-grid">
-                    <div class="hub-meter">
-                      <span class="meter-label">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                        </svg>
-                        <span>冲突拦截</span>
-                      </span>
-                      <span class="meter-value" id="hub-meter-intercepts">0</span>
-                    </div>
-                    <div class="hub-meter">
-                      <span class="meter-label">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-                        </svg>
-                        <span>释放延迟</span>
-                      </span>
-                      <span class="meter-value" id="hub-meter-latency">12ms</span>
-                    </div>
-                    <div class="hub-meter">
-                      <span class="meter-label">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <circle cx="12" cy="12" r="10"></circle>
-                          <polyline points="12 6 12 12 16 14"></polyline>
-                        </svg>
-                        <span>心跳续约</span>
-                      </span>
-                      <span class="meter-value" id="hub-meter-ttl">300s</span>
-                    </div>
-                    <div class="hub-meter">
-                      <span class="meter-label">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <line x1="8" y1="6" x2="21" y2="6"></line>
-                          <line x1="8" y1="12" x2="21" y2="12"></line>
-                          <line x1="8" y1="18" x2="21" y2="18"></line>
-                          <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                          <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                          <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                        </svg>
-                        <span>排队等待</span>
-                      </span>
-                      <span class="meter-value" id="hub-meter-queue">0</span>
+                  <div class="hub-status-strip">
+                    <div class="hub-status-indicator">
+                      <span class="pulse-dot-sm" id="hub-status-dot"></span>
+                      <span id="hub-status-text">并发仲裁守护中 · 通道畅通</span>
                     </div>
                   </div>
                   <div class="hub-card-footer">

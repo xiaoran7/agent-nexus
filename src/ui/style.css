@@ -1748,25 +1748,34 @@ body.resizing-row {
   font-weight: 500;
 }
 
-/* Lane 2: Nexus 协同中枢卡片 (Arbiter Hub) */
+/* Lane 2: Nexus 协同中枢浮动节点 (Arbiter Hub Floating Node) */
+.routing-lane.lane-hub {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
 .hub-content-wrap {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: 12px 0;
 }
 
 .nexus-hub-card {
   width: 100%;
-  max-width: 270px;
+  max-width: 290px;
   margin: 0 auto;
   background: var(--hub-card-bg);
   border: 1px solid var(--hub-card-border);
   border-radius: var(--radius-md);
-  padding: 14px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 11px;
   box-shadow: var(--hub-card-shadow);
   position: relative;
   transition: all 0.25s var(--ease-smooth);
@@ -1802,58 +1811,73 @@ body.resizing-row {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
+}
+
+.hub-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .hub-name {
   font-size: 13px;
   font-weight: 800;
   color: var(--text-title);
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.hub-status-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--status-running);
+  background: var(--status-running-bg);
+  border: 1px solid var(--status-running-border);
+  padding: 1.5px 6px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
 }
 
 .hub-sub {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-muted);
   line-height: 1.3;
 }
 
-.hub-meters-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.hub-meter {
+.hub-status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
   background: var(--hub-meter-bg);
   border: 1px solid var(--hub-meter-border);
   border-radius: var(--radius-sm);
-  padding: 7px 9px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  box-shadow: var(--shadow-sm);
+  transition: all 0.2s var(--ease-smooth);
 }
 
-.meter-label {
+.hub-status-indicator {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
+  gap: 6px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-faint);
-}
-
-.meter-label svg {
-  color: var(--sky-primary);
-  flex-shrink: 0;
-}
-
-.meter-value {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 700;
   color: var(--text-title);
-  letter-spacing: 0.2px;
+}
+
+.hub-status-indicator .pulse-dot-sm {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-running);
+  box-shadow: 0 0 8px var(--status-running);
+}
+
+.hub-status-indicator .pulse-dot-sm.dot-waiting {
+  background: var(--status-waiting);
+  box-shadow: 0 0 8px var(--status-waiting);
 }
 
 .hub-card-footer {
@@ -1869,7 +1893,7 @@ body.resizing-row {
 .hub-hook-badge {
   font-size: 9.5px;
   font-weight: 600;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: var(--radius-pill);
 }
 
