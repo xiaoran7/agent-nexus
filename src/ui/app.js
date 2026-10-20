@@ -224,62 +224,88 @@ dom.segBtns.forEach(btn => {
 // =============================================================================
 function toggleBroadcastPopover(show) {
   if (!dom.broadcastPopover) return;
-  const isCurrentlyHidden = dom.broadcastPopover.hasAttribute('hidden');
+  const isCurrentlyHidden = dom.broadcastPopover.hasAttribute('hidden') || dom.broadcastPopover.style.display === 'none';
   const shouldShow = typeof show === 'boolean' ? show : isCurrentlyHidden;
 
   if (shouldShow) {
     dom.broadcastPopover.removeAttribute('hidden');
-    if (dom.leadAdvicePopover) dom.leadAdvicePopover.setAttribute('hidden', '');
-    dom.masterBroadcastInput?.focus();
+    dom.broadcastPopover.style.display = 'flex';
+    if (dom.leadAdvicePopover) {
+      dom.leadAdvicePopover.setAttribute('hidden', '');
+      dom.leadAdvicePopover.style.display = 'none';
+    }
+    setTimeout(() => dom.masterBroadcastInput?.focus(), 50);
   } else {
     dom.broadcastPopover.setAttribute('hidden', '');
+    dom.broadcastPopover.style.display = 'none';
   }
 }
 
 function toggleLeadPopover(show) {
   if (!dom.leadAdvicePopover) return;
-  const isCurrentlyHidden = dom.leadAdvicePopover.hasAttribute('hidden');
+  const isCurrentlyHidden = dom.leadAdvicePopover.hasAttribute('hidden') || dom.leadAdvicePopover.style.display === 'none';
   const shouldShow = typeof show === 'boolean' ? show : isCurrentlyHidden;
 
   if (shouldShow) {
     dom.leadAdvicePopover.removeAttribute('hidden');
-    if (dom.broadcastPopover) dom.broadcastPopover.setAttribute('hidden', '');
+    dom.leadAdvicePopover.style.display = 'flex';
+    if (dom.broadcastPopover) {
+      dom.broadcastPopover.setAttribute('hidden', '');
+      dom.broadcastPopover.style.display = 'none';
+    }
   } else {
     dom.leadAdvicePopover.setAttribute('hidden', '');
+    dom.leadAdvicePopover.style.display = 'none';
   }
 }
 
 if (dom.btnBroadcastToggle) {
-  dom.btnBroadcastToggle.onclick = (e) => {
+  dom.btnBroadcastToggle.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleBroadcastPopover();
-  };
+  });
 }
 
 if (dom.btnBroadcastClose) {
-  dom.btnBroadcastClose.onclick = () => toggleBroadcastPopover(false);
+  dom.btnBroadcastClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    toggleBroadcastPopover(false);
+  });
 }
 
 if (dom.leadStatusChip) {
-  dom.leadStatusChip.onclick = (e) => {
+  dom.leadStatusChip.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleLeadPopover();
-  };
+  });
 }
 
 if (dom.btnLeadClose) {
-  dom.btnLeadClose.onclick = () => toggleLeadPopover(false);
+  dom.btnLeadClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    toggleLeadPopover(false);
+  });
 }
+
+// 快捷键 ESC 退出弹窗
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    toggleBroadcastPopover(false);
+    toggleLeadPopover(false);
+  }
+});
 
 // 点击空白区域自动收起弹出气泡
 document.addEventListener('click', (e) => {
-  if (dom.broadcastPopover && !dom.broadcastPopover.hasAttribute('hidden')) {
-    if (!dom.broadcastPopover.contains(e.target) && !dom.btnBroadcastToggle.contains(e.target)) {
+  if (dom.broadcastPopover && !dom.broadcastPopover.hasAttribute('hidden') && dom.broadcastPopover.style.display !== 'none') {
+    if (!dom.broadcastPopover.contains(e.target) && !dom.btnBroadcastToggle?.contains(e.target)) {
       toggleBroadcastPopover(false);
     }
   }
-  if (dom.leadAdvicePopover && !dom.leadAdvicePopover.hasAttribute('hidden')) {
-    if (!dom.leadAdvicePopover.contains(e.target) && !dom.leadStatusChip.contains(e.target)) {
+  if (dom.leadAdvicePopover && !dom.leadAdvicePopover.hasAttribute('hidden') && dom.leadAdvicePopover.style.display !== 'none') {
+    if (!dom.leadAdvicePopover.contains(e.target) && !dom.leadStatusChip?.contains(e.target)) {
       toggleLeadPopover(false);
     }
   }

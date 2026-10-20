@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-20 弹窗关闭按钮交互修复与全尺寸自适应响应式重构 (Popover Close Fix & Multi-Tier Responsive Layout v0.2.9)
+
+### 改了什么
+
+- **浮动卡片关闭按钮点击失效根治 (`src/ui/style.css`, `src/ui/app.js`, `src/ui/index.html`)**：
+  - **CSS 优先级覆写缺陷修复**：`.lead-popover` 等类声明中的 `display: flex` 原本因 `(0,1,0)` 特异性压制了用户代理的 `[hidden]` 默认行为 `(0,0,0)`；通过追加全局最高优先级重置规则 `[hidden] { display: none !important; }` 与 `.broadcast-popover[hidden], .lead-popover[hidden] { display: none !important; }`，杜绝样式覆盖导致的显隐失控；
+  - **双重显隐防御保证**：在 `toggleBroadcastPopover` 与 `toggleLeadPopover` 中结合 `hasAttribute('hidden')` 与 inline `style.display = 'none' / 'flex'` 双重切换，并在关闭按钮点击中绑定 `e.stopPropagation()` 与 `e.preventDefault()` 阻止冒泡穿透；
+  - **点击命中穿透优化**：为 `.close-icon-btn svg` 增加 `pointer-events: none`，消除点击落在 SVG 子节点时事件目标捕获漂移问题；
+  - **新增 Esc 全局快捷键与无障碍标签**：支持按下键盘 `Escape` 键一键退出所有弹窗，为关闭按钮补齐 `title="关闭"` 与 `aria-label`。
+- **全尺寸全屏幕自适应弹性布局重构 (`src/ui/style.css`)**：
+  - **Root 弹性伸缩骨架**：`body` 明确采用 `display: flex; flex-direction: column;`，使 `.main-body` 与各视图面板的 `flex: 1; min-height: 0; min-width: 0;` 真正生效；
+  - **Grid & Flex 零尺寸收缩守则 (`min-width: 0; min-height: 0;`)**：针对所有面板容器、卡片标题、Agent 身份与锁定文件名全面应用，结合 `text-overflow: ellipsis` 彻底根除窄视口下的文本溢出与宽度撑爆；
+  - **多层级阶梯响应式断点 (`@media`)**：
+    - **宽屏与超宽屏 (>= 880px / >= 1100px)**：视图 2 (对话记录与演进里程碑) 自动升级为 `1.25fr 1fr` 双栏平铺网格，主屏比例微调；
+    - **平板与标准窗口 (<= 768px)**：顶栏状态折叠冗余文案仅保留呼吸脉冲圆点，微调工程选择器宽度与分段导航内边距，状态条紧凑展示；
+    - **高密伴侣态与窄窗口 (<= 640px)**：主视图 1 (会话与防撞) 智能折叠为单列上下双卡片，气泡弹窗宽度自适应约束为 `calc(100vw - 16px)`，备忘录新增工具栏自动折行，绝不遮挡；
+    - **极限窄视口 (<= 520px)**：导航胶囊仅保留纯图标，状态计数仅显示数字，确保在任意贴边分屏或微型窗口下均严整可用。
+
+### 验证
+
+- **单元与集成测试**：`node --test "test/**/*.test.js"` 全量 249 项测试通过；
+- **打包验证**：重新完成 `npm run package:win` 构建并归档至 `Deliverables/Agent-Nexus/`，成功拉起最新桌面程序，弹窗 X 按钮点击即时关闭、Esc 键盘响应瞬时生效，小窗口分屏与宽屏自适应平滑顺畅。
+
+---
+
 ## 2026-10-20 原生 PostToolUse 毫秒级资源释放、滑动窗口心跳续约与伴侣控制台重构 (PostToolUse Auto-Release, Sliding-Window TTL & Companion Console v0.2.8)
 
 ### 改了什么

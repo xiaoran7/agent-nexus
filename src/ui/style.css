@@ -178,6 +178,11 @@
   padding: 0;
 }
 
+/* 强制 [hidden] 属性最高优先级生效，不受任何后续 display:flex/grid 覆写 */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   width: 100%;
   height: 100%;
@@ -192,6 +197,11 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   user-select: none;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
 }
 
 /* 紧凑微调滚动条 */
@@ -215,6 +225,7 @@ html, body {
    ============================================================================= */
 .topbar {
   height: 46px;
+  min-height: 46px;
   padding: 0 14px;
   background: var(--header-bg);
   backdrop-filter: blur(14px);
@@ -227,6 +238,7 @@ html, body {
   position: relative;
   z-index: 40;
   box-shadow: var(--header-shadow);
+  flex-shrink: 0;
 }
 
 .topbar-left {
@@ -369,8 +381,11 @@ html, body {
   border-radius: var(--radius-sm);
   outline: none;
   max-width: 145px;
+  min-width: 70px;
   cursor: pointer;
   transition: all 0.2s var(--ease-smooth);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .proj-select:focus {
@@ -424,6 +439,7 @@ html, body {
    ============================================================================= */
 .status-ribbon {
   height: 34px;
+  min-height: 34px;
   padding: 0 14px;
   background: var(--card-subtle);
   border-bottom: 1px solid var(--border-subtle);
@@ -432,6 +448,7 @@ html, body {
   justify-content: space-between;
   gap: 10px;
   font-size: 11.5px;
+  flex-shrink: 0;
 }
 
 .ribbon-stats {
@@ -494,6 +511,8 @@ html, body {
 .lead-ticker-wrap {
   display: flex;
   align-items: center;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .lead-ticker-btn {
@@ -510,6 +529,13 @@ html, body {
   gap: 6px;
   cursor: pointer;
   transition: all 0.2s var(--ease-smooth);
+  max-width: 260px;
+}
+
+#lead-ticker-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lead-ticker-btn .lead-icon {
@@ -542,7 +568,8 @@ html, body {
   position: absolute;
   top: 48px;
   right: 14px;
-  width: 340px;
+  width: 360px;
+  max-width: calc(100vw - 28px);
   background: var(--popover-bg);
   border: 1px solid var(--popover-border);
   border-radius: var(--radius-lg);
@@ -554,6 +581,11 @@ html, body {
   flex-direction: column;
   overflow: hidden;
   animation: popoverFadeIn 0.18s var(--ease-smooth);
+}
+
+.broadcast-popover[hidden],
+.lead-popover[hidden] {
+  display: none !important;
 }
 
 @keyframes popoverFadeIn {
@@ -584,18 +616,27 @@ html, body {
   border: none;
   color: var(--text-faint);
   cursor: pointer;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--radius-xs);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.close-icon-btn svg {
+  pointer-events: none;
 }
 
 .close-icon-btn:hover {
   color: var(--text-title);
   background: var(--capsule-hover);
+}
+
+.close-icon-btn:active {
+  transform: scale(0.92);
 }
 
 .popover-body {
@@ -691,6 +732,7 @@ html, body {
 .main-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   position: relative;
   overflow: hidden;
 }
@@ -699,6 +741,8 @@ html, body {
   display: none;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
 .view-panel.active {
@@ -713,6 +757,8 @@ html, body {
   width: 100%;
   height: 100%;
   padding: 10px;
+  min-height: 0;
+  min-width: 0;
 }
 
 .pane-left {
@@ -721,6 +767,7 @@ html, body {
   gap: 10px;
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
 .pane-right {
@@ -728,6 +775,7 @@ html, body {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
 .flex-agents {
@@ -755,6 +803,8 @@ html, body {
   overflow: hidden;
   box-shadow: var(--shadow-sm);
   transition: border-color 0.2s var(--ease-smooth);
+  min-height: 0;
+  min-width: 0;
 }
 
 .panel-card:hover {
@@ -776,6 +826,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .panel-title {
@@ -783,17 +834,22 @@ html, body {
   font-weight: 600;
   color: var(--text-title);
   letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-meta {
   font-size: 11px;
   color: var(--text-faint);
   font-family: var(--font-mono);
+  flex-shrink: 0;
 }
 
 .scroll-container {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding: 8px;
   display: flex;
@@ -847,6 +903,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .agent-name-group {
@@ -854,6 +911,7 @@ html, body {
   align-items: center;
   gap: 7px;
   min-width: 0;
+  flex: 1;
 }
 
 .agent-status-badge {
@@ -894,6 +952,7 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .agent-runtime-tag {
@@ -969,6 +1028,7 @@ html, body {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .lock-target-name {
@@ -979,6 +1039,7 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .lock-holder-desc {
@@ -1213,10 +1274,20 @@ html, body {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.memory-title-group .panel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memory-search-wrap {
   width: 240px;
+  max-width: 240px;
+  min-width: 100px;
 }
 
 .search-input {
@@ -1242,6 +1313,8 @@ html, body {
   gap: 10px;
   padding: 10px;
   align-content: start;
+  min-height: 0;
+  min-width: 0;
 }
 
 .memory-card {
@@ -1414,4 +1487,182 @@ html, body {
 
 .btn-primary-sm:active {
   transform: scale(0.96);
+}
+
+/* =============================================================================
+   Responsive Design & Breakpoints (全屏幕全尺寸自适应)
+   ============================================================================= */
+
+/* 宽屏优化 (Widescreen >= 880px): 对话与里程碑双栏平铺 */
+@media (min-width: 880px) {
+  .split-v-layout {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 12px;
+  }
+}
+
+/* 超宽屏优化 (Widescreen >= 1100px): 间距微调与呼吸留白 */
+@media (min-width: 1100px) {
+  .split-layout {
+    grid-template-columns: 52% 48%;
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
+/* 平板与紧凑窗口 (<= 768px): 顶栏元素自适应折叠与紧凑胶囊 */
+@media (max-width: 768px) {
+  .topbar {
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .status-capsule .daemon-text {
+    display: none;
+  }
+
+  .status-capsule {
+    padding: 4px 6px;
+  }
+
+  .proj-select {
+    max-width: 110px;
+    font-size: 11px;
+    padding: 0 6px;
+  }
+
+  .nav-segmented {
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .seg-btn {
+    padding: 0 8px;
+    font-size: 11.5px;
+    gap: 4px;
+    height: 26px;
+  }
+
+  .status-ribbon {
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .stat-pill {
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+
+  .lead-ticker-btn {
+    max-width: 210px;
+    padding: 2px 8px;
+    font-size: 11px;
+  }
+
+  .split-layout {
+    padding: 8px;
+    gap: 8px;
+    grid-template-columns: 54% 46%;
+  }
+
+  .split-v-layout {
+    padding: 8px;
+    gap: 8px;
+  }
+}
+
+/* 窄窗口与高密伴侣态 (<= 640px) */
+@media (max-width: 640px) {
+  .topbar {
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  .brand-name {
+    font-size: 13px;
+  }
+
+  .proj-select {
+    max-width: 85px;
+  }
+
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .lead-ticker-btn {
+    max-width: 170px;
+  }
+
+  /* 窄屏下主面板切为上下双排，杜绝文字截断拥挤 */
+  .split-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .broadcast-popover,
+  .lead-popover {
+    top: 44px;
+    right: 8px;
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+  }
+
+  .memory-grid {
+    grid-template-columns: 1fr;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .memory-head {
+    padding: 0 10px;
+  }
+
+  .memory-title-group .panel-title {
+    font-size: 11.5px;
+  }
+
+  .memory-search-wrap {
+    max-width: 140px;
+  }
+
+  .memory-add-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .mini-select {
+    flex: 1 1 110px;
+  }
+
+  .mini-input {
+    flex: 1 1 110px;
+    width: auto;
+  }
+
+  .mini-input-wide {
+    flex: 2 1 180px;
+  }
+}
+
+/* 极限超窄窗口 / 手机屏 (<= 520px) */
+@media (max-width: 520px) {
+  .nav-segmented .seg-btn span {
+    display: none;
+  }
+
+  .nav-segmented .seg-btn {
+    padding: 0 7px;
+  }
+
+  .stat-pill .pill-label {
+    display: none;
+  }
+
+  .lead-ticker-btn {
+    max-width: 120px;
+  }
 }
