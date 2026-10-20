@@ -3,7 +3,22 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 
-const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+function findBrowserPath() {
+  const candidates = [
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+    path.join(process.env.LOCALAPPDATA || '', 'Microsoft/Edge/Application/msedge.exe'),
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    path.join(process.env.LOCALAPPDATA || '', 'Google/Chrome/Application/chrome.exe')
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  throw new Error('No Chromium-based browser (Edge/Chrome) found for icon rendering');
+}
+
+const BROWSER_PATH = findBrowserPath();
 const PORT = 9225;
 const ASSETS_DIR = path.resolve(__dirname, '..', 'desktop', 'assets');
 
@@ -126,7 +141,7 @@ async function main() {
     fs.mkdirSync(ASSETS_DIR, { recursive: true });
   }
 
-  const edge = spawn(EDGE_PATH, [
+  const edge = spawn(BROWSER_PATH, [
     '--headless=new',
     '--remote-debugging-port=' + PORT,
     '--disable-gpu',
@@ -184,6 +199,10 @@ async function main() {
 
   await send('Page.enable');
   await send('Runtime.enable');
+  // 核心关键：设置浏览器默认背景为 100% 纯透明（RGBA: 0, 0, 0, 0），防止 Chromium 填充默认不透明白色底板
+  await send('Emulation.setDefaultBackgroundColorOverride', {
+    color: { r: 0, g: 0, b: 0, a: 0 }
+  });
 
   async function renderToBuffer(svgContent, size) {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>* { margin: 0; padding: 0; box-sizing: border-box; } html, body { width: ${size}px; height: ${size}px; background: transparent; overflow: hidden; display: flex; align-items: center; justify-content: center; }</style></head><body>${svgContent}</body></html>`;
@@ -195,6 +214,10 @@ async function main() {
       deviceScaleFactor: 1,
       mobile: false
     });
+    // 每次导航前确保透明背景覆盖生效
+    await send('Emulation.setDefaultBackgroundColorOverride', {
+      color: { r: 0, g: 0, b: 0, a: 0 }
+    });
     await send('Page.navigate', { url: dataUrl });
     await delay(300);
 
@@ -202,7 +225,14 @@ async function main() {
       format: 'png',
       fromSurface: true
     });
-    return Buffer.from(shot.data, 'base64');
+    const buf = Buffer.from(shot.data, 'base64');
+
+    // 严格自检：检查 PNG 色彩类型（ColorType 必须为 6，即 RGBA 带透明 Alpha 通道）
+    if (buf[25] !== 6) {
+      console.warn(`[Warning] Generated image size ${size}x${size} is not RGBA (colorType=${buf[25]}). Transparency might be compromised!`);
+    }
+
+    return buf;
   }
 
   try {
