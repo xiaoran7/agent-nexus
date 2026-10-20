@@ -29,10 +29,18 @@ function makeHookGroup(hookCommand) {
   };
 }
 
+// PostToolUse 钩子：用于命令完成后的毫秒级排他资源释放（如 tests, dev-server, build）与 git 提交租约收尾
+function makePostHookGroup(hookCommand) {
+  return {
+    matcher: `Bash`,
+    hooks: [{ type: 'command', command: hookCommand, timeout: 5 }]
+  };
+}
+
 // 1. 注入 Claude Code
-export function installClaudeHook() {
+export function installClaudeHook(customClaudeDir = null) {
   const hookPath = assertHookScriptExists();
-  const claudeConfigDir = join(homedir(), '.claude');
+  const claudeConfigDir = customClaudeDir || join(homedir(), '.claude');
   mkdirSync(claudeConfigDir, { recursive: true });
   const settingsPath = join(claudeConfigDir, 'settings.json');
 
@@ -57,49 +65,75 @@ export function installClaudeHook() {
 
   settings.hooks = settings.hooks || {};
   settings.hooks.PreToolUse = settings.hooks.PreToolUse || [];
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse || [];
 
   if (!Array.isArray(settings.hooks.PreToolUse)) {
     throw new Error(`"hooks.PreToolUse" in ${settingsPath} is not an array; left untouched.`);
   }
+  if (!Array.isArray(settings.hooks.PostToolUse)) {
+    throw new Error(`"hooks.PostToolUse" in ${settingsPath} is not an array; left untouched.`);
+  }
 
   // 统一分隔符：Windows 上 JSON 里的反斜杠必须转义，否则写出的配置解析不了。
   const hookCommand = `node "${isAbsolute(hookPath) ? hookPath : resolve(hookPath)}"`;
+  const postHookCommand = `node "${isAbsolute(hookPath) ? hookPath : resolve(hookPath)}" --post`;
 
   // Claude Code 的 PreToolUse 是「matcher 分组 + 内嵌 hooks 处理器」的嵌套结构，
   // 不是命令字符串数组。写成 ["node ..."] 宿主根本不会执行它。
   // 同时兼容历史的字符串写法：已装过的旧配置升级成正确结构。
-  let installed = false;
-  let upgraded = false;
+  let preInstalled = false;
+  let preUpgraded = false;
   settings.hooks.PreToolUse = settings.hooks.PreToolUse.flatMap((group) => {
     if (typeof group === 'string') {
       if (!group.includes('nexus-hook.mjs')) return [group];
-      if (installed) return []; // 旧版会重复 push 同一路径，这里顺手去重
-      installed = true;
-      upgraded = true;
+      if (preInstalled) return []; // 旧版会重复 push 同一路径，这里顺手去重
+      preInstalled = true;
+      preUpgraded = true;
       return [makeHookGroup(hookCommand)];
     }
     // 已用正确结构装过：整组判定，不去动别人写的 matcher 分组。
-    if (installed) return [group];
+    if (preInstalled) return [group];
     const handlers = Array.isArray(group.hooks) ? group.hooks : [];
     if (!handlers.some((h) => h && typeof h.command === 'string' && h.command.includes('nexus-hook.mjs'))) {
       return [group];
     }
-    installed = true;
+    preInstalled = true;
     return [group];
   });
 
-  if (!installed) {
+  if (!preInstalled) {
     settings.hooks.PreToolUse.push(makeHookGroup(hookCommand));
+  }
+
+  // 配置 PostToolUse 钩子 (实现方案一：命令执行完后毫秒级释放资源锁与 git 租约)
+  let postInstalled = false;
+  let postUpgraded = false;
+  settings.hooks.PostToolUse = settings.hooks.PostToolUse.flatMap((group) => {
+    if (typeof group === 'string') {
+      if (!group.includes('nexus-hook.mjs')) return [group];
+      if (postInstalled) return [];
+      postInstalled = true;
+      postUpgraded = true;
+      return [makePostHookGroup(postHookCommand)];
+    }
+    if (postInstalled) return [group];
+    const handlers = Array.isArray(group.hooks) ? group.hooks : [];
+    if (!handlers.some((h) => h && typeof h.command === 'string' && h.command.includes('nexus-hook.mjs'))) {
+      return [group];
+    }
+    postInstalled = true;
+    return [group];
+  });
+
+  if (!postInstalled) {
+    settings.hooks.PostToolUse.push(makePostHookGroup(postHookCommand));
+  }
+
+  if (!preInstalled || preUpgraded || !postInstalled || postUpgraded) {
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-    console.log(`[Agent-Nexus] Successfully installed PreToolUse hook to Claude Code (${settingsPath})`);
-  } else if (upgraded) {
-    // 旧版写的是命令字符串数组，宿主不认；本次已就地升级成嵌套结构。
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-    console.log(
-      `[Agent-Nexus] Upgraded legacy PreToolUse hook entry to the matcher-group format in ${settingsPath}`
-    );
+    console.log(`[Agent-Nexus] Successfully installed PreToolUse and PostToolUse hooks to Claude Code (${settingsPath})`);
   } else {
-    console.log(`[Agent-Nexus] Claude Code hook already installed.`);
+    console.log(`[Agent-Nexus] Claude Code hooks already installed.`);
   }
 }
 

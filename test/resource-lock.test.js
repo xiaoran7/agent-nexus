@@ -172,4 +172,51 @@ test('命名资源锁与跨工作树碰撞协调 (Resource Locks & Cross-Worktre
 
     assert.equal(unlockRes.success, true);
   });
+
+  await t.test('touchAgentLeases: 动态滑动窗口心跳续期与上限截断 (Sliding-Window TTL)', () => {
+    // 1. Alice 声明租约 (初始 60s)
+    const intentRes = coordinator.declareIntent({
+      agentId: 'agent-alice',
+      intentSummary: 'Editing app.js',
+      claims: [{ type: 'file', target: 'src/app.js' }],
+      projectId: 'proj-ttl',
+      ttlSeconds: 60
+    });
+    assert.equal(intentRes.status, 'GRANTED');
+
+    // 2. 模拟租约仅剩 30 秒到期，通过 touchAgentLeases 滑动续期到 60 秒
+    const now = Date.now();
+    harness.db.prepare('UPDATE leases SET expires_at = ? WHERE id = ?').run(now + 30 * 1000, intentRes.leaseId);
+
+    const touchRes = coordinator.touchAgentLeases('agent-alice', 'proj-ttl', 60, 600);
+    assert.equal(touchRes.touchedCount, 1);
+
+    const leaseAfter = harness.db.prepare('SELECT expires_at FROM leases WHERE id = ?').get(intentRes.leaseId);
+    assert.ok(leaseAfter.expires_at >= now + 59 * 1000);
+
+    // 3. 较短的心跳不应倒退截断现有更长的租约 (不缩短原则)
+    const touchShort = coordinator.touchAgentLeases('agent-alice', 'proj-ttl', 20, 600);
+    assert.equal(touchShort.touchedCount, 0);
+
+    // 4. 测试 600s 最大生命周期保护天花板 (Cap ceiling)
+    const touchOverMax = coordinator.touchAgentLeases('agent-alice', 'proj-ttl', 1000, 600);
+    assert.equal(touchOverMax.touchedCount, 1);
+    const leaseMax = harness.db.prepare('SELECT created_at, expires_at FROM leases WHERE id = ?').get(intentRes.leaseId);
+    const maxAllowedExpiry = leaseMax.created_at + 600 * 1000;
+    assert.equal(leaseMax.expires_at, maxAllowedExpiry);
+
+    // 5. 遥测上报集成：recordTelemetry 自动触发滑动续期
+    const telemRes = coordinator.recordTelemetry({
+      agentId: 'agent-alice',
+      tool: 'Edit',
+      action: 'Edit app.js',
+      target: 'src/app.js',
+      projectId: 'proj-ttl'
+    });
+    assert.equal(telemRes.success, true);
+    assert.equal(typeof telemRes.touchedCount, 'number');
+
+    // 清理租约
+    coordinator.releaseLease(intentRes.leaseId, 'agent-alice');
+  });
 });

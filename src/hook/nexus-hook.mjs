@@ -261,6 +261,44 @@ function notifyGitRelease(payload) {
   });
 }
 
+function notifyResourceRelease(payload) {
+  return new Promise((resolvePromise) => {
+    const data = JSON.stringify(payload);
+    const req = request({
+      host: HOST,
+      port: PORT,
+      path: '/api/hook/resource-release',
+      method: 'POST',
+      family: 4,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+        ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
+      },
+      timeout: 1500,
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => buf += c);
+      res.on('end', () => {
+        try {
+          resolvePromise(JSON.parse(buf));
+        } catch {
+          resolvePromise({ success: true });
+        }
+      });
+    });
+
+    req.on('error', () => resolvePromise({ success: false, offline: true }));
+    req.on('timeout', () => {
+      req.destroy();
+      resolvePromise({ success: false, timeout: true });
+    });
+
+    req.write(data);
+    req.end();
+  });
+}
+
 function reportTelemetry(payload) {
   return new Promise((resolvePromise) => {
     try {
@@ -357,7 +395,43 @@ async function main() {
   const identity = resolveAgentIdentity(payload);
   const projectInfo = resolveProject(workspaceDir);
 
-  // 0. 上报实时工具调用态势与心跳活跃度 (非阻塞后台刷新)
+  // 0. PostToolUse 闭环处理：命令执行完毕后的毫秒级排他资源释放与提交收尾
+  const isPost = process.argv.includes('--post') ||
+                 payload.hook_event_name === 'PostToolUse' ||
+                 payload.event === 'PostToolUse' ||
+                 Boolean(payload.tool_result !== undefined || payload.tool_response !== undefined);
+
+  if (isPost) {
+    const targetResource = extractBashResource(payload);
+    if (targetResource) {
+      const releaseRes = await notifyResourceRelease({
+        agent_id: identity.agentId,
+        resource_name: targetResource,
+        project_id: projectInfo.projectId,
+        workspace_dir: workspaceDir,
+        reason: 'command_completion'
+      });
+      if (releaseRes && releaseRes.success) {
+        console.error(`[Agent-Nexus] [Auto-Released] Auto-released resource lock '${targetResource}' upon command completion.`);
+      }
+    }
+
+    if (isGitCommitOrPush(payload)) {
+      const releaseRes = await notifyGitRelease({
+        agent_id: identity.agentId,
+        project_id: projectInfo.projectId,
+        workspace_dir: workspaceDir,
+        reason: 'git_lifecycle'
+      });
+      if (releaseRes && releaseRes.releasedCount > 0) {
+        console.error(`[Agent-Nexus] [Auto-Released] Auto-released ${releaseRes.releasedCount} lease(s) upon git commit/push and notified waiters.`);
+      }
+    }
+
+    process.exit(0);
+  }
+
+  // 1. 上报实时工具调用态势与心跳活跃度 (非阻塞后台刷新)
   const toolName = payload.tool_name || null;
   const toolInput = payload.tool_input || payload.input || {};
   const toolTarget = toolInput.file_path || toolInput.path || toolInput.target || toolInput.pattern || null;

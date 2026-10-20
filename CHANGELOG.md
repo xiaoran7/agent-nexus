@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-20 原生 PostToolUse 毫秒级资源释放、滑动窗口心跳续约与伴侣控制台重构 (PostToolUse Auto-Release, Sliding-Window TTL & Companion Console v0.2.8)
+
+### 改了什么
+
+- **方案一：原生 PostToolUse 钩子生命周期拦截与瞬态命令锁毫秒级释放 (`src/installer/index.js`, `src/hook/nexus-hook.mjs`, `src/transport/rest.js`)**：
+  - **精准分流瞬态命令锁与事务施工走廊**：Claude Code 配置注入 `PostToolUse` 钩子（针对 `Bash` 命令），命令执行完毕后自动触发 `node nexus-hook.mjs --post`；
+  - **命令排他锁毫秒级释放**：执行 `npm test`、`pytest`、`npm run dev`、`npm run build` 等排他性资源命令退出时，毫秒级主动调用 `/api/hook/resource-release` 解除资源占用，并立即唤醒等待队列中的排队 Agent；
+  - **提交推送完工感知**：执行 `git commit` 或 `git push` 后，自动在后置阶段批量释放所有持有的施工文件租约，实现施工单元终结后的零感交接。
+- **方案二：动态滑动窗口心跳续约 (Sliding-Window TTL) (`src/daemon/coordinator.js`, `test/resource-lock.test.js`)**：
+  - **基准租约由 180s 降至 60s**：在 `fastCheckAndAutoClaim` 中将资源锁与自锁文件租约初始 TTL 压缩为 60s，异常挂死或失联会话 60s 内快速自然释放；
+  - **工具调用遥测自动顺延 (`touchAgentLeases`)**：会话进行读、写、列举等常规工具交互时，上报遥测自动向后顺延 60s 活跃窗口，确保护航施工期间永不掉锁；
+  - **600s 最大硬天花板与不倒退原则**：租约生命周期严格受限于 `created_at + 600s` 最大安全上限，避免无限循环死锁，且短心跳绝不反向截断显式声明的长期架构意图。
+- **多项目与跨工作树 SQL 联合判冲治理 (`src/daemon/coordinator.js`)**：
+  - 在 `findConflict`、`fastCheckAndAutoClaim`、`releaseResourceLock` 和 `releaseAgentLeases` 中统一引入 `(project_id = ? OR project_id = 'default' OR ? = 'default')` 联合判冲，彻底打通独立调试环境 `'default'` 与底层自动解析的真实工程 Worktree Hash 盲区。
+- **800x560 极简伴侣控制台 (Companion Console) 3-Tab 高密重构 (`desktop/main.cjs`, `src/ui/app.js`, `src/ui/index.html`, `src/ui/style.css`)**：
+  - 窗口尺寸定格为 800x560，适配平铺与分屏协同；
+  - 重构为三段式胶囊导航（会话与冲突、时间线与对话、工程记忆与规则），DOM 结构紧凑，全面清除行内事件与冗余依赖，强化 XSS 安全转义与 WebGL/CSS 渲染性能。
+
+### 验证
+
+- `node --test "test/**/*.test.js"`：全部 249 项单元与集成测试 100% 通过（新增 PostToolUse 端到端拦截、滑动窗口顺延与 600s 上限测试）；
+- 真实 Claude Code 载荷测试：验证了 `npm test` 命令完成后 tests 锁瞬时解开，排队 Agent 立即放行；`git commit` 成功自动释放施工租约。
+
+---
+
 ## 2026-10-19 WebSocket 全量快照渲染中断修复 (WebSocket Snapshot Render Fix)
 
 ### 改了什么

@@ -33,10 +33,10 @@ const icons = {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 960,
-    minHeight: 640,
+    width: 800,
+    height: 560,
+    minWidth: 640,
+    minHeight: 440,
     title: 'Agent-Nexus 协同控制台',
     icon: nativeImage.createFromPath(icons.app),
     backgroundColor: '#0a0d16',
@@ -105,24 +105,6 @@ function updateTrayMenu(statusText = '待命就绪') {
         if (mainWindow) {
           mainWindow.show();
           mainWindow.focus();
-        }
-      }
-    },
-    {
-      label: '查看演进拓扑 (Topology)',
-      click: () => {
-        if (mainWindow) {
-          mainWindow.show();
-          mainWindow.focus();
-          // 通过前端执行切换到拓扑 Tab
-          mainWindow.webContents.executeJavaScript(`
-            if (typeof window.switchTab === 'function') {
-              window.switchTab('topology');
-            } else {
-              const tab = document.querySelector('[data-tab="topology"]');
-              if (tab) tab.click();
-            }
-          `).catch(() => {});
         }
       }
     },

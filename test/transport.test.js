@@ -210,6 +210,38 @@ test('HTTP 层拒绝非法输入且不产生脏状态', async (t) => {
     assert.equal(orphan, 0, '整体校验失败时不应写入任何 intent');
   });
 
+  await t.test('/api/hook/resource-release 校验与释放', async () => {
+    // 缺 agent_id 报 400
+    const badAgent = await d.request('/api/hook/resource-release', {
+      method: 'POST',
+      body: { resource_name: 'tests' }
+    });
+    assert.equal(badAgent.status, 400);
+    assert.match(badAgent.json.error, /agent_id/);
+
+    // 缺 resource_name 报 400
+    const badRes = await d.request('/api/hook/resource-release', {
+      method: 'POST',
+      body: { agent_id: 'claude-rel' }
+    });
+    assert.equal(badRes.status, 400);
+    assert.match(badRes.json.error, /resource_name/);
+
+    // 先获取资源锁，再测试合法释放
+    await d.request('/api/resources/lock', {
+      method: 'POST',
+      body: { agent_id: 'claude-rel', resource_name: 'tests', project_id: 'default' }
+    });
+
+    // 合法请求正常响应
+    const ok = await d.request('/api/hook/resource-release', {
+      method: 'POST',
+      body: { agent_id: 'claude-rel', resource_name: 'tests', project_id: 'default' }
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json.success, true);
+  });
+
   await t.test('daemon 仍健康', async () => {
     const res = await d.request('/health');
     assert.equal(res.status, 200);
@@ -350,12 +382,13 @@ test('hook 脚本识别真实 Claude Code 载荷', async (t) => {
   const hook = join(import.meta.dirname, '../src/hook/nexus-hook.mjs');
 
   // 用真实的 PreToolUse 载荷跑一次 hook 脚本，拿退出码。
-  const runHook = (payload, sessionId) =>
+  const runHook = (payload, sessionId, extraArgs = []) =>
     new Promise((resolve) => {
-      const child = spawn(process.execPath, [hook], {
+      const child = spawn(process.execPath, [hook, ...extraArgs], {
         env: {
           ...process.env,
           NEXUS_PORT: String(d.port),
+          NEXUS_TOKEN: d.operatorToken,
           NEXUS_SESSION_ID: sessionId,
           // 继承宿主进程的环境会让所有用例塌成同一个 agent（都算"自己人"，
           // 于是永远放行）。显式清掉身份变量，行为才可预测。
@@ -376,6 +409,16 @@ test('hook 脚本识别真实 Claude Code 载荷', async (t) => {
     hook_event_name: 'PreToolUse',
     tool_name: toolName,
     tool_input: toolInput,
+    tool_use_id: 'toolu_test'
+  });
+
+  const postToolUse = (toolName, toolInput, toolResult = 'done') => ({
+    session_id: 'hs1',
+    cwd: process.cwd(),
+    hook_event_name: 'PostToolUse',
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_result: toolResult,
     tool_use_id: 'toolu_test'
   });
 
@@ -439,6 +482,70 @@ test('hook 脚本识别真实 Claude Code 载荷', async (t) => {
 
     assert.equal(res.code, 0, '只读工具不应被当成写入而拦截');
   });
+
+  await t.test('PostToolUse: Bash 运行命令完成后毫秒级释放资源锁', async () => {
+    // 1. alice 执行 npm test，PreToolUse 锁定 tests 资源
+    const resPreAlice = await runHook(
+      preToolUse('Bash', { command: 'npm test' }),
+      'alice-runner'
+    );
+    assert.equal(resPreAlice.code, 0);
+
+    // 2. bob 试图并发执行 npm test，被拦截
+    const resPreBob = await runHook(
+      preToolUse('Bash', { command: 'npm test' }),
+      'bob-runner'
+    );
+    assert.equal(resPreBob.code, 2, '资源锁应拦截后到者');
+    assert.match(resPreBob.stderr, /RESOURCE CONFLICT DETECTED/);
+
+    // 3. alice 命令完成，触发 PostToolUse 钩子 (实现方案一)
+    const resPostAlice = await runHook(
+      postToolUse('Bash', { command: 'npm test' }),
+      'alice-runner',
+      ['--post']
+    );
+    assert.equal(resPostAlice.code, 0);
+    assert.match(resPostAlice.stderr, /Auto-released resource lock 'tests'/);
+
+    // 4. bob 再次执行 npm test，此时锁已瞬间自动释放，顺利放行
+    const resPreBobRetry = await runHook(
+      preToolUse('Bash', { command: 'npm test' }),
+      'bob-runner'
+    );
+    assert.equal(resPreBobRetry.code, 0, '资源锁释放后应放行排队者');
+  });
+
+  await t.test('PostToolUse: git commit 自动释放全部持有的施工租约', async () => {
+    // 1. charlie 锁定文件
+    await d.request('/api/hook/check', {
+      method: 'POST',
+      body: { agent_id: 'agent-charlie', provider: 'claude', session_id: 'charlie', file_path: 'src/feature.js' }
+    });
+
+    // 2. dave 尝试编辑被拦截
+    const resDave = await runHook(
+      preToolUse('Edit', { file_path: 'src/feature.js', old_string: 'x', new_string: 'y' }),
+      'dave'
+    );
+    assert.equal(resDave.code, 2);
+
+    // 3. charlie 执行 git commit 完成提交收尾，PostToolUse 释放租约
+    const resPostCharlie = await runHook(
+      postToolUse('Bash', { command: 'git commit -m "feat: complete"' }),
+      'charlie',
+      ['--post']
+    );
+    assert.equal(resPostCharlie.code, 0);
+    assert.match(resPostCharlie.stderr, /Auto-released .* lease/);
+
+    // 4. dave 再次编辑顺利放行
+    const resDaveRetry = await runHook(
+      preToolUse('Edit', { file_path: 'src/feature.js', old_string: 'x', new_string: 'y' }),
+      'dave'
+    );
+    assert.equal(resDaveRetry.code, 0);
+  });
 });
 
 test('安装器把 hook 写进宿主配置', async (t) => {
@@ -460,10 +567,13 @@ test('安装器把 hook 写进宿主配置', async (t) => {
 
   const readSettings = () =>
     JSON.parse(readFileSync(join(fakeHome, '.claude', 'settings.json'), 'utf8'));
-  // Claude Code 的 PreToolUse 是 matcher 分组结构，不是命令字符串数组。
+  // Claude Code 的 PreToolUse 与 PostToolUse 是 matcher 分组结构，不是命令字符串数组。
   const hookHandlers = (settings) =>
     settings.hooks.PreToolUse.flatMap((g) => g.hooks || []).filter((h) => h.command.includes('nexus-hook.mjs'));
   const hookCommands = (settings) => hookHandlers(settings).map((h) => h.command);
+  const postHookHandlers = (settings) =>
+    (settings.hooks.PostToolUse || []).flatMap((g) => g.hooks || []).filter((h) => h.command.includes('nexus-hook.mjs'));
+  const postHookCommands = (settings) => postHookHandlers(settings).map((h) => h.command);
 
   await t.test('写出 Claude Code 期望的嵌套结构', () => {
     installClaudeHook();
@@ -481,13 +591,24 @@ test('安装器把 hook 写进宿主配置', async (t) => {
     const [handler] = hookHandlers(settings);
     assert.equal(handler.type, 'command', '处理器 type 必须是 command');
     assert.ok(handler.timeout > 0, '应设置超时，避免挂死宿主');
+
+    for (const group of settings.hooks.PostToolUse) {
+      assert.equal(typeof group, 'object', 'PostToolUse 元素应是 matcher 分组对象，不是字符串');
+      assert.equal(group.matcher, 'Bash', 'PostToolUse 针对 Bash');
+      assert.ok(Array.isArray(group.hooks), '分组应带 hooks 数组');
+    }
+
+    const [postHandler] = postHookHandlers(settings);
+    assert.equal(postHandler.type, 'command');
+    assert.match(postHandler.command, /--post/);
   });
 
   await t.test('重复安装不产生重复条目', () => {
     installClaudeHook();
     installClaudeHook();
 
-    assert.equal(hookHandlers(readSettings()).length, 1, '重复安装应保持幂等');
+    assert.equal(hookHandlers(readSettings()).length, 1, 'PreToolUse 重复安装应保持幂等');
+    assert.equal(postHookHandlers(readSettings()).length, 1, 'PostToolUse 重复安装应保持幂等');
   });
 
   await t.test('升级历史字符串写法的旧条目', () => {
@@ -496,7 +617,12 @@ test('安装器把 hook 写进宿主配置', async (t) => {
     const script = hookCommands(readSettings())[0].replace(/^node\s+"|"$/g, '');
     writeFileSync(
       settingsPath,
-      JSON.stringify({ hooks: { PreToolUse: [`node "${script}"`] } }, null, 2),
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [`node "${script}"`],
+          PostToolUse: [`node "${script}" --post`]
+        }
+      }, null, 2),
       'utf8'
     );
 
@@ -504,7 +630,11 @@ test('安装器把 hook 写进宿主配置', async (t) => {
 
     const settings = readSettings();
     assert.equal(hookHandlers(settings).length, 1, '旧条目应被升级替换，不重复叠加');
+    assert.equal(postHookHandlers(settings).length, 1, 'PostToolUse 旧条目应被升级替换');
     for (const group of settings.hooks.PreToolUse) {
+      assert.equal(typeof group, 'object', '升级后不应再有字符串条目');
+    }
+    for (const group of settings.hooks.PostToolUse) {
       assert.equal(typeof group, 'object', '升级后不应再有字符串条目');
     }
   });

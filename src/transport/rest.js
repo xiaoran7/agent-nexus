@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { ValidationError } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.2.7';
+let APP_VERSION = '0.2.8';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;
@@ -524,11 +524,20 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         });
         return sendJson(200, result);
       }
-      if (url.pathname === '/api/resources/unlock' && req.method === 'POST') {
+      // 6.2 资源锁释放通道 (支持显式 /api/resources/unlock 与 Hook /api/hook/resource-release)
+      if ((url.pathname === '/api/resources/unlock' || url.pathname === '/api/hook/resource-release') && req.method === 'POST') {
         const body = await readJson();
+        const agentId = body.agent_id || token?.agent_id;
+        if (!agentId) {
+          return sendJson(400, { error: 'Missing required field: agent_id' });
+        }
+        const resourceName = body.resource_name || body.resource;
+        if (!resourceName) {
+          return sendJson(400, { error: 'Missing required field: resource_name' });
+        }
         const result = coordinator.releaseResourceLock({
-          agentId: body.agent_id,
-          resourceName: body.resource_name || body.resource,
+          agentId,
+          resourceName,
           projectId: body.project_id || 'default'
         });
         return sendJson(200, result);

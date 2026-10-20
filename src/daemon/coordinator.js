@@ -309,8 +309,8 @@ export class CoordinatorEngine {
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
-      WHERE l.project_id = ? AND l.expires_at > ? AND c.project_id = ?
-    `).all(projectId, now, projectId);
+      WHERE (l.project_id = ? OR l.project_id = 'default' OR ? = 'default') AND l.expires_at > ? AND (c.project_id = ? OR c.project_id = 'default' OR ? = 'default')
+    `).all(projectId, projectId, now, projectId, projectId);
 
     for (const claim of normalizedClaims) {
       for (const active of activeClaims) {
@@ -594,7 +594,12 @@ export class CoordinatorEngine {
       timestamp: now
     });
 
-    return { success: true };
+    // 方案二：活动心跳滑动续约 (Sliding Window Touch)
+    // 只要该 Agent 还在发出工具调用，其名下活跃租约自动顺延滑动窗口，保证干活期间永不掉锁，
+    // 而一旦停止活动，短约自然到期快速释放给后排。
+    const touchResult = this.touchAgentLeases(agentId, finalProjectId || agent?.project_id || null, 60);
+
+    return { success: true, touchedCount: touchResult.touchedCount };
   }
 
   getAgent(id, projectId = null) {
@@ -826,11 +831,17 @@ export class CoordinatorEngine {
     const now = Date.now();
     const finalProjectId = projectId || 'default';
 
-    const activeLeases = this.db.prepare(`
-      SELECT l.id, l.intent_id, l.project_id
-      FROM leases l
-      WHERE l.agent_id = ? AND l.project_id = ? AND l.expires_at > ?
-    `).all(agentId, finalProjectId, now);
+    const activeLeases = (projectId && projectId !== 'all')
+      ? this.db.prepare(`
+          SELECT l.id, l.intent_id, l.project_id
+          FROM leases l
+          WHERE l.agent_id = ? AND (l.project_id = ? OR l.project_id = 'default') AND l.expires_at > ?
+        `).all(agentId, finalProjectId, now)
+      : this.db.prepare(`
+          SELECT l.id, l.intent_id, l.project_id
+          FROM leases l
+          WHERE l.agent_id = ? AND l.expires_at > ?
+        `).all(agentId, now);
 
     if (activeLeases.length === 0) {
       return {
@@ -923,6 +934,43 @@ export class CoordinatorEngine {
       releasedClaims: allReleasedClaims,
       notifiedWaiters
     };
+  }
+
+  // 3.2 活跃会话租约滑动顺延 (Sliding Window Touch)
+  // 每次 Agent 发出工具调用 (遥测) 时自动顺延名下活跃租约，干活期间绝不掉锁，停工后短约快速过期
+  touchAgentLeases(agentId, projectId = null, extendSeconds = 60, maxTotalTtlSeconds = 600) {
+    if (!agentId) return { touchedCount: 0 };
+    const now = Date.now();
+
+    const query = projectId && projectId !== 'all'
+      ? `SELECT id, ttl_seconds, expires_at, created_at FROM leases WHERE agent_id = ? AND (project_id = ? OR project_id = 'default') AND expires_at > ?`
+      : `SELECT id, ttl_seconds, expires_at, created_at FROM leases WHERE agent_id = ? AND expires_at > ?`;
+
+    const activeLeases = (projectId && projectId !== 'all')
+      ? this.db.prepare(query).all(agentId, projectId, now)
+      : this.db.prepare(query).all(agentId, now);
+
+    if (activeLeases.length === 0) return { touchedCount: 0 };
+
+    let touchedCount = 0;
+    const updateStmt = this.db.prepare(`
+      UPDATE leases
+      SET expires_at = ?
+      WHERE id = ?
+    `);
+
+    for (const lease of activeLeases) {
+      const maxExpiry = lease.created_at + (maxTotalTtlSeconds * 1000);
+      const proposedExpiry = now + (extendSeconds * 1000);
+      const newExpiry = Math.min(proposedExpiry, maxExpiry);
+      // 只有在新延期时间晚于现有到期时间时才顺延，不缩短显式指定的大 TTL 租约
+      if (newExpiry > lease.expires_at) {
+        updateStmt.run(newExpiry, lease.id);
+        touchedCount++;
+      }
+    }
+
+    return { touchedCount };
   }
 
   // 内部辅助方法：依据剩余活跃租约准确同步 Agent 运行状态
@@ -1240,13 +1288,13 @@ export class CoordinatorEngine {
       assertClaimTarget(cleanResource, 'resource', workspaceDir, finalProjectRoot);
 
       const existingResourceLock = this.db.prepare(`
-        SELECT c.agent_id, a.name as agent_name, a.workspace_dir, i.summary, l.id as lease_id
+        SELECT c.agent_id, a.name as agent_name, a.workspace_dir, i.summary, l.id as lease_id, l.expires_at
         FROM claims c
         JOIN leases l ON c.intent_id = l.intent_id
         JOIN agents a ON c.agent_id = a.id
         JOIN intents i ON c.intent_id = i.id
-        WHERE c.project_id = ? AND c.claim_type = 'resource' AND c.claim_target = ? AND l.expires_at > ?
-      `).get(finalProjectId, cleanResource, now);
+        WHERE (c.project_id = ? OR c.project_id = 'default' OR ? = 'default') AND c.claim_type = 'resource' AND c.claim_target = ? AND l.expires_at > ?
+      `).get(finalProjectId, finalProjectId, cleanResource, now);
 
       if (existingResourceLock) {
         if (existingResourceLock.agent_id === agentId) {
@@ -1270,7 +1318,7 @@ export class CoordinatorEngine {
         agentId,
         intentSummary: promptHint ? `Running ${cleanResource}: ${promptHint.slice(0, 40)}` : `Auto-claimed resource lock on '${cleanResource}'`,
         claims: [{ type: 'resource', target: cleanResource }],
-        ttlSeconds: 180,
+        ttlSeconds: 60, // 瞬态命令锁由 PostToolUse 毫秒级释放，安全兜底 TTL 降至 60 秒
         projectId: finalProjectId,
         projectRoot: finalProjectRoot
       });
@@ -1307,8 +1355,8 @@ export class CoordinatorEngine {
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
       JOIN intents i ON c.intent_id = i.id
-      WHERE c.project_id = ? AND c.claim_type = 'file' AND (c.claim_target = ? OR c.claim_target LIKE ? || '#%') AND l.expires_at > ?
-    `).all(finalProjectId, baseFile, baseFile, now);
+      WHERE (c.project_id = ? OR c.project_id = 'default' OR ? = 'default') AND c.claim_type = 'file' AND (c.claim_target = ? OR c.claim_target LIKE ? || '#%') AND l.expires_at > ?
+    `).all(finalProjectId, finalProjectId, baseFile, baseFile, now);
 
     // 检查是否存在冲突锁
     let conflictingLock = null;
@@ -1354,7 +1402,7 @@ export class CoordinatorEngine {
       agentId,
       intentSummary: promptHint ? `Editing ${filePath}: ${promptHint.slice(0, 40)}` : `Auto-claimed edit on ${filePath}`,
       claims: [{ type: 'file', target: filePath }],
-      ttlSeconds: 180,
+      ttlSeconds: 60, // 施工走廊短约 + 遥测滑动续期 (Sliding Window)，停工后快速释放
       projectId: finalProjectId,
       projectRoot: finalProjectRoot
     });
@@ -1408,8 +1456,8 @@ export class CoordinatorEngine {
       SELECT c.intent_id
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
-      WHERE c.project_id = ? AND c.agent_id = ? AND c.claim_type = 'resource' AND c.claim_target = ?
-    `).get(projectId, agentId, target);
+      WHERE (c.project_id = ? OR ? = 'all' OR c.project_id = 'default') AND c.agent_id = ? AND c.claim_type = 'resource' AND c.claim_target = ?
+    `).get(projectId, projectId, agentId, target);
 
     if (activeClaim) {
       const releaseRes = this.releaseLease(activeClaim.intent_id, agentId);

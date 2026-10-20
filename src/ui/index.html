@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent-Nexus 协同控制台 | 多会话协同防撞车中枢</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Agent-Nexus 协同控制台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
   <script>
     // 立即执行以防止切换主题时的闪烁 (Anti-FOUC)
@@ -19,87 +19,63 @@
   </script>
 </head>
 <body>
-  <!-- Topbar -->
-  <header>
-    <div class="brand-container">
-      <div class="brand-logo-mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-        </svg>
-      </div>
-      <div class="brand-text-block">
-        <div class="brand-title">
-          <span>Agent-Nexus</span>
-          <span class="badge-schale">协同中枢</span>
+  <!-- 顶栏 Topbar (46px) -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand">
+        <div class="brand-icon-wrap">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+          </svg>
         </div>
-        <span class="brand-sub">多会话防撞车控制台</span>
+        <span class="brand-name">Nexus</span>
+      </div>
+      <div class="status-capsule" title="Nexus 协同守护进程状态">
+        <span class="pulse-dot" id="live-dot"></span>
+        <span id="daemon-status" class="daemon-text">守护就绪</span>
       </div>
     </div>
 
-    <!-- View Mode Switcher: 现代圆润胶囊 Tabs -->
-    <div class="view-tabs" id="view-tabs">
-      <button id="tab-collab" class="view-tab active">
-        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="6" cy="6" r="3"></circle>
-          <circle cx="18" cy="6" r="3"></circle>
-          <circle cx="18" cy="18" r="3"></circle>
-          <circle cx="6" cy="18" r="3"></circle>
-          <line x1="9" y1="6" x2="15" y2="6"></line>
-          <line x1="18" y1="9" x2="18" y2="15"></line>
-          <line x1="15" y1="18" x2="9" y2="18"></line>
-          <line x1="6" y1="15" x2="6" y2="9"></line>
+    <!-- 核心视图切换 Segmented Tabs -->
+    <nav class="nav-segmented" id="nav-segmented" aria-label="视图切换">
+      <button class="seg-btn active" data-view="sessions" id="tab-sessions">
+        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
         </svg>
-        <span>实时协同图谱</span>
-        <span id="collab-tab-badge" class="badge-tab-healthy">全景实时</span>
+        <span>会话与防撞</span>
       </button>
-      <button id="tab-war-room" class="view-tab">
-        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7" rx="2"></rect>
-          <rect x="14" y="3" width="7" height="7" rx="2"></rect>
-          <rect x="14" y="14" width="7" height="7" rx="2"></rect>
-          <rect x="3" y="14" width="7" height="7" rx="2"></rect>
+      <button class="seg-btn" data-view="timeline" id="tab-timeline">
+        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
         </svg>
-        <span>协同看板</span>
+        <span>动态与日志</span>
       </button>
-      <button id="tab-topology" class="view-tab">
-        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="18" cy="5" r="3"></circle>
-          <circle cx="6" cy="12" r="3"></circle>
-          <circle cx="18" cy="19" r="3"></circle>
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-        </svg>
-        <span>演进拓扑</span>
-        <span id="topology-tab-badge" class="badge-tab-tag">全景</span>
-      </button>
-      <button id="tab-unified" class="view-tab">
-        <svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="20" x2="18" y2="10"></line>
-          <line x1="12" y1="20" x2="12" y2="4"></line>
-          <line x1="6" y1="20" x2="6" y2="14"></line>
-        </svg>
-        <span>综合全览</span>
-      </button>
-    </div>
-
-    <div class="top-right-meta">
-      <select id="project-selector" class="proj-select">
-        <option value="all">全部项目 (跨工程协同全景)</option>
-        <option value="default">Default Project</option>
-      </select>
-
-      <button id="open-memory-drawer-btn" class="memory-btn">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button class="seg-btn" data-view="memory" id="tab-memory">
+        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
         </svg>
-        <span>备忘录</span>
-        <span id="memory-count-badge" class="memory-badge-count">0</span>
+        <span>知识备忘</span>
+      </button>
+    </nav>
+
+    <div class="topbar-right">
+      <select id="project-selector" class="proj-select" title="切换工作区工程">
+        <option value="all">全景工程 (跨项目)</option>
+        <option value="default" selected>Default Project</option>
+      </select>
+
+      <button id="btn-broadcast-toggle" class="icon-btn" title="发起全员调度广播" aria-label="发起全员调度广播">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
       </button>
 
-      <button id="theme-toggle-btn" class="theme-toggle-btn" title="切换亮色/暗色主题" aria-label="切换亮色/暗色主题">
-        <!-- 太阳图标 (亮色模式显示，点击切换为暗色) -->
-        <svg class="theme-icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button id="theme-toggle-btn" class="icon-btn" title="切换暗色/亮色外观" aria-label="切换外观">
+        <svg class="theme-icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="5"></circle>
           <line x1="12" y1="1" x2="12" y2="3"></line>
           <line x1="12" y1="21" x2="12" y2="23"></line>
@@ -107,725 +83,224 @@
           <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
           <line x1="1" y1="12" x2="3" y2="12"></line>
           <line x1="21" y1="12" x2="23" y2="12"></line>
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
         </svg>
-        <!-- 月亮图标 (暗色模式显示，点击切换为亮色) -->
-        <svg class="theme-icon icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="theme-icon icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
         </svg>
-        <span id="theme-toggle-label" class="theme-label-text">外观</span>
       </button>
 
-      <div class="sensei-capsule">
-        <span class="pulse-dot"></span>
-        <span class="capsule-text">守护就绪</span>
-        <span class="capsule-divider"></span>
-        <span id="daemon-status" class="capsule-port">--</span>
-      </div>
+      <button id="btn-refresh" class="icon-btn" title="立即同步快照" aria-label="立即同步">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 4v6h-6"></path>
+          <path d="M1 20v-6h6"></path>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+      </button>
     </div>
   </header>
 
-  <!-- Main Content -->
-  <main class="app-main">
-    <!-- ========================================== -->
-    <!-- VIEW 0: Unified Cockpit (综合全览驾驶舱)    -->
-    <!-- ========================================== -->
-    <div id="view-unified" class="view-pane">
-      <!-- 1. 全局态势聚合顶栏 -->
-      <section class="cockpit-hero-panel">
-        <div class="collab-hero-header">
-          <div class="collab-title-group">
-            <div class="collab-icon-badge" style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(99, 102, 241, 0.2)); color: var(--primary);">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="7" height="7"></rect>
-                <rect x="14" y="3" width="7" height="7"></rect>
-                <rect x="14" y="14" width="7" height="7"></rect>
-                <rect x="3" y="14" width="7" height="7"></rect>
-              </svg>
-            </div>
-            <div>
-              <div class="collab-main-title">
-                <span>综合全览驾驶舱 (Unified Cockpit)</span>
-                <span class="badge-collab-live">全景统揽</span>
-              </div>
-              <div class="collab-sub-title">一屏聚合多助手施工动态、功能演进脉络、资源排他持锁与架构师跨会话协调</div>
-            </div>
-          </div>
-
-          <div class="collab-controls-group">
-            <div class="collab-health-capsule">
-              <span id="cockpit-live-dot" class="pulse-dot"></span>
-              <span id="cockpit-conn-status" style="font-weight: 700;">全双工推送</span>
-              <span class="capsule-divider"></span>
-              <span id="cockpit-last-sync">实时</span>
-            </div>
-            <button id="cockpit-refresh-btn" class="modern-btn-primary" title="刷新综合全览数据">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M23 4v6h-6"></path>
-                <path d="M1 20v-6h6"></path>
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-              </svg>
-              <span>立即同步</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="collab-metric-grid">
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-working" id="cockpit-stat-working">0</span>
-            <span class="collab-metric-desc">在线施工助手</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-waiting" id="cockpit-stat-waiting">0</span>
-            <span class="collab-metric-desc">排队阻塞请求</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-locks" id="cockpit-stat-locks">0</span>
-            <span class="collab-metric-desc">活跃排他锁</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-nodes" id="cockpit-stat-nodes">0</span>
-            <span class="collab-metric-desc">演进拓扑节点</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-messages" id="cockpit-stat-messages">0</span>
-            <span class="collab-metric-desc">跨会话调度记录</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- 2. 四象限聚合核心网格 -->
-      <div class="cockpit-grid">
-        <!-- 象限 1 (左上): 实时施工态势矩阵 -->
-        <section class="modern-card cockpit-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <div class="panel-title-icon icon-working">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
-                </svg>
-              </div>
-              <span>实时施工态势矩阵</span>
-            </div>
-            <span class="panel-meta" id="cockpit-working-meta">0 个助手在线</span>
-          </div>
-          <div class="cockpit-scroll-content" id="cockpit-agents-list">
-            <!-- 动态注入助手施工卡片 -->
-          </div>
-        </section>
-
-        <!-- 象限 2 (右上): 演进拓扑主线缩影 -->
-        <section class="modern-card cockpit-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <div class="panel-title-icon icon-nodes">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="18" cy="5" r="3"></circle>
-                  <circle cx="6" cy="12" r="3"></circle>
-                  <circle cx="18" cy="19" r="3"></circle>
-                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-                </svg>
-              </div>
-              <span>演进拓扑主线脉络</span>
-            </div>
-            <button class="modern-btn-subtle" id="cockpit-goto-topo-btn" style="padding: 4px 10px; font-size: 12px;">查看完整图谱 &rarr;</button>
-          </div>
-          <div class="cockpit-scroll-content" id="cockpit-topology-list">
-            <!-- 动态注入拓扑前驱节点 -->
-          </div>
-        </section>
-
-        <!-- 象限 3 (左下): 资源锁与冲突争用看板 -->
-        <section class="modern-card cockpit-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <div class="panel-title-icon icon-locks">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                </svg>
-              </div>
-              <span>独占资源锁与排队争用看板</span>
-            </div>
-            <span class="panel-meta" id="cockpit-locks-meta">0 个活跃锁定</span>
-          </div>
-          <div class="cockpit-scroll-content" id="cockpit-locks-list">
-            <!-- 动态注入锁与排队项 -->
-          </div>
-        </section>
-
-        <!-- 象限 4 (右下): 跨会话调度与流水 -->
-        <section class="modern-card cockpit-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <div class="panel-title-icon icon-messages">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
-              </div>
-              <span>跨会话对话与调度广播</span>
-            </div>
-            <span class="panel-meta">实时协同</span>
-          </div>
-          <div class="cockpit-scroll-content" id="cockpit-dialogue-list">
-            <!-- 动态注入对话与广播流水 -->
-          </div>
-        </section>
+  <!-- 状态条 (34px) -->
+  <div class="status-ribbon">
+    <div class="ribbon-stats">
+      <div class="stat-pill pill-working" title="正在修改代码文件的活跃助手">
+        <span class="pill-dot"></span>
+        <span class="pill-label">施工</span>
+        <b id="stat-working" class="pill-num">0</b>
+      </div>
+      <div class="stat-pill pill-waiting" title="遭遇资源冲突排队避让中">
+        <span class="pill-dot"></span>
+        <span class="pill-label">排队</span>
+        <b id="stat-waiting" class="pill-num">0</b>
+      </div>
+      <div class="stat-pill pill-locks" title="当前独占持有的文件与命令锁">
+        <span class="pill-dot"></span>
+        <span class="pill-label">独占锁</span>
+        <b id="stat-locks" class="pill-num">0</b>
       </div>
     </div>
 
-    <!-- ========================================== -->
-    <!-- VIEW 1: War Room (多 Agent 协同与泳道)      -->
-    <!-- ========================================== -->
-    <div id="view-war-room" class="view-pane">
-      <!-- 0. Tech Lead Status Banner (常驻架构师协同视窗) -->
-      <div class="lead-banner">
-        <div class="lead-header-row">
-          <div class="lead-title-box">
-            <div class="lead-icon-wrap">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-              </svg>
-            </div>
-            <span class="lead-title-text">常驻架构师协同视窗</span>
-            <span id="lead-status-chip" class="lead-chip chip-silent">静默守望（单人施工不打扰）</span>
-          </div>
-          <div class="lead-meta-row">
-            <span id="lead-session-stats" class="lead-session-stats">0 个活跃会话</span>
-            <span id="lead-last-activity" class="lead-last-activity">就绪</span>
-          </div>
-        </div>
-        <div id="lead-advice-container" class="lead-advice-text">
-          [Nexus 架构师静默保驾] 当前只有单会话独立施工，架构师保持静默，绝不产生干扰。当检测到新会话带着并发修改计划加入时，将实时唤醒并提供避让重排与交接路线。
-        </div>
-        <div id="lead-awakened-detail" class="lead-awakened-box" style="display: none;"></div>
-      </div>
-
-      <!-- 4 Summary Metric Cards (圆润卡片风格) -->
-      <div class="metric-grid">
-        <!-- 1. Total Agents -->
-        <div class="metric-card" style="--card-accent: #38bdf8;">
-          <div class="metric-icon-box">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="3" ry="3"></rect>
-              <line x1="8" y1="21" x2="16" y2="21"></line>
-              <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-          </div>
-          <div class="metric-data">
-            <span class="metric-val" id="metric-total-agents">0</span>
-            <span class="metric-label">在线 AI 助手</span>
-          </div>
-        </div>
-
-        <!-- 2. Running -->
-        <div class="metric-card" style="--card-accent: #34d399;">
-          <div class="metric-icon-box green">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12 6 12 12 16 14"></polyline>
-            </svg>
-          </div>
-          <div class="metric-data">
-            <span class="metric-val" id="metric-running">0</span>
-            <span class="metric-label">正在改文件的助手</span>
-          </div>
-        </div>
-
-        <!-- 3. Waiting / Blocked -->
-        <div class="metric-card" style="--card-accent: #fbbf24;">
-          <div class="metric-icon-box amber">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="8" x2="12" y2="12"></line>
-              <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-          </div>
-          <div class="metric-data">
-            <span class="metric-val" id="metric-waiting">0</span>
-            <span class="metric-label">排队等待中</span>
-          </div>
-        </div>
-
-        <!-- 4. Long-term Memories -->
-        <div class="metric-card" style="--card-accent: #c084fc;">
-          <div class="metric-icon-box purple">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
-          </div>
-          <div class="metric-data">
-            <span class="metric-val" id="metric-memories">0</span>
-            <span class="metric-label">已记录备忘</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Construction Lanes & Handoffs Panel -->
-      <section class="lanes-panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-title-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="4" width="18" height="16" rx="3"></rect>
-                <line x1="9" y1="4" x2="9" y2="20"></line>
-              </svg>
-            </div>
-            <span>正在修改的文件与交接流水</span>
-          </div>
-          <span class="panel-meta" id="lanes-status">0 个文件正在修改</span>
-        </div>
-        <div class="lanes-grid" id="lanes-container">
-          <!-- 动态注入泳道卡片 -->
-        </div>
-      </section>
-
-      <!-- 2-Column Dashboard Workspace -->
-      <div class="dashboard-body">
-        <!-- Left Panel: Agent Matrix & Claims -->
-        <section class="modern-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <div class="panel-title-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="9" cy="7" r="4"></circle>
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                </svg>
-              </div>
-              <span>各助手施工状态与持锁明细</span>
-            </div>
-            <span class="panel-meta" id="matrix-last-updated">实时同步</span>
-          </div>
-
-          <div class="agent-grid" id="agents-container">
-            <!-- 动态注入 Agent 卡片 -->
-          </div>
-        </section>
-
-        <!-- Right Panel: Activity Timeline Stream -->
-        <section class="modern-card">
-          <div class="panel-header">
-            <div class="panel-title">
-              <div class="panel-title-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <polyline points="12 6 12 12 16 14"></polyline>
-                </svg>
-              </div>
-              <span>协作动态流水</span>
-            </div>
-            <span class="panel-meta">实时推送</span>
-          </div>
-
-          <div class="timeline-stream" id="timeline-container">
-            <!-- 动态注入时间线流水 -->
-          </div>
-        </section>
-      </div>
-
-      <!-- 3. Inter-Session Dialogue & Cross-Session Q&A -->
-      <section class="modern-card" style="margin-top: 20px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-title-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-            </div>
-            <span>助手跨会话对话与交接记录</span>
-          </div>
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <span class="panel-meta" id="dialogue-counter">0 条对话</span>
-            <button id="refresh-dialogue-btn" class="modern-btn-subtle">
-              <span>刷新对话</span>
-            </button>
-          </div>
-        </div>
-        <div class="dialogue-container" id="dialogue-stream">
-          <!-- 动态注入会话对答流水 -->
-          <div class="dialogue-empty-hint">暂无跨会话沟通记录，当多个助手互发消息确认接口或交接进度时将在此展示。</div>
-        </div>
-      </section>
-    </div>
-
-    <!-- ========================================== -->
-    <!-- VIEW 2: Live Multi-Session Collaboration Graph -->
-    <!-- ========================================== -->
-    <div id="view-collab" class="view-pane active">
-      <!-- 1. Collaboration Graph Hero Banner -->
-      <section class="collab-hero-panel">
-        <div class="collab-hero-header">
-          <div class="collab-title-group">
-            <div class="collab-icon-badge">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="6" cy="6" r="3"></circle>
-                <circle cx="18" cy="6" r="3"></circle>
-                <circle cx="18" cy="18" r="3"></circle>
-                <circle cx="6" cy="18" r="3"></circle>
-                <line x1="9" y1="6" x2="15" y2="6"></line>
-                <line x1="18" y1="9" x2="18" y2="15"></line>
-                <line x1="15" y1="18" x2="9" y2="18"></line>
-                <line x1="6" y1="15" x2="6" y2="9"></line>
-              </svg>
-            </div>
-            <div>
-              <div class="collab-main-title">
-                <span>多 Session 实时协同防撞车图谱</span>
-                <span class="badge-collab-live">实时感知</span>
-              </div>
-              <div class="collab-sub-title">全景追踪多会话正在修改的文件、调用的工具、独占的锁与冲突依赖因果</div>
-            </div>
-          </div>
-
-          <div class="collab-controls-group">
-            <div class="collab-filter-capsule">
-              <button id="collab-filter-all" class="collab-filter-btn active" title="展示全部在席会话（含在线待命池）">
-                <span>全景在席 (含待命)</span>
-              </button>
-              <button id="collab-filter-working" class="collab-filter-btn" title="仅看正在施工与排队争用的活跃会话">
-                <span>仅看活跃施工</span>
-              </button>
-            </div>
-
-            <div class="collab-health-capsule">
-              <span id="collab-live-dot" class="pulse-dot"></span>
-              <span id="collab-live-status" style="font-weight: 700;">实时联调监控中</span>
-              <span class="capsule-divider"></span>
-              <span id="collab-last-updated-text">就绪</span>
-            </div>
-
-            <button id="collab-refresh-btn" class="modern-btn-primary" title="手动刷新当前多会话协同图谱">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M23 4v6h-6"></path>
-                <path d="M1 20v-6h6"></path>
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-              </svg>
-              <span>立即刷新图谱</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- 5 Summary Metric Cards for Collaboration -->
-        <div class="collab-metric-grid">
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-working" id="collab-stat-working">0</span>
-            <span class="collab-metric-desc">在线施工中 (Working)</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-waiting" id="collab-stat-waiting">0</span>
-            <span class="collab-metric-desc">排队等待中 (Waiting)</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-idle" id="collab-stat-idle">0</span>
-            <span class="collab-metric-desc">在线待命 (Idle)</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-locks" id="collab-stat-locked-res">0</span>
-            <span class="collab-metric-desc">锁定资源 / 文件</span>
-          </div>
-          <div class="collab-metric-box">
-            <span class="collab-metric-num num-conflicts" id="collab-stat-conflicts">0</span>
-            <span class="collab-metric-desc">冲突依赖边</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- 2. Interactive Collaboration Canvas -->
-      <section class="modern-card" style="margin-top: 20px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-title-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="2" y1="12" x2="22" y2="12"></line>
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-              </svg>
-            </div>
-            <span>多会话协作与防撞车依赖全景拓扑</span>
-          </div>
-          <div class="panel-meta-actions">
-            <span class="collab-legend-item"><span class="legend-dot green"></span> 持有租约</span>
-            <span class="collab-legend-item"><span class="legend-dot amber"></span> 排队请求</span>
-            <span class="collab-legend-item"><span class="legend-dot red"></span> 冲突阻断</span>
-          </div>
-        </div>
-
-        <div class="collab-canvas-viewport" id="collab-viewport">
-          <div class="collab-canvas-inner" id="collab-canvas-inner">
-            <svg class="collab-svg-layer" id="collab-svg-layer"></svg>
-            <div class="collab-nodes-layer" id="collab-nodes-layer">
-              <!-- 动态注入会话节点与资源节点 -->
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 3. Real-time Session Inspection Table -->
-      <section class="modern-card" style="margin-top: 20px;">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-title-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                <line x1="3" y1="9" x2="21" y2="9"></line>
-                <line x1="9" y1="21" x2="9" y2="9"></line>
-              </svg>
-            </div>
-            <span>会话实时态势巡检表 (各助手当前执行工具与触达目标)</span>
-          </div>
-          <div class="panel-meta-actions" style="display: flex; align-items: center; gap: 10px;">
-            <div class="collab-filter-capsule mini">
-              <button id="collab-table-filter-all" class="collab-filter-btn active" title="展示全景（含待命会话）">全景</button>
-              <button id="collab-table-filter-working" class="collab-filter-btn" title="仅展示施工与排队会话">仅施工</button>
-            </div>
-            <span class="panel-meta" id="collab-table-meta">实时追踪</span>
-          </div>
-        </div>
-        <div class="collab-table-container">
-          <table class="collab-table">
-            <thead>
-              <tr>
-                <th>会话名称 / ID</th>
-                <th>生命周期状态</th>
-                <th>正在调用工具</th>
-                <th>当前触达目标 (文件/资源)</th>
-                <th>当前声明意图</th>
-                <th>独占锁明细</th>
-                <th>最后心跳</th>
-              </tr>
-            </thead>
-            <tbody id="collab-table-body">
-              <!-- 动态注入表格内容 -->
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-
-    <!-- ========================================== -->
-    <!-- VIEW 3: Functional Topology (功能演进拓扑)  -->
-    <!-- ========================================== -->
-    <div id="view-topology" class="view-pane">
-      <div class="topo-head-bar">
-        <div class="topo-title-box">
-          <div class="topo-icon-badge">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="18" cy="5" r="3"></circle>
-              <circle cx="6" cy="12" r="3"></circle>
-              <circle cx="18" cy="19" r="3"></circle>
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-            </svg>
-          </div>
-          <div>
-            <div class="topo-main-heading">功能开发与问题解决拓扑全景</div>
-            <div class="topo-sub-heading">按时间序串联演进脉络，呈现哪个 Agent 解决了什么问题、触达哪些核心文件与交接因果</div>
-          </div>
-        </div>
-        <div class="topo-toolbar">
-          <input type="text" id="topo-search-input" class="topo-search-input" placeholder="按功能、Agent、或文件路径筛选..." />
-          <button id="topo-refresh-btn" class="modern-btn-subtle">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M23 4v6h-6"></path>
-              <path d="M1 20v-6h6"></path>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-            <span>刷新拓扑</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="topo-stats-banner">
-        <div class="topo-stat-item">
-          <span class="topo-stat-label">演进节点总数</span>
-          <span class="topo-stat-val" id="topo-stat-nodes">0</span>
-        </div>
-        <div class="topo-stat-divider"></div>
-        <div class="topo-stat-item">
-          <span class="topo-stat-label">因果关联边</span>
-          <span class="topo-stat-val" id="topo-stat-edges">0</span>
-        </div>
-        <div class="topo-stat-divider"></div>
-        <div class="topo-stat-item">
-          <span class="topo-stat-label">参与施工 Agent</span>
-          <span class="topo-stat-val" id="topo-stat-agents">0</span>
-        </div>
-        <div class="topo-stat-divider"></div>
-        <div class="topo-stat-item" style="flex: 1; text-align: right; color: var(--text-faint); font-size: 13px;">
-          <span>按功能分支分类布局，点击节点卡片展开详细档案与因果快照</span>
-        </div>
-      </div>
-
-      <!-- 模块子系统分支筛选栏 -->
-      <div class="topo-filter-bar" id="topo-filter-bar">
-        <span class="topo-filter-label">分支视图:</span>
-        <div class="topo-filter-chips" id="topo-module-chips">
-          <button class="topo-filter-chip active" data-module="all">全景总览</button>
-        </div>
-      </div>
-
-      <div class="topo-canvas-viewport" id="topo-viewport">
-        <div class="topo-canvas-inner" id="topo-canvas-inner">
-          <svg class="topo-svg-layer" id="topo-svg-layer"></svg>
-          <div class="topo-nodes-layer" id="topo-nodes-layer"></div>
-        </div>
-
-        <!-- 节点点击展开详细档案抽屉 (详略得当) -->
-        <div id="topo-node-drawer" class="topo-drawer" style="display: none;">
-          <div class="topo-drawer-header">
-            <div class="topo-drawer-title-group">
-              <span id="drawer-node-type-badge" class="badge-collab-live">milestone</span>
-              <h3 id="drawer-node-title" class="topo-drawer-title">节点详情</h3>
-            </div>
-            <button id="topo-drawer-close" class="topo-drawer-close-btn" title="关闭详情">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          </div>
-
-          <div class="topo-drawer-body">
-            <!-- 模块与因果关系 -->
-            <div class="drawer-section">
-              <div class="drawer-section-title">功能子系统与因果关系</div>
-              <div class="drawer-tags-row">
-                <span class="drawer-meta-tag" id="drawer-module-tag">模块: core</span>
-                <span class="drawer-meta-tag" id="drawer-causality-tag">因果: sequence</span>
-                <span class="drawer-meta-tag" id="drawer-depth-tag">DAG 层级: 0</span>
-              </div>
-            </div>
-
-            <!-- 执行责任人与时间 -->
-            <div class="drawer-section">
-              <div class="drawer-section-title">施工会话与责任归属</div>
-              <div class="drawer-info-grid">
-                <div class="drawer-info-item">
-                  <span class="drawer-info-k">执行 Agent:</span>
-                  <span class="drawer-info-v" id="drawer-agent-id">-</span>
-                </div>
-                <div class="drawer-info-item">
-                  <span class="drawer-info-k">完成时间:</span>
-                  <span class="drawer-info-v" id="drawer-time">-</span>
-                </div>
-                <div class="drawer-info-item" style="grid-column: span 2;">
-                  <span class="drawer-info-k">关联合同/意向:</span>
-                  <span class="drawer-info-v" id="drawer-intent-id">无特定 Intent</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 详细描述与问题解决说明 -->
-            <div class="drawer-section">
-              <div class="drawer-section-title">问题解决说明与闭环产出</div>
-              <div class="drawer-desc-box" id="drawer-description">暂无详细说明</div>
-            </div>
-
-            <!-- 触达与修改的核心文件快照 (Claims) -->
-            <div class="drawer-section">
-              <div class="drawer-section-title">涉及核心资源与文件快照 (<span id="drawer-claims-count">0</span>)</div>
-              <div class="drawer-files-list" id="drawer-claims-list">
-                <!-- 动态注入改动文件 -->
-              </div>
-            </div>
-
-            <!-- 因果前驱与后继节点 -->
-            <div class="drawer-section">
-              <div class="drawer-section-title">因果脉络追溯</div>
-              <div class="drawer-causality-grid">
-                <div>
-                  <div class="drawer-sub-title">直接前驱节点 (Predecessors)</div>
-                  <div id="drawer-parents-list" class="drawer-node-links">无前驱 (初始源点)</div>
-                </div>
-                <div>
-                  <div class="drawer-sub-title">后续衍生推进 (Successors)</div>
-                  <div id="drawer-children-list" class="drawer-node-links">无衍生分支</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </main>
-
-  <!-- Sticky Master Command Broadcast Bar -->
-  <div class="master-bar">
-    <div class="master-inner">
-      <div class="master-badge">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+    <!-- 架构师状态 Ticker 胶囊 -->
+    <div class="lead-ticker-wrap">
+      <button id="lead-status-chip" class="lead-ticker-btn chip-silent" title="点击查看架构师协同避障详情">
+        <svg class="lead-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
         </svg>
-        <span>全员广播通知</span>
-      </div>
-      <input type="text" id="master-broadcast-input" class="master-input" placeholder="输入调度指令，一键广播至当前项目全员会话信箱（例如：立即暂停写入 database.js，先完成 auth 重构）..." />
-      <label class="master-urgency">
-        <input type="checkbox" id="master-broadcast-urgent" />
-        <span>紧急插话</span>
-      </label>
-      <button id="master-broadcast-btn" class="master-btn">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-        <span>发送广播</span>
+        <span id="lead-ticker-text">Tech Lead: 静默保驾</span>
       </button>
     </div>
   </div>
 
-  <!-- Project Memory Drawer -->
-  <div id="drawer-overlay" class="drawer-overlay"></div>
-  <div id="memory-drawer" class="memory-drawer">
-    <div class="drawer-head">
-      <div class="drawer-title-group">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+  <!-- 快捷广播浮动气泡 (点击喇叭展开) -->
+  <div id="broadcast-popover" class="broadcast-popover" hidden>
+    <div class="popover-head">
+      <div class="popover-title-group">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
         </svg>
-        <span class="drawer-title-text">项目知识备忘录</span>
+        <span>全员调度广播</span>
       </div>
-      <button id="close-memory-drawer-btn" class="drawer-close">&times;</button>
+      <button id="btn-broadcast-close" class="close-icon-btn" aria-label="关闭">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
-    <div class="drawer-search-bar">
-      <input type="text" id="memory-search-input" class="drawer-search-input" placeholder="搜索架构规约、业务约定或踩坑经验..." />
-    </div>
-    <div class="memory-list" id="memory-items-container"></div>
-    <div class="drawer-add-box">
-      <div class="add-row">
-        <select id="new-mem-cat" class="add-select">
-          <option value="architecture">架构设计 (Architecture)</option>
-          <option value="rule">开发铁律 (Rule)</option>
-          <option value="gotcha">踩坑排雷 (Gotcha)</option>
-          <option value="milestone">重要节点 (Milestone)</option>
-          <option value="general">常规备忘 (General)</option>
-        </select>
-        <input type="text" id="new-mem-key" class="add-key-input" placeholder="关键词/标识（例如：auth_protocol）" style="flex: 1;" />
+    <div class="popover-body">
+      <input type="text" id="master-broadcast-input" class="popover-input" placeholder="输入调度指令，一键下发全员信箱..." />
+      <div class="popover-footer">
+        <label class="urgent-label">
+          <input type="checkbox" id="master-broadcast-urgent" />
+          <span>紧急插话</span>
+        </label>
+        <button id="master-broadcast-btn" class="btn-primary">发送广播</button>
       </div>
-      <textarea id="new-mem-content" class="add-content-input" placeholder="记录架构规约、代码规范或踩坑经验..."></textarea>
-      <button id="save-mem-btn" class="add-save-btn">保存到项目备忘录</button>
     </div>
   </div>
 
-  <!-- Footer -->
-  <footer>
-    <div class="footer-left">
-      <span>Agent-Nexus 协同调度中枢 v0.2.7</span>
-      <span>•</span>
-      <span>为 Claude Code、Codex 等多 AI 助手提供防撞车防覆盖保驾护航</span>
+  <!-- 架构师建议弹出卡片 -->
+  <div id="lead-advice-popover" class="lead-popover" hidden>
+    <div class="popover-head">
+      <div class="popover-title-group">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        </svg>
+        <span>常驻架构师 (Tech Lead) 协同避障</span>
+      </div>
+      <button id="btn-lead-close" class="close-icon-btn" aria-label="关闭">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
-    <div class="footer-right">
-      本地高可用工程协同引擎
+    <div class="popover-body">
+      <div id="lead-advice-container" class="lead-text-box">
+        [Nexus 架构师静默保驾] 当前无多会话写冲突，架构师保持静默。当检测到并发修改同文件或排队时，将实时唤醒并提供避让重排与交接路线。
+      </div>
+      <div id="lead-awakened-detail" class="lead-awakened-detail" style="display: none;"></div>
     </div>
-  </footer>
+  </div>
+
+  <!-- 主体工作区 Main Body -->
+  <main class="main-body">
+    <!-- VIEW 1: 会话与防撞 (Sessions & Collision Prevention) -->
+    <div id="view-sessions" class="view-panel active">
+      <div class="split-layout">
+        <!-- 左栏 56%: 活跃会话与锁看板 -->
+        <div class="pane-left">
+          <!-- 活跃会话卡片 -->
+          <section class="panel-card flex-agents">
+            <div class="panel-head">
+              <div class="panel-title-wrap">
+                <span class="panel-title">在席助手 (Active Agents)</span>
+              </div>
+              <span class="panel-meta" id="agents-meta">0 个在线</span>
+            </div>
+            <div class="scroll-container" id="agents-container">
+              <div class="empty-hint">暂无在线会话，当 Claude Code / Codex 启动时将自动感知接入</div>
+            </div>
+          </section>
+
+          <!-- 锁定文件与资源 -->
+          <section class="panel-card flex-locks">
+            <div class="panel-head">
+              <div class="panel-title-wrap">
+                <span class="panel-title">锁定资源与文件 (Locks & Claims)</span>
+              </div>
+              <span class="panel-meta" id="locks-meta">0 项锁定</span>
+            </div>
+            <div id="conflict-alert" class="conflict-banner" style="display: none;"></div>
+            <div class="scroll-container" id="locks-container">
+              <div class="empty-hint">当前无活跃独占锁，所有写入与命令均可畅行</div>
+            </div>
+          </section>
+        </div>
+
+        <!-- 右栏 44%: 实时协同与防撞流水 -->
+        <div class="pane-right">
+          <section class="panel-card flex-stream">
+            <div class="panel-head">
+              <div class="panel-title-wrap">
+                <span class="panel-title">协同防撞动态 (Live Stream)</span>
+              </div>
+              <div class="stream-filters">
+                <button class="filter-pill active" data-filter="all">全部</button>
+                <button class="filter-pill" data-filter="conflict">仅拦截</button>
+                <button class="filter-pill" data-filter="release">释放</button>
+              </div>
+            </div>
+            <div class="scroll-container stream-container" id="timeline-container">
+              <div class="empty-hint">等待协同事件发生...</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: 动态与日志 (Dialogue & Milestones) -->
+    <div id="view-timeline" class="view-panel">
+      <div class="split-v-layout">
+        <!-- 上部: 跨会话对话网络 -->
+        <section class="panel-card flex-dialogue">
+          <div class="panel-head">
+            <div class="panel-title-wrap">
+              <span class="panel-title">跨会话对话与调度记录</span>
+            </div>
+            <span class="panel-meta" id="dialogue-counter">0 条记录</span>
+          </div>
+          <div class="scroll-container dialogue-container" id="dialogue-stream">
+            <div class="empty-hint">暂无跨会话对答，当助手之间发送协作消息时将在此实时聚合</div>
+          </div>
+        </section>
+
+        <!-- 下部: 演进里程碑历史 -->
+        <section class="panel-card flex-milestones">
+          <div class="panel-head">
+            <div class="panel-title-wrap">
+              <span class="panel-title">工程演进里程碑 (Milestones)</span>
+            </div>
+            <span class="panel-meta" id="milestones-counter">0 项闭环产出</span>
+          </div>
+          <div class="scroll-container milestone-container" id="milestones-container">
+            <div class="empty-hint">暂无里程碑记录，当调用 nexus_report_milestone 或任务闭环释放时沉淀于此</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- VIEW 3: 知识备忘 (Memory & Rules) -->
+    <div id="view-memory" class="view-panel">
+      <section class="panel-card full-memory-panel">
+        <div class="panel-head memory-head">
+          <div class="memory-title-group">
+            <span class="panel-title">项目知识备忘录 (Memory & Rules)</span>
+            <span class="panel-meta" id="memory-counter">0 项规约</span>
+          </div>
+          <div class="memory-search-wrap">
+            <input type="search" id="memory-search-input" class="search-input" placeholder="搜索架构规约、开发规范或踩坑经验..." />
+          </div>
+        </div>
+
+        <div class="scroll-container memory-grid" id="memory-items-container"></div>
+
+        <!-- 底部紧凑新增备忘栏 -->
+        <div class="memory-add-bar" id="drawer-add-box">
+          <select id="new-mem-cat" class="mini-select">
+            <option value="architecture">架构设计 (Architecture)</option>
+            <option value="rule">开发铁律 (Rule)</option>
+            <option value="gotcha">踩坑排雷 (Gotcha)</option>
+            <option value="milestone">重要节点 (Milestone)</option>
+            <option value="general">常规备忘 (General)</option>
+          </select>
+          <input type="text" id="new-mem-key" class="mini-input" placeholder="标识/Slug (如 auth_protocol)" />
+          <input type="text" id="new-mem-content" class="mini-input-wide" placeholder="输入规约、代码规范或踩坑经验详情..." />
+          <button id="save-mem-btn" class="btn-primary-sm">保存</button>
+        </div>
+      </section>
+    </div>
+  </main>
 
   <script src="/app.js"></script>
 </body>
