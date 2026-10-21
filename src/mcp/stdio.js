@@ -283,7 +283,7 @@ export function startMcpStdio(options = {}) {
           },
           serverInfo: {
             name: 'agent-nexus',
-            version: '0.2.0'
+            version: '0.2.12'
           }
         }
       });

@@ -293,14 +293,14 @@ function selfHealDatabase(db) {
       const badIntents = db.prepare(`
         SELECT id, summary, blocked_reason FROM intents
         WHERE instr(summary, ?) > 0 OR instr(blocked_reason, ?) > 0
-      `).all('', '');
+      `).all('�', '�');
 
       const updateIntent = db.prepare(`UPDATE intents SET summary = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`);
       for (const row of badIntents) {
         let summary = row.summary || '';
         let blocked = row.blocked_reason || null;
-        if (summary.includes('')) summary = 'Background Coordination Task';
-        if (blocked && blocked.includes('')) {
+        if (summary.includes('�')) summary = 'Background Coordination Task';
+        if (blocked && blocked.includes('�')) {
           blocked = blocked.replace(/[^\x20-\x7E一-龥_.\-/:#\[\]\(\)'\"]/g, 'System Agent').replace(/\s+/g, ' ');
         }
         updateIntent.run(summary, blocked, now, row.id);
@@ -309,7 +309,7 @@ function selfHealDatabase(db) {
 
     // 4. 自愈修复包含 � 的 activity_log 记录
     try {
-      const badLogs = db.prepare(`SELECT id, description FROM activity_log WHERE instr(description, ?) > 0`).all('');
+      const badLogs = db.prepare(`SELECT id, description FROM activity_log WHERE instr(description, ?) > 0`).all('�');
       const updateLog = db.prepare(`UPDATE activity_log SET description = ? WHERE id = ?`);
       for (const log of badLogs) {
         const cleanDesc = log.description.replace(/[^\x20-\x7E一-龥_.\-/:#\[\]\(\)'\"]/g, 'System Agent').replace(/\s+/g, ' ');
@@ -317,13 +317,29 @@ function selfHealDatabase(db) {
       }
     } catch {}
 
-    // 5. 将超期无心跳 (>120s) 的在线 Agent 状态归位为 departed，防止幽灵在线
+    // 5. 校验超期无心跳 (>120s) 的在线 Agent，若 PID 已消亡或心跳超期 (>10min 被系统复用) 则归位为 departed，防止幽灵在线
     try {
-      db.prepare(`
-        UPDATE agents
-        SET status = 'departed'
-        WHERE status IN ('running', 'waiting') AND (? - last_heartbeat) > 120000
-      `).run(now);
+      const staleAgents = db.prepare(`
+        SELECT id, pid, last_heartbeat FROM agents
+        WHERE status IN ('running', 'waiting', 'idle') AND (? - last_heartbeat) > 120000
+      `).all(now);
+
+      const updateDeparted = db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`);
+      for (const a of staleAgents) {
+        let isAlive = false;
+        const heartbeatAge = now - (a.last_heartbeat || 0);
+        if (a.pid && Number.isInteger(a.pid) && a.pid > 0 && heartbeatAge <= 600000) {
+          try {
+            process.kill(a.pid, 0);
+            isAlive = true;
+          } catch (e) {
+            isAlive = (e.code === 'EPERM');
+          }
+        }
+        if (!isAlive) {
+          updateDeparted.run(a.id);
+        }
+      }
     } catch {}
   } catch (err) {
     // 自愈异常不阻断主流程启动

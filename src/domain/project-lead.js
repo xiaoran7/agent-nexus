@@ -452,8 +452,8 @@ ${deterministicAdvice}
         this.coordinator.db.prepare(`
           UPDATE agents
           SET progress_summary = ?, last_heartbeat = ?
-          WHERE id = ? AND project_id = ?
-        `).run(description.trim(), Date.now(), agentId, this.projectId);
+          WHERE id = ?
+        `).run(description.trim(), Date.now(), agentId);
       } catch {}
     }
 

@@ -23,19 +23,21 @@ class DaemonController {
       return { executable: process.env.NEXUS_NODE_PATH, asNode: false };
     }
 
-    // 优先尝试系统 PATH 中的 Node（必须支持 node:sqlite 原生模块）
+    // 优先尝试真实物理路径与 PATH 中的 Node（必须支持 node:sqlite 原生模块）
     const candidates = [
-      'node',
-      'node.exe',
       'D:\\nodejs\\node.exe',
       'C:\\Program Files\\nodejs\\node.exe',
-      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'node', 'node.exe')
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'node', 'node.exe'),
+      path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'nodejs', 'node.exe'),
+      'node.exe',
+      'node'
     ];
 
     const { execFileSync } = require('node:child_process');
     for (const candidate of candidates) {
+      if (candidate.includes('\\') && !fs.existsSync(candidate)) continue;
       try {
-        execFileSync(candidate, ['-e', 'require("node:sqlite")'], { stdio: 'ignore' });
+        execFileSync(candidate, ['-e', 'require("node:sqlite")'], { stdio: 'ignore', windowsHide: true });
         return { executable: candidate, asNode: false };
       } catch {}
     }
@@ -87,6 +89,7 @@ class DaemonController {
     this.childProcess = spawn(runtime.executable, [cliPath, 'start'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
+      windowsHide: true,
       env
     });
 
@@ -94,12 +97,11 @@ class DaemonController {
 
     this.childProcess.stdout.on('data', (d) => {
       const msg = d.toString();
-      // 在桌面终端调试输出
-      if (process.env.DEBUG) process.stdout.write(msg);
+      console.log('[Desktop Daemon stdout]:', msg.trim());
     });
 
     this.childProcess.stderr.on('data', (d) => {
-      if (process.env.DEBUG) process.stderr.write(d.toString());
+      console.error('[Desktop Daemon stderr]:', d.toString().trim());
     });
 
     // 轮询等待健康检查就绪 (最多等待 6 秒)

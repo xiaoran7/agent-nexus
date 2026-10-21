@@ -101,7 +101,7 @@ export class StateService {
     `).all(projectId, namespace, now);
   }
 
-  // CAS (Compare-And-Swap) 原子操作
+  // CAS (Compare-And-Swap) 原子操作：在 BEGIN IMMEDIATE 事务中原子执行，消除 TOCTOU 竞争
   compareAndSwap(namespace = 'default', key, expected, newValue, updatedBy, ttlSeconds = null, projectId = 'default') {
     requireString(namespace, 'namespace');
     requireString(key, 'key');
@@ -115,26 +115,57 @@ export class StateService {
       requireString(updatedBy, 'updated_by');
     }
 
+    const ttl = requireTtl(ttlSeconds);
     this.expireSweep();
-    const current = this.get(namespace, key, projectId);
-    const currentValue = current ? current.value : null;
 
-    if (currentValue !== expected) {
-      return { swapped: false, current: current };
-    }
-
+    this.db.exec('BEGIN IMMEDIATE');
     try {
+      const now = Date.now();
+      const row = this.db.prepare(`
+        SELECT * FROM state WHERE project_id = ? AND namespace = ? AND key = ?
+      `).get(projectId, namespace, key);
+
+      const isExpired = row && row.expires_at !== null && row.expires_at <= now;
+      const effectiveRow = isExpired ? null : row;
+      const currentValue = effectiveRow ? effectiveRow.value : null;
+
+      if (currentValue !== expected) {
+        this.db.exec('COMMIT');
+        return { swapped: false, current: effectiveRow };
+      }
+
       if (newValue === '' || newValue === null) {
-        this.delete(namespace, key, projectId);
+        this.db.prepare(`
+          DELETE FROM state WHERE project_id = ? AND namespace = ? AND key = ?
+        `).run(projectId, namespace, key);
+        this.db.exec('COMMIT');
+        this.eventBus?.emit('state:deleted', { project_id: projectId, namespace, key });
+        return { swapped: true, current: null };
       } else {
-        this.set(namespace, key, newValue, updatedBy, requireTtl(ttlSeconds), projectId);
+        const expiresAt = ttl ? now + (ttl * 1000) : null;
+        this.db.prepare(`
+          INSERT INTO state (project_id, namespace, key, value, updated_by, expires_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(project_id, namespace, key) DO UPDATE SET
+            value = excluded.value,
+            updated_by = excluded.updated_by,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at
+        `).run(projectId, namespace, key, newValue, updatedBy, expiresAt, now);
+
+        const updatedRow = this.db.prepare(`
+          SELECT * FROM state WHERE project_id = ? AND namespace = ? AND key = ?
+        `).get(projectId, namespace, key);
+
+        this.db.exec('COMMIT');
+        this.eventBus?.emit('state:changed', { project_id: projectId, namespace, key, value: newValue, updatedBy });
+        return { swapped: true, current: updatedRow };
       }
     } catch (err) {
-      if (err instanceof ValidationError && err.field === 'value') {
-        throw new ValidationError('"new_value" must be a string or null', 'new_value');
-      }
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
       throw err;
     }
-    return { swapped: true, current: this.get(namespace, key, projectId) };
   }
 }

@@ -509,7 +509,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       // 6.1 显式命名资源锁接口 (Resource Locks)
       if (url.pathname === '/api/resources/locks' && req.method === 'GET') {
-        const pid = url.searchParams.get('project_id') || 'default';
+        const pid = url.searchParams.get('project_id') || null;
         return sendJson(200, coordinator.listResourceLocks(pid));
       }
       if (url.pathname === '/api/resources/lock' && req.method === 'POST') {
@@ -608,7 +608,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
 
       // 9.0 Unified Cockpit (综合全览聚合视图数据)
       if (url.pathname === '/api/cockpit' && req.method === 'GET') {
-        const pid = url.searchParams.get('project_id') || 'default';
+        const pid = url.searchParams.get('project_id') || null;
         return sendJson(200, coordinator.getUnifiedCockpit(pid));
       }
 

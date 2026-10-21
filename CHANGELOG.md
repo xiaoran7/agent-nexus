@@ -4,7 +4,35 @@
 
 ---
 
-## 2026-10-20 多模块自适应拖拽分割与阶梯路由走廊 (Adaptive Split Resizers & Staggered Routing v0.2.11)
+## 2026-10-21 全景会话洞察、PID复用防幽灵与跨工程路由标签 (Multi-Session Global Discovery v0.2.13)
+
+### 改了什么
+
+- **会话发现与跨工程全景呈现 (`src/ui/app.js`, `src/ui/style.css`, `src/daemon/coordinator.js`)**：
+  - **默认工程全景回退**：彻底解决用户在多工作区同时开启众多 Claude Code 会话时，控制台因默认贪心锁定单工程导致只显示两三个会话的缺陷；初始化默认回退策略设为跨项目全景 (`id: 'all'`)；
+  - **跨项目总数全局指引**：在单工程切片视图下，在席会话栏与路由走廊顶部均展示全局跨项目在线总数，并提供一键切入全景的无损直达链接（`(跨项目共 N 个会话 · 查看全景)`）；
+  - **跨工程来源标签 (Project Badges)**：在全景模式下，在席助手卡片与 Lane 1 会话源卡片均自动打上工程简称标签（`.agent-project-badge` 与 `.route-project-badge`），快速区分多目录会话来源。
+- **Windows PID 复用防幽灵机制 (Heartbeat-Bounded PID Liveness)**：
+  - Windows 系统下长久停留在数据库中的历史离线 Agent，其旧 PID 经常被操作系统重新分配给系统常驻服务（如 `svchost.exe`、`nvcontainer` 等），导致单纯基于 `process.kill(pid, 0)` 误判该 Agent 仍在席；
+  - 在 `computeAgentLifecycleState`、`reapStaleIntentsAndAgents` 及数据库启动自愈器 `selfHealDatabase` 中全面引入心跳衰减门禁 (`heartbeatAge <= 600000`)；超过 10 分钟无心跳的 Agent 立即归位为 `departed`，彻底杜绝 PID 复用幽灵在席与僵尸锁占用。
+- **状态机与渲染过滤统一**：
+  - 前端移除残留的旧版静态 `a.status === 'departed'` 过滤，统一由四级生命周期 `lifecycle_state` (`working` / `waiting` / `idle` / `departed`) 与 `is_online` 驱动，杜绝存活会话被误判隐藏。
+
+### 验证
+
+- **全量测试套件验证**：`node --test "test/**/*.test.js"` 全量 249 项测试通过；
+- **全流程语法与静态分析**：无报错，向前向后兼容性完备。
+
+---
+
+## 2026-10-21 修复幽灵工程与WS竞争导致在席会话显示为0的缺陷 (Ghost Project Fix v0.2.12)
+
+### 改了什么
+
+- **修复 WebSocket 请求竞争与幽灵工程回退**：消除项目切换时由于无会话工程被意外覆盖导致的在席会话闪烁为 0 问题；
+- **现代化组件样式归一化**：全面清理重复刷新按钮与重叠样式。
+
+---
 
 ### 改了什么
 

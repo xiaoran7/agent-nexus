@@ -113,7 +113,7 @@ export function cleanUtf8String(str, fallback = '') {
   if (typeof str !== 'string') return String(str);
   let s = str.trim();
   if (!s) return fallback;
-  if (s.includes('�') || s.includes('')) {
+  if (s.includes('�')) {
     s = s.replace(/[�]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
   s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
@@ -253,9 +253,11 @@ export function isExecutingWorkingTool(tool, heartbeat, now) {
 }
 
 export function computeAgentLifecycleState(agent, now) {
-  const isPidActive = agent.pid ? isPidAlive(agent.pid) : false;
-  const isHeartbeatFresh = (now - (agent.last_heartbeat || 0)) <= 120000;
-  const isOnline = isPidActive || isHeartbeatFresh;
+  const heartbeatAge = now - (agent.last_heartbeat || 0);
+  const isHeartbeatFresh = heartbeatAge <= 120000;
+  // 进程探针保护：如果心跳已超过 10 分钟 (600,000ms)，单纯的 PID 存活极有可能是操作系统 PID 回收复用给无关系统进程 (如 svchost)，不视作该 Agent 在线
+  const isPidActive = agent.pid ? (isPidAlive(agent.pid) && heartbeatAge <= 600000) : false;
+  const isOnline = isHeartbeatFresh || isPidActive;
 
   if (!isOnline) {
     return { lifecycleState: 'departed', isOnline: false };
@@ -1235,14 +1237,15 @@ export class CoordinatorEngine {
         }
       }
 
-      // 4. 将超过 2 分钟无心跳且无存活 PID 的会话同步为 departed
+      // 4. 将超过 2 分钟无心跳且无存活 PID (或超过 10 分钟无心跳的 PID 复用陈旧记录) 的会话同步为 departed
       const unconfirmedAgents = this.db.prepare(`
         SELECT id, pid, last_heartbeat FROM agents
-        WHERE status IN ('running', 'waiting') AND (? - last_heartbeat) > 120000
+        WHERE status IN ('running', 'waiting', 'idle') AND (? - last_heartbeat) > 120000
       `).all(now);
 
       for (const ag of unconfirmedAgents) {
-        const alive = ag.pid && isPidAlive(ag.pid);
+        const heartbeatAge = now - (ag.last_heartbeat || 0);
+        const alive = ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000;
         if (!alive) {
           this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
         } else {
@@ -1471,15 +1474,26 @@ export class CoordinatorEngine {
 
   listResourceLocks(projectId = 'default') {
     const now = Date.now();
-    const rows = this.db.prepare(`
-      SELECT c.claim_target as resource_name, c.agent_id, a.name as agent_name, i.summary, l.expires_at, l.created_at
-      FROM claims c
-      JOIN leases l ON c.intent_id = l.intent_id
-      JOIN agents a ON c.agent_id = a.id
-      JOIN intents i ON c.intent_id = i.id
-      WHERE c.project_id = ? AND c.claim_type = 'resource' AND l.expires_at > ?
-      ORDER BY l.created_at ASC
-    `).all(projectId, now);
+    const isAll = !projectId || projectId === 'all';
+    const rows = isAll
+      ? this.db.prepare(`
+          SELECT c.claim_target as resource_name, c.agent_id, a.name as agent_name, i.summary, l.expires_at, l.created_at
+          FROM claims c
+          JOIN leases l ON c.intent_id = l.intent_id
+          JOIN agents a ON c.agent_id = a.id
+          JOIN intents i ON c.intent_id = i.id
+          WHERE c.claim_type = 'resource' AND l.expires_at > ?
+          ORDER BY l.created_at ASC
+        `).all(now)
+      : this.db.prepare(`
+          SELECT c.claim_target as resource_name, c.agent_id, a.name as agent_name, i.summary, l.expires_at, l.created_at
+          FROM claims c
+          JOIN leases l ON c.intent_id = l.intent_id
+          JOIN agents a ON c.agent_id = a.id
+          JOIN intents i ON c.intent_id = i.id
+          WHERE c.project_id = ? AND c.claim_type = 'resource' AND l.expires_at > ?
+          ORDER BY l.created_at ASC
+        `).all(projectId, now);
 
     return rows.map(r => ({
       resourceName: r.resource_name,

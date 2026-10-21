@@ -18,6 +18,20 @@ let currentProjectId = 'default';
 let currentTimelineFilter = 'all';
 let currentDashboardData = null;
 let currentTimelineData = [];
+const globalProjectsMap = new Map();
+let totalGlobalOnlineAgents = 0;
+
+function getProjectDisplayName(projectId, workspaceDir) {
+  if (projectId && globalProjectsMap.has(projectId)) {
+    return globalProjectsMap.get(projectId).display_name || projectId;
+  }
+  if (workspaceDir) {
+    const clean = workspaceDir.replace(/\\/g, '/').replace(/\/+$/, '');
+    const base = clean.split('/').pop();
+    if (base) return base;
+  }
+  return '';
+}
 
 const authHeaders = () => {
   const token = getNexusToken();
@@ -410,21 +424,29 @@ if (dom.btnRefresh) {
 // =============================================================================
 // Project Selection & Persistence
 // =============================================================================
+function selectProject(projectId) {
+  currentProjectId = projectId;
+  localStorage.setItem('nexusProjectId', currentProjectId);
+  if (dom.projectSelector) {
+    dom.projectSelector.value = currentProjectId;
+  }
+  if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+    try {
+      activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
+    } catch {}
+  }
+  fetchDashboard();
+  fetchDialogues();
+  fetchMilestones();
+  if (dom.viewRouting?.classList.contains('active')) {
+    fetchRoutingTopology();
+  }
+}
+window.nexusSelectProject = selectProject;
+
 if (dom.projectSelector) {
   dom.projectSelector.onchange = () => {
-    currentProjectId = dom.projectSelector.value;
-    localStorage.setItem('nexusProjectId', currentProjectId);
-    if (activeWs && activeWs.readyState === WebSocket.OPEN) {
-      try {
-        activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
-      } catch {}
-    }
-    fetchDashboard();
-    fetchDialogues();
-    fetchMilestones();
-    if (dom.viewRouting?.classList.contains('active')) {
-      fetchRoutingTopology();
-    }
+    selectProject(dom.projectSelector.value);
   };
 }
 
@@ -445,6 +467,12 @@ async function loadProjects() {
       }
     }
 
+    globalProjectsMap.clear();
+    for (const p of uniqueProjects) {
+      globalProjectsMap.set(p.id, p);
+    }
+    totalGlobalOnlineAgents = uniqueProjects.reduce((sum, p) => sum + (p.online_agents_count || 0), 0);
+
     const qProject = new URLSearchParams(location.search).get('project') || new URLSearchParams(location.search).get('project_id');
     const savedProjectId = qProject || localStorage.getItem('nexusProjectId');
 
@@ -463,22 +491,13 @@ async function loadProjects() {
     } else if (effectiveSavedId) {
       const found = uniqueProjects.find(p => p.id === effectiveSavedId);
       if (found) {
-        // 如果 savedId 对应的项目有在线会话，或者当前没有其他项目有在线会话，保持该项目
-        const anyOnline = uniqueProjects.some(p => (p.online_agents_count || 0) > 0);
-        if ((found.online_agents_count || 0) > 0 || !anyOnline) {
-          targetProject = found;
-        }
+        targetProject = found;
       }
     }
 
-    // 智能在线感知回退策略：优先展示当前处于活跃在席状态的工程（避免展示空项目）
+    // 默认工程策略：优先全景工程 (跨项目总览)，避免用户开启多会话却被默认锁进单工程只显示两三个
     if (!targetProject) {
-      targetProject = uniqueProjects.find(p => (p.display_name === 'Agent-Nexus' || p.id === 'b7e6c7a3e3b4182e') && (p.online_agents_count || 0) > 0) ||
-                      uniqueProjects.find(p => (p.online_agents_count || 0) > 0) ||
-                      uniqueProjects.find(p => p.display_name === 'Agent-Nexus' || p.id === 'b7e6c7a3e3b4182e') ||
-                      uniqueProjects.find(p => p.id !== 'default' && (p.last_activity > 0)) ||
-                      uniqueProjects[0] ||
-                      { id: 'all' };
+      targetProject = { id: 'all' };
     }
 
     if (targetProject) {
@@ -609,7 +628,7 @@ function handleLeadAwakened(data) {
   }
 }
 
-// 渲染活跃助手 (只渲染 working / waiting，过滤掉历史离线僵尸会话)
+// 渲染活跃助手 (只渲染 working / waiting / idle，过滤掉离线僵尸会话)
 function renderActiveAgents(agents, activeClaims) {
   if (!dom.agentsContainer) return;
 
@@ -617,12 +636,12 @@ function renderActiveAgents(agents, activeClaims) {
   const claimsList = activeClaims || [];
 
   for (const a of (agents || [])) {
-    if (a.lifecycle_state === 'departed' || a.status === 'departed') continue;
+    if (a.lifecycle_state === 'departed' || a.is_online === false) continue;
 
     const claims = claimsList.filter(c => c.agent_id === a.id);
     const isWorking = a.lifecycle_state === 'working' ||
                       a.status === 'running' ||
-                      (claims.length > 0 && a.status !== 'departed');
+                      claims.length > 0;
 
     const isWaiting = !isWorking && (
       a.lifecycle_state === 'waiting' ||
@@ -641,7 +660,15 @@ function renderActiveAgents(agents, activeClaims) {
   }
 
   if (dom.agentsMeta) {
-    dom.agentsMeta.textContent = `${validAgents.length} 个在席`;
+    if (currentProjectId === 'all') {
+      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席 · 跨项目全景`;
+    } else {
+      const globalCount = totalGlobalOnlineAgents > validAgents.length ? totalGlobalOnlineAgents : validAgents.length;
+      const overviewHint = globalCount > validAgents.length
+        ? ` <span class="global-overview-hint">(全局跨项目 ${globalCount} 个会话 · <a href="javascript:void(0)" onclick="nexusSelectProject('all')" class="view-all-link">查看全景</a>)</span>`
+        : '';
+      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席${overviewHint}`;
+    }
   }
 
   if (validAgents.length === 0) {
@@ -657,6 +684,9 @@ function renderActiveAgents(agents, activeClaims) {
     const toolSafe = a.last_tool ? escapeHtml(a.last_tool) : null;
     const targetSafe = a.last_target ? escapeHtml(a.last_target.split(/[\/\\]/).pop()) : null;
     const claims = a.resolvedClaims || [];
+    const projName = getProjectDisplayName(a.project_id, a.workspace_dir);
+    const projSafe = escapeHtml(projName);
+    const showProj = (currentProjectId === 'all' || !currentProjectId) && projSafe;
 
     return `
       <div class="agent-card-item is-${a.uiState}">
@@ -664,6 +694,7 @@ function renderActiveAgents(agents, activeClaims) {
           <div class="agent-name-group">
             <span class="agent-status-badge badge-${a.uiState}">${a.badgeText}</span>
             <span class="agent-title" title="${nameSafe}">${nameSafe}</span>
+            ${showProj ? `<span class="agent-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
           </div>
           <span class="agent-runtime-tag">${providerSafe}</span>
         </div>
@@ -1017,7 +1048,7 @@ function renderRoutingDiagram(cockpitData) {
   // 过滤离线僵尸会话
   const validAgents = [];
   for (const a of rawAgents) {
-    if (a.lifecycle_state === 'departed' || a.status === 'departed') continue;
+    if (a.lifecycle_state === 'departed' || a.is_online === false) continue;
     const claims = activeClaims.filter(c => c.agent_id === a.id);
     const isWorking = a.lifecycle_state === 'working' || a.status === 'running' || claims.length > 0;
     const isWaiting = !isWorking && (a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason);
@@ -1027,7 +1058,15 @@ function renderRoutingDiagram(cockpitData) {
 
   // 1. 顶部指标摘要
   if (dom.routingSummaryMeta) {
-    dom.routingSummaryMeta.textContent = `${validAgents.length} 个在席会话 · ${activeClaims.length + resourceLocks.length} 项独占锁 · ${waitQueue.length} 处冲突等待`;
+    if (currentProjectId === 'all') {
+      dom.routingSummaryMeta.innerHTML = `<span class="routing-metric-highlight">${validAgents.length}</span> 个在席会话 · ${activeClaims.length + resourceLocks.length} 项独占锁 · ${waitQueue.length} 处冲突等待 <span class="routing-scope-pill">全景跨项目</span>`;
+    } else {
+      const globalCount = totalGlobalOnlineAgents > validAgents.length ? totalGlobalOnlineAgents : validAgents.length;
+      const overviewHint = globalCount > validAgents.length
+        ? ` <span class="global-overview-hint">(跨项目共 ${globalCount} 个会话 · <a href="javascript:void(0)" onclick="nexusSelectProject('all')" class="view-all-link">查看全景</a>)</span>`
+        : '';
+      dom.routingSummaryMeta.innerHTML = `${validAgents.length} 个在席会话 · ${activeClaims.length + resourceLocks.length} 项独占锁 · ${waitQueue.length} 处冲突等待${overviewHint}`;
+    }
   }
   if (dom.badgeSessionsCount) dom.badgeSessionsCount.textContent = validAgents.length;
 
@@ -1061,6 +1100,9 @@ function renderRoutingDiagram(cockpitData) {
         const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命中 · 监听工作区变更' : '执行任务中'));
         const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'idle'));
         const claimsCount = a.resolvedClaims.length;
+        const projName = getProjectDisplayName(a.project_id, a.workspace_dir);
+        const projSafe = escapeHtml(projName);
+        const showProj = (currentProjectId === 'all' || !currentProjectId) && projSafe;
 
         let statusBadge = '<span class="session-status-tag status-idle"><span class="dot"></span>待命</span>';
         if (a.uiState === 'working') {
@@ -1075,6 +1117,7 @@ function renderRoutingDiagram(cockpitData) {
               <div class="route-card-identity">
                 <span class="route-agent-name" title="完整会话标识: ${idSafe}">${nameSafe}</span>
                 <span class="route-provider-badge">${providerSafe}</span>
+                ${showProj ? `<span class="route-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
               </div>
               ${statusBadge}
             </div>

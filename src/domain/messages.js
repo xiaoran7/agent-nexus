@@ -276,14 +276,19 @@ export class MessageService {
     const now = Date.now();
 
     const trimmed = summary.trim();
+    const agent = this.db.prepare('SELECT id, project_id FROM agents WHERE id = ?').get(agentId);
+    const effectiveProjectId = (finalProjectId && finalProjectId !== 'default')
+      ? finalProjectId
+      : (agent?.project_id || finalProjectId);
+
     this.db.prepare(`
       UPDATE agents
       SET progress_summary = ?, last_heartbeat = ?
-      WHERE id = ? AND project_id = ?
-    `).run(trimmed, now, agentId, finalProjectId);
+      WHERE id = ?
+    `).run(trimmed, now, agentId);
 
     this.eventBus.emit('agent:progress', {
-      project_id: finalProjectId,
+      project_id: effectiveProjectId,
       agent_id: agentId,
       progress_summary: trimmed,
       updated_at: now
