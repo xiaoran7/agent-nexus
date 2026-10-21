@@ -105,12 +105,26 @@ async function main() {
     fs.mkdirSync(DELIVERABLES_DIR, { recursive: true });
   }
 
-  // 删除历史旧版本
+  // 删除历史旧版本 (如遇当前正在运行的旧版本则宽容告警，不阻断新版本构建)
   const existingFiles = fs.readdirSync(DELIVERABLES_DIR);
   for (const f of existingFiles) {
+    if (f.includes(`v${version}`)) {
+      // 当前目标版本若存在尝试清理
+      const fullPath = path.join(DELIVERABLES_DIR, f);
+      try {
+        fs.rmSync(fullPath, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`[Build] Notice: Target file ${f} is currently locked by a running process.`);
+      }
+      continue;
+    }
     const fullPath = path.join(DELIVERABLES_DIR, f);
     console.log(`[Build] Cleaning old deliverable: ${f}`);
-    fs.rmSync(fullPath, { recursive: true, force: true });
+    try {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    } catch (err) {
+      console.warn(`[Build] Warning: Could not remove old deliverable ${f} (in use by active process). Skipping.`);
+    }
   }
 
   const finalAppDir = path.join(DELIVERABLES_DIR, `Agent-Nexus-v${version}-win32-x64`);

@@ -397,6 +397,7 @@ document.addEventListener('click', (e) => {
 // 刷新按钮
 if (dom.btnRefresh) {
   dom.btnRefresh.onclick = () => {
+    loadProjects();
     fetchDashboard();
     fetchDialogues();
     fetchMilestones();
@@ -413,6 +414,11 @@ if (dom.projectSelector) {
   dom.projectSelector.onchange = () => {
     currentProjectId = dom.projectSelector.value;
     localStorage.setItem('nexusProjectId', currentProjectId);
+    if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+      try {
+        activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
+      } catch {}
+    }
     fetchDashboard();
     fetchDialogues();
     fetchMilestones();
@@ -441,11 +447,36 @@ async function loadProjects() {
 
     const qProject = new URLSearchParams(location.search).get('project') || new URLSearchParams(location.search).get('project_id');
     const savedProjectId = qProject || localStorage.getItem('nexusProjectId');
-    let targetProject = savedProjectId === 'all' ? { id: 'all' } : uniqueProjects.find(p => p.id === savedProjectId);
+
+    // 自动迁移历史存留的 'Agent-Nexus' 字符串为真实的 project hash ID
+    let effectiveSavedId = savedProjectId;
+    if (effectiveSavedId === 'Agent-Nexus') {
+      const realNexus = uniqueProjects.find(p => p.display_name === 'Agent-Nexus' || p.id === 'b7e6c7a3e3b4182e');
+      if (realNexus) effectiveSavedId = realNexus.id;
+    }
+
+    let targetProject = null;
+    if (qProject) {
+      targetProject = qProject === 'all' ? { id: 'all' } : uniqueProjects.find(p => p.id === qProject);
+    } else if (effectiveSavedId === 'all') {
+      targetProject = { id: 'all' };
+    } else if (effectiveSavedId) {
+      const found = uniqueProjects.find(p => p.id === effectiveSavedId);
+      if (found) {
+        // 如果 savedId 对应的项目有在线会话，或者当前没有其他项目有在线会话，保持该项目
+        const anyOnline = uniqueProjects.some(p => (p.online_agents_count || 0) > 0);
+        if ((found.online_agents_count || 0) > 0 || !anyOnline) {
+          targetProject = found;
+        }
+      }
+    }
+
+    // 智能在线感知回退策略：优先展示当前处于活跃在席状态的工程（避免展示空项目）
     if (!targetProject) {
-      targetProject = uniqueProjects.find(p => p.id === 'Agent-Nexus') ||
-                      uniqueProjects.find(p => p.id !== 'default' && (p.last_activity > 0 || p.node_count > 0)) ||
-                      uniqueProjects.find(p => p.id !== 'default') ||
+      targetProject = uniqueProjects.find(p => (p.display_name === 'Agent-Nexus' || p.id === 'b7e6c7a3e3b4182e') && (p.online_agents_count || 0) > 0) ||
+                      uniqueProjects.find(p => (p.online_agents_count || 0) > 0) ||
+                      uniqueProjects.find(p => p.display_name === 'Agent-Nexus' || p.id === 'b7e6c7a3e3b4182e') ||
+                      uniqueProjects.find(p => p.id !== 'default' && (p.last_activity > 0)) ||
                       uniqueProjects[0] ||
                       { id: 'all' };
     }
@@ -453,12 +484,21 @@ async function loadProjects() {
     if (targetProject) {
       currentProjectId = targetProject.id;
       localStorage.setItem('nexusProjectId', currentProjectId);
+      if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+        try {
+          activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
+        } catch {}
+      }
     }
 
-    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>全景工程 (跨项目)</option>`;
+    const totalOnline = uniqueProjects.reduce((sum, p) => sum + (p.online_agents_count || 0), 0);
+    const allLabel = totalOnline > 0 ? `全景工程 (跨项目 · ${totalOnline} 在席)` : '全景工程 (跨项目)';
+    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>${allLabel}</option>`;
     const projectOptions = uniqueProjects.map(p => {
       const idSafe = escapeHtml(p.id);
-      const nameSafe = escapeHtml(p.display_name || p.id);
+      const baseName = p.display_name || p.id;
+      const countSuffix = (p.online_agents_count && p.online_agents_count > 0) ? ` (${p.online_agents_count} 在席)` : '';
+      const nameSafe = escapeHtml(baseName + countSuffix);
       const selected = (p.id === currentProjectId && currentProjectId !== 'all') ? 'selected' : '';
       return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
     }).join('');
@@ -1811,9 +1851,11 @@ function connectWebSocket() {
   try {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = getNexusToken();
-    const wsUrl = token
-      ? `${protocol}//${location.host}/?token=${encodeURIComponent(token)}`
-      : `${protocol}//${location.host}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (currentProjectId) params.set('project', currentProjectId);
+    const qs = params.toString();
+    const wsUrl = qs ? `${protocol}//${location.host}/?${qs}` : `${protocol}//${location.host}`;
 
     const ws = new WebSocket(wsUrl);
     activeWs = ws;
@@ -1842,12 +1884,18 @@ function connectWebSocket() {
         const payload = JSON.parse(event.data);
 
         if (payload.type === 'init:state' || payload.type === 'sync:response') {
+          const incomingPid = payload.data?.project_id;
+          if (incomingPid && currentProjectId && incomingPid !== currentProjectId && incomingPid !== 'all' && currentProjectId !== 'all') {
+            return;
+          }
           if (payload.data?.snapshot) {
             currentDashboardData = payload.data.snapshot;
             renderDashboardSnapshot(payload.data.snapshot);
-            if (dom.viewRouting?.classList.contains('active')) {
-              debouncedFetchRoutingTopology();
-            }
+          }
+          if (payload.data?.cockpit && dom.viewRouting?.classList.contains('active')) {
+            renderRoutingDiagram(payload.data.cockpit);
+          } else if (dom.viewRouting?.classList.contains('active')) {
+            debouncedFetchRoutingTopology();
           }
           return;
         }
@@ -1918,5 +1966,9 @@ if (initialView && ['sessions', 'timeline', 'routing'].includes(initialView)) {
   switchView(initialView);
 }
 
-loadProjects();
-connectWebSocket();
+async function initApp() {
+  await loadProjects();
+  connectWebSocket();
+}
+
+initApp();

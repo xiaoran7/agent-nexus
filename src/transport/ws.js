@@ -29,21 +29,31 @@ export function createWsServer(httpServer, eventBus, tokenStore, coordinator = n
   // 监听器（server.once('error', ...)）转成可读的启动提示。
   wss.on('error', () => {});
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     ws.isAlive = true;
     ws.on('pong', () => {
       ws.isAlive = true;
     });
 
+    let initialProjectId = null;
+    try {
+      if (req?.url) {
+        const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+        initialProjectId = parsedUrl.searchParams.get('project') || parsedUrl.searchParams.get('project_id');
+      }
+    } catch {}
+
     // 全双工长连接连接建立即刻主动下发全景初始化状态 (init:state)
     // 零延迟建立全态势同步，告别原始轮询
     if (coordinator) {
       try {
-        const snapshot = coordinator.getDashboardSnapshot('default');
-        const cockpit = coordinator.getUnifiedCockpit('default');
+        const targetPid = initialProjectId || 'all';
+        const snapshot = coordinator.getDashboardSnapshot(targetPid);
+        const cockpit = coordinator.getUnifiedCockpit(targetPid);
         ws.send(JSON.stringify({
           type: 'init:state',
           data: {
+            project_id: targetPid,
             snapshot,
             cockpit,
             timestamp: Date.now()
@@ -62,12 +72,12 @@ export function createWsServer(httpServer, eventBus, tokenStore, coordinator = n
           ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }), () => {});
         } else if (msg.type === 'sync:request') {
           if (coordinator) {
-            const pid = msg.project_id || 'default';
+            const pid = msg.project_id || 'all';
             const snapshot = coordinator.getDashboardSnapshot(pid);
             const cockpit = coordinator.getUnifiedCockpit(pid);
             ws.send(JSON.stringify({
               type: 'sync:response',
-              data: { snapshot, cockpit, timestamp: Date.now() }
+              data: { project_id: pid, snapshot, cockpit, timestamp: Date.now() }
             }), () => {});
           }
         }
