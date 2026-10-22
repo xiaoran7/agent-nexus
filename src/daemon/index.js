@@ -38,6 +38,8 @@ export function startDaemon(options = {}) {
   const cleanupTimer = setInterval(() => {
     coordinator.reapDeadAgentLeases();
     coordinator.expireLeases();
+    // 每小时最多真正执行一次；放在定时器里，无人打开面板时也会回收过期流水
+    coordinator.housekeeping();
     stateService.expireSweep(true);
   }, 5000);
   cleanupTimer.unref();

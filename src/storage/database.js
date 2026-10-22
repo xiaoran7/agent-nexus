@@ -47,7 +47,8 @@ export function createDatabase(customPath = null) {
       pid INTEGER,
       last_tool TEXT,
       last_action TEXT,
-      last_target TEXT
+      last_target TEXT,
+      liveness_verified_at INTEGER
     );
 
     -- 2. 意图总账 (Intent Ledger)
@@ -176,6 +177,7 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_intents_agent_status ON intents(agent_id, status);
     CREATE INDEX IF NOT EXISTS idx_agents_proj_heartbeat ON agents(project_id, last_heartbeat);
     CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(project_id, thread_id);
@@ -209,6 +211,8 @@ function migrateOldSchemaIfNeeded(db) {
     { name: 'last_tool', type: 'TEXT' },
     { name: 'last_action', type: 'TEXT' },
     { name: 'last_target', type: 'TEXT' },
+    // 会话命名管道的最近一次验证时间：存在即证明宿主进程仍存活，可免疫 Windows PID 复用
+    { name: 'liveness_verified_at', type: 'INTEGER' },
   ];
   for (const col of agentColumns) {
     try {
@@ -320,7 +324,7 @@ function selfHealDatabase(db) {
     // 5. 校验超期无心跳 (>120s) 的在线 Agent，若 PID 已消亡或心跳超期 (>10min 被系统复用) 则归位为 departed，防止幽灵在线
     try {
       const staleAgents = db.prepare(`
-        SELECT id, pid, last_heartbeat FROM agents
+        SELECT id, pid, last_heartbeat, liveness_verified_at FROM agents
         WHERE status IN ('running', 'waiting', 'idle') AND (? - last_heartbeat) > 120000
       `).all(now);
 
@@ -328,7 +332,10 @@ function selfHealDatabase(db) {
       for (const a of staleAgents) {
         let isAlive = false;
         const heartbeatAge = now - (a.last_heartbeat || 0);
-        if (a.pid && Number.isInteger(a.pid) && a.pid > 0 && heartbeatAge <= 600000) {
+        const verified = (now - (a.liveness_verified_at || 0)) <= 120000;
+        if (verified) {
+          isAlive = true;
+        } else if (a.pid && Number.isInteger(a.pid) && a.pid > 0 && heartbeatAge <= 600000) {
           try {
             process.kill(a.pid, 0);
             isAlive = true;

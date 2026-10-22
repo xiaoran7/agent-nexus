@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-23 租约生命周期与在席判定修复 (Lease Policy & Presence Liveness v0.2.14)
+
+### 改了什么
+
+- **租约生命周期策略化 (`src/daemon/coordinator.js` `LEASE_POLICY`)**：
+  - **命名资源锁 TTL 60s → 900s**：实测 19% 的 `tests`/`build`/`dev-server` 授权在命令仍在运行时到期，锁被下一个会话抢走，造成同一份工作区上并行跑测试与构建。PostToolUse 结束时的毫秒级释放保持不变，TTL 只作崩溃兜底；
+  - **文件租约 TTL 60s → 300s，并新增续约**：只读工具不触发 Hook，原策略在“读代码 → 思考 → 改写”的纯阅读阶段没有任何续约来源，持有者会在自己的思考过程中丢锁。现在持有者再次写入同一文件即顺延租约（`self-held-lease` / `self-held-resource-lease`），写工具遥测也会滑动续期；
+  - **滑动续期硬顶 600s → 1800s**：旧上限短于一次长任务，长任务必然掉锁重抢；上限仍保留，失联会话不会永久占锁。
+- **在席判定改用命名管道验证 (`getClaudeSessionRegistry` / `computeAgentLifecycleState` / `reapStaleIntentsAndAgents` / `selfHealDatabase`)**：
+  - 会话注册表条目里 `messagingSocketPath` 指向的命名管道是否存在，是宿主进程存活的权威信号，且免疫 Windows PID 复用；
+  - 新增 `agents.liveness_verified_at`：管道验证通过即记录时间，2 分钟内免于心急跳门禁；`departed` 会话在管道重新出现时会被复活，而不是永久留一条墓碑；
+  - 修复了长回合（>10 分钟无工具调用）和长时间等待用户输入的会话被误判离席的问题。
+- **时间线与快照降噪 (`registerAgent` / `recordTelemetry` / `getDashboardSnapshot` / `housekeeping`)**：
+  - `agent:registered` 只在新增、改名、重新上线时记录，心跳与每次写工具遥测不再刷屏（实测曾占时间线 41%）；
+  - 新增每小时一次、保留 7 天的清理任务，回收 `activity_log` 与已终结 intent；
+  - `/api/dashboard` 与 WebSocket 快照默认不再返回 `departed` 会话（实测 194 行里 184 行是历史离席记录），payload 从 ~138KB 降到实际在席规模；需要完整历史时显式传 `includeDeparted: true`。
+
+### 验证
+
+- `node --test "test/**/*.test.js"`：274 项全部通过；
+- 新增 `test/lease-policy.test.js`（9 项）与 `test/presence-liveness.test.js`（16 项），直接覆盖上述四类缺陷；
+- 并发实测数据来自本机 7 天内的 `activity_log` 与租约流水：0 次跨 Agent 写窗口重叠（文件级互斥本身是有效的），问题集中在租约时长、在席判定与日志噪声。
+
+---
+
 ## 2026-10-21 全景会话洞察、PID复用防幽灵与跨工程路由标签 (Multi-Session Global Discovery v0.2.13)
 
 ### 改了什么

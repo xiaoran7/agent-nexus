@@ -191,7 +191,8 @@ export function startMcpStdio(options = {}) {
         return apiFetch('/api/resources/lock', 'POST', {
           agent_id: args.agent_id,
           resource_name: args.resource_name,
-          ttl_seconds: args.ttl_seconds || 300,
+          // 未显式指定时交给 daemon 的 LEASE_POLICY 决定，客户端不固化 300s
+          ttl_seconds: args.ttl_seconds,
           reason: args.reason,
           project_id: args.project_id
         });

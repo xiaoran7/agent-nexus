@@ -102,6 +102,8 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
   }
   ```
 
+**租约时长策略**：显式传 `ttl_seconds` 时按传入值；Hook 自动补报的租约走 `LEASE_POLICY`（`src/daemon/coordinator.js`）——文件租约 300s、命名资源锁 900s、滑动续期 120s、单条租约总时长上限 1800s。文件租约覆盖“读代码 → 思考 → 改写”的间隔（只读工具不触发 Hook，纯阅读阶段没有续约来源），资源锁覆盖真实命令时长（PostToolUse 结束时毫秒级释放，TTL 只作进程崩溃兜底）。持有者再次写入同一目标会顺延租约，因此持续施工不会掉锁；失联会话最多占锁 1800s 后由过期回收接管。
+
 ### 2. 租约释放与唤醒
 - **路径**：`POST /api/leases/:id/release`
 - **请求体**：
@@ -165,7 +167,7 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
 
 ### 4. Git 生命周期零感释放 (Git Commit / Push Auto-Release)
 - **路径**：`POST /api/hook/git-release` 或 `POST /api/leases/release-agent`
-- **说明**：Agent 执行 `git commit` 或 `git push` 时由通用 Hook 自动触发，批量释放该 Agent 在当前项目下的所有活跃租约，并在毫秒级唤醒等待队列，彻底消除 5 分钟 TTL 空耗。
+- **说明**：Agent 执行 `git commit` 或 `git push` 时由通用 Hook 自动触发，批量释放该 Agent 在当前项目下的所有活跃租约，并在毫秒级唤醒等待队列，彻底消除 TTL 空耗。
 - **请求体**：
   ```json
   {
@@ -191,7 +193,7 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
 
 - **`GET /api/resources/locks?project_id=default`**：列出当前项目所有活跃的排他资源锁。
 - **`POST /api/resources/lock`**：
-  - 请求体：`{ "agent_id": "a1", "resource_name": "tests", "ttl_seconds": 300, "reason": "Running tests" }`
+  - 请求体：`{ "agent_id": "a1", "resource_name": "tests", "ttl_seconds": 900, "reason": "Running tests" }`（`ttl_seconds` 可省略，缺省取 `LEASE_POLICY.resourceTtlSeconds`）
   - 响应：`{ "success": true, "status": "GRANTED", "resource_name": "tests", "leaseId": "lease_xxx" }` 或 `{ "success": false, "status": "WAITING", "blockedBy": "...", "reason": "..." }`
 - **`POST /api/resources/unlock`**：
   - 请求体：`{ "agent_id": "a1", "resource_name": "tests" }`
@@ -230,7 +232,8 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 
 ## 四、Dashboard 与观察者接口
 
-- **路径**：`GET /api/dashboard`
+- **路径**：`GET /api/dashboard`（可选 `?project_id=<id>`，缺省或 `all` 为跨工程全景）
+- **返回范围**：默认只返回在席会话（`is_online: true`）。已离席（`lifecycle_state: 'departed'`）的历史记录不参与序列化——它们是数据库里的存量主体，全量返回会让快照膨胀到百 KB 级。需要完整历史做审计时，服务端调用 `coordinator.getDashboardSnapshot(projectId, { includeDeparted: true })`；HTTP 接口不开放该开关。
 - **响应**：
   ```json
   {

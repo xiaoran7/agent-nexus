@@ -3,6 +3,7 @@
 // =============================================================================
 
 import { ValidationError } from '../domain/errors.js';
+import { LEASE_POLICY } from '../daemon/coordinator.js';
 
 export const NEXUS_TOOLS = [
   {
@@ -367,7 +368,7 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
       agentId: args.agent_id,
       intentSummary: args.summary,
       claims: args.claims,
-      ttlSeconds: args.ttl_seconds || 300,
+      ttlSeconds: args.ttl_seconds || LEASE_POLICY.fileTtlSeconds,
       projectId: pid
     });
   }
@@ -380,7 +381,7 @@ export function handleMcpTool(toolName, args, { coordinator, stateService, messa
     return coordinator.acquireResourceLock({
       agentId: args.agent_id,
       resourceName: args.resource_name,
-      ttlSeconds: args.ttl_seconds || 300,
+      ttlSeconds: args.ttl_seconds || LEASE_POLICY.resourceTtlSeconds,
       reason: args.reason || 'Resource held via MCP',
       projectId: pid
     });

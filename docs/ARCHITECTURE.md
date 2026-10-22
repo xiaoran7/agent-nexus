@@ -130,7 +130,7 @@ for (const claim of normalizedClaims) {
    - 入队 `wait_queue`，写入 Activity Log。
 5. **RELEASE / WAKE-UP**：
    - **主动释放**：前序 Agent 调用 `/api/leases/:id/release` 或 `nexus_release_lease` 显式释放资源；
-   - **Git 提交零感自动释放**：Agent 执行 `git commit` 或 `git push` 时，全局 Hook 瞬时捕获并派发 `/api/hook/git-release`，批量释放该 Agent 的全部租约，无需人工介入也无需等待 5 分钟 TTL；
+   - **Git 提交零感自动释放**：Agent 执行 `git commit` 或 `git push` 时，全局 Hook 瞬时捕获并派发 `/api/hook/git-release`，批量释放该 Agent 的全部租约，无需人工介入也无需等待 TTL 到期；
    - 选出下一个该唤醒的等待者，**不是纯 FIFO**（见下）；
    - 把该意图置为 `released` 并清除判冲留痕
      （否则陈旧的 `waiting` 记录会在面板快照里盖过重新声明后的 `granted` 意图）；
@@ -146,3 +146,17 @@ for (const claim of normalizedClaims) {
 3. 第一个无冲突的出队并唤醒。
 
 `releaseLease` 的返回里带 `notifiedWaiter` 与 `stillBlocked`，便于调用方知道是"没人可唤醒"还是"有人仍在等"。
+
+### 租约时长
+
+自动补报的租约统一走 `LEASE_POLICY`（`src/daemon/coordinator.js`）：文件 300 秒、命名资源 900 秒、滑动续期 120 秒、单条租约总时长上限 1800 秒。两组时长的取值依据不同：
+
+- **文件租约**要覆盖一次“读代码 → 思考 → 改写”的完整间隔。只读工具（Read/Grep/Glob）不触发 Hook，纯阅读阶段没有任何续约来源；持有者再次写入同一文件会顺延租约，因此持续施工不会掉锁。
+- **命名资源锁**要覆盖真实命令时长。`npm test`、`go test`、构建等常常超过一分钟，而 PostToolUse 在命令结束时毫秒级释放，TTL 只是进程崩溃的兜底。
+- 上限防的是失联会话永久占锁，不针对正在干活的会话。
+
+### 会话在席判定
+
+会话注册表 `~/.claude/sessions/<pid>.json` 里的 `messagingSocketPath` 指向会话进程独占创建的命名管道。管道名含随机串、进程退出即消失，因此**管道存在是权威存活信号**，而 `process.kill(pid, 0)` 在 Windows 上会被 PID 复用欺骗（旧 PID 被分配给 `svchost.exe` 之类的常驻进程）。
+
+同步时验证通过的会话写入 `agents.liveness_verified_at`，2 分钟内免于心急跳门禁——长回合（>10 分钟不调用工具）和等待用户输入的会话因此不会被误判离席。没有管道字段的旧注册表退回 PID 探针，并保留 10 分钟心跳门禁作为 PID 复用保护。

@@ -5,7 +5,7 @@
 ## 目标解析
 
 - 写入类工具（Write/Edit/MultiEdit/NotebookEdit/Update/apply_patch）直接取 `tool_input.file_path`；只读工具（Read/Grep/Glob…）不判冲。
-- **Git 生命周期零感释放 (Git Commit / Push Auto-Release)**：Bash 工具优先探测 `git commit` 或 `git push`（`GIT_LIFECYCLE_COMMAND_RE`）。当 Agent 阶段性完成代码提交或推送时，Hook 自动向 `/api/hook/git-release` 派发异步释放通知，瞬间解开该 Agent 持有的所有文件与资源租约，并立即唤醒后排等待者，彻底消除 5 分钟 TTL 倒计时卡壳。
+- **Git 生命周期零感释放 (Git Commit / Push Auto-Release)**：Bash 工具优先探测 `git commit` 或 `git push`（`GIT_LIFECYCLE_COMMAND_RE`）。当 Agent 阶段性完成代码提交或推送时，Hook 自动向 `/api/hook/git-release` 派发异步释放通知，瞬间解开该 Agent 持有的所有文件与资源租约，并立即唤醒后排等待者，彻底消除 TTL 倒计时卡壳。
 - **命名排他资源自动推导**：Bash 工具优先匹配高排他命令正则（`extractBashResource`）：
   - 测试命令（`npm test`、`cargo test`、`pytest`、`go test` 等）自动映射为 `tests` 资源锁；
   - 启动服务（`vite`、`npm run dev`、`next dev`、`uvicorn` 等）自动映射为 `dev-server` 资源锁；

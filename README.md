@@ -102,7 +102,7 @@ daemon 只监听本机，跨源请求默认不放行（浏览器不理会目标�
 
 ## 实现与限制
 
-- `src/daemon/coordinator.js` 实现 file/module/symbol/resource claim、默认 300 秒租约与等待唤醒；输入非法（缺 `agent_id`、claim 目标为空或解析后落在工作目录/盘符根）时抛 `ValidationError`，REST 层映射为 400 且不落任何记录。
+- `src/daemon/coordinator.js` 实现 file/module/symbol/resource claim、租约策略（`LEASE_POLICY`：文件 300 秒、命名资源 900 秒、滑动续期 120 秒、单条租约总时长上限 1800 秒）与等待唤醒；输入非法（缺 `agent_id`、claim 目标为空或解析后落在工作目录/盘符根）时抛 `ValidationError`，REST 层映射为 400 且不落任何记录。
 - `src/domain/project.js` 支持向上探测主工程与 Git Worktree，解析 `.git` 为文件的指针，统一主仓库与各工作树共享相同的 `projectId` 与 `projectRoot`。
 - `src/domain/errors.js` 是调用方非法输入的唯一类型；协调、状态、消息三个入口共用它，transport 层统一映射成 400。
 - `src/transport/auth.js` 负责令牌签发与校验。令牌只在运行中的 daemon 内存里，不落盘。

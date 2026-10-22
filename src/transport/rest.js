@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { ValidationError } from '../daemon/coordinator.js';
+import { ValidationError, LEASE_POLICY } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
 let APP_VERSION = '0.2.11';
@@ -517,7 +517,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const result = coordinator.acquireResourceLock({
           agentId: body.agent_id,
           resourceName: body.resource_name || body.resource,
-          ttlSeconds: body.ttl_seconds || 300,
+          ttlSeconds: body.ttl_seconds || LEASE_POLICY.resourceTtlSeconds,
           reason: body.reason || 'Resource held',
           projectId: body.project_id || 'default',
           projectRoot: body.project_root || null

@@ -7,12 +7,25 @@ import { resolveProject, resolveProjectDisplayName } from '../domain/project.js'
 
 export { ValidationError };
 
+// formatAgentDefaultName 的输出集合：这些名字只用于展示兜底，不应写回覆盖真实会话名。
+const MECHANICAL_DEFAULT_NAMES = new Set([
+  'Claude 助手',
+  'Claude Fable 助手',
+  'Claude Sonnet 助手',
+  'Claude Opus 助手',
+  'Codex 助手',
+  'ZCode 助手',
+  'Nexus 协调器',
+  '协同助手'
+]);
+
 /**
  * 判定会话名称是否为机械截断哈希、编号或系统默认占位符
  * 匹配形态：
  * - claude-4fcfc1, claude-02da4c, agent-9a8b7c
  * - Claude (02da4c9d), Claude (1), Agent (abc12345), Unknown (default)
  * - 纯十六进制哈希或简易编号: 02da4c9d, 123456, Claude 1
+ * - 系统兜底占位名: Claude 助手, Nexus 协调器
  */
 export function isMechanicalAgentName(name) {
   if (!name || typeof name !== 'string') return true;
@@ -23,6 +36,9 @@ export function isMechanicalAgentName(name) {
   if (/^[a-f0-9]{6,}$/i.test(t)) return true;
   if (/^(claude|agent|codex|zcode)\s*\d+$/i.test(t)) return true;
   if (/^(unknown|agent|default)[-_\s]*(default|\(default\))?$/i.test(t)) return true;
+  // 系统兜底占位名（如“Claude 助手”）也是机械名：它不是用户起的名字，
+  // 不能让 Hook 的默认上报把它覆盖到已有的语义化会话名上。
+  if (MECHANICAL_DEFAULT_NAMES.has(t)) return true;
   return false;
 }
 
@@ -84,7 +100,22 @@ export function getClaudeSessionRegistry(customDir = null) {
         const fullPath = join(dir, f);
         const data = JSON.parse(readFileSync(fullPath, 'utf8'));
         if (data && data.sessionId && data.pid) {
-          const alive = isPidAlive(data.pid);
+          // 存活判定分两层：PID 探针会被 Windows 复用而误判幽灵在线；
+          // 会话命名管道由该会话进程独占创建、进程退出即消失，且名称含随机串不会被复用，
+          // 因此管道存在才是权威存活信号。
+          const pidAlive = isPidAlive(data.pid);
+          let pipeAlive = false;
+          if (data.messagingSocketPath) {
+            try {
+              pipeAlive = existsSync(data.messagingSocketPath);
+            } catch {
+              pipeAlive = false;
+            }
+          }
+          // 注册表声明了管道时以管道为准：PID 被系统复用给无关进程时管道早已消失，
+          // 此时 pidAlive 仍为 true，不能据此认定会话还活着（这正是幽灵在线的根因）。
+          // 没有管道字段的旧注册表退回 PID 探针。
+          const hasPipe = Boolean(data.messagingSocketPath);
           sessions.push({
             pid: data.pid,
             sessionId: data.sessionId,
@@ -93,7 +124,11 @@ export function getClaudeSessionRegistry(customDir = null) {
             status: data.status || 'idle',
             startedAt: data.startedAt,
             updatedAt: data.updatedAt,
-            alive
+            procStart: data.procStart || null,
+            pidAlive,
+            pipeAlive,
+            alive: hasPipe ? pipeAlive : pidAlive,
+            verified: hasPipe && pipeAlive
           });
         }
       } catch {}
@@ -244,6 +279,20 @@ export const WRITE_TOOLS_SET = new Set([
   'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update', 'apply_patch'
 ]);
 
+// 租约生命周期策略（单位：秒）
+// - 文件租约必须覆盖一次“读代码 → 思考 → 再改”的完整间隔。只读工具不触发 Hook，
+//   滑动续约在纯阅读阶段不会发生，60s 的旧基准会让持锁会话在阅读时丢锁并被他人抢占。
+// - 命名资源锁（tests/build/dev-server）必须覆盖真实命令时长。PostToolUse 在命令结束
+//   时毫秒级释放，TTL 只是进程崩溃的兜底；60s 短于一次完整 go test / 构建，会在命令
+//   仍在运行时把锁让给下一个会话。
+// - 上限用于防止失联会话永久占锁；持有者只要持续调用写工具就会被顺延。
+export const LEASE_POLICY = Object.freeze({
+  fileTtlSeconds: 300,
+  resourceTtlSeconds: 900,
+  renewSeconds: 120,
+  maxTotalTtlSeconds: 1800
+});
+
 export function isExecutingWorkingTool(tool, heartbeat, now) {
   if (!tool || typeof tool !== 'string' || !tool.trim()) return false;
   if (WRITE_TOOLS_SET.has(tool)) {
@@ -255,8 +304,11 @@ export function isExecutingWorkingTool(tool, heartbeat, now) {
 export function computeAgentLifecycleState(agent, now) {
   const heartbeatAge = now - (agent.last_heartbeat || 0);
   const isHeartbeatFresh = heartbeatAge <= 120000;
+  // 会话进程的命名管道由进程独占创建、退出即消失，且名称含随机串不可复用。
+  // 只要注册表刚验证过管道仍在，就无需依赖 PID 或心跳时间，长回合与等待输入的会话也能保持在席。
+  const isLivenessVerified = (now - (agent.liveness_verified_at || 0)) <= 120000;
   // 进程探针保护：如果心跳已超过 10 分钟 (600,000ms)，单纯的 PID 存活极有可能是操作系统 PID 回收复用给无关系统进程 (如 svchost)，不视作该 Agent 在线
-  const isPidActive = agent.pid ? (isPidAlive(agent.pid) && heartbeatAge <= 600000) : false;
+  const isPidActive = isLivenessVerified || (agent.pid ? (isPidAlive(agent.pid) && heartbeatAge <= 600000) : false);
   const isOnline = isHeartbeatFresh || isPidActive;
 
   if (!isOnline) {
@@ -412,18 +464,23 @@ export class CoordinatorEngine {
         const targetName = shouldUpdateName ? cleanName : agent.name;
         const newHeartbeat = Math.max(agent.last_heartbeat || 0, sess.updatedAt || now);
         const mappedStatus = sess.status === 'busy' ? 'running' : 'idle';
+        // 管道验证通过 = 宿主会话进程确实活着。这个时间戳让长回合（>10 分钟无工具调用）
+        // 与等待用户输入的会话不会被 PID 复用门禁误判成 departed。
+        const livenessStamp = sess.verified ? now : null;
 
         this.db.prepare(`
           UPDATE agents
           SET pid = ?,
               name = ?,
               last_heartbeat = ?,
+              liveness_verified_at = COALESCE(?, liveness_verified_at),
               status = CASE
                 WHEN status = 'waiting' THEN status
+                WHEN status = 'departed' AND ? IS NOT NULL THEN ?
                 ELSE ?
               END
           WHERE id = ?
-        `).run(sess.pid, targetName, newHeartbeat, mappedStatus, agent.id);
+        `).run(sess.pid, targetName, newHeartbeat, livenessStamp, livenessStamp, mappedStatus, mappedStatus, agent.id);
       } else {
         let projectId = 'default';
         let projectRoot = sess.cwd || '';
@@ -442,17 +499,18 @@ export class CoordinatorEngine {
         const initialStatus = sess.status === 'busy' ? 'running' : 'idle';
 
         this.db.prepare(`
-          INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid)
-          VALUES (?, ?, ?, 'claude', ?, ?, ?, ?, ?, ?)
+          INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, liveness_verified_at)
+          VALUES (?, ?, ?, 'claude', ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             name = CASE WHEN excluded.name != '' THEN excluded.name ELSE agents.name END,
             pid = excluded.pid,
             last_heartbeat = excluded.last_heartbeat,
+            liveness_verified_at = COALESCE(excluded.liveness_verified_at, agents.liveness_verified_at),
             status = CASE
               WHEN agents.status = 'waiting' THEN agents.status
               ELSE excluded.status
             END
-        `).run(agentId, projectId, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid);
+        `).run(agentId, projectId, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid, sess.verified ? now : null);
 
         if (sess.cwd && projectId && projectId !== 'all') {
           try {
@@ -502,6 +560,17 @@ export class CoordinatorEngine {
     const cleanAction = cleanUtf8String(params.lastAction || params.action || params.toolAction, null);
     const cleanTarget = cleanUtf8String(params.lastTarget || params.target || params.toolTarget, null);
 
+    // 心跳不是协同事件：写工具每次都会触发 Hook 上报，如果每次都落一条 activity_log，
+    // 时间线会被心跳刷屏（实测占 41%），真正的冲突与释放被淹没。
+    // 只有首次登记、名称/归属变化或从离线恢复才值得记一条。
+    const existingRow = this.db.prepare('SELECT name, project_id, status FROM agents WHERE id = ?').get(id);
+    const isNewAgent = !existingRow;
+    const identityChanged = existingRow && (
+      existingRow.name !== finalName ||
+      existingRow.project_id !== finalProjectId
+    );
+    const cameBackOnline = existingRow && existingRow.status === 'departed';
+
     const stmt = this.db.prepare(`
       INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, last_tool, last_action, last_target)
       VALUES (?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?)
@@ -510,6 +579,9 @@ export class CoordinatorEngine {
         name = excluded.name,
         workspace_dir = excluded.workspace_dir,
         last_heartbeat = excluded.last_heartbeat,
+        -- 被回收为 departed 的会话重新上报心跳，说明它又活了，必须把状态带回在线档位，
+        -- 否则数据库状态与会话实际存活长期矛盾。
+        status = CASE WHEN agents.status = 'departed' THEN 'idle' ELSE agents.status END,
         pid = CASE WHEN excluded.pid IS NOT NULL THEN excluded.pid ELSE agents.pid END,
         last_tool = CASE WHEN excluded.last_tool IS NOT NULL THEN excluded.last_tool ELSE agents.last_tool END,
         last_action = CASE WHEN excluded.last_action IS NOT NULL THEN excluded.last_action ELSE agents.last_action END,
@@ -542,7 +614,10 @@ export class CoordinatorEngine {
       } catch {}
     }
 
-    this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${finalProvider}) registered/heartbeat`, finalProjectId);
+    if (isNewAgent || identityChanged || cameBackOnline) {
+      const reason = isNewAgent ? 'registered' : (cameBackOnline ? 'rejoined' : 'renamed');
+      this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${finalProvider}) ${reason}`, finalProjectId);
+    }
     return this.getAgent(id);
   }
 
@@ -598,8 +673,8 @@ export class CoordinatorEngine {
 
     // 方案二：活动心跳滑动续约 (Sliding Window Touch)
     // 只要该 Agent 还在发出工具调用，其名下活跃租约自动顺延滑动窗口，保证干活期间永不掉锁，
-    // 而一旦停止活动，短约自然到期快速释放给后排。
-    const touchResult = this.touchAgentLeases(agentId, finalProjectId || agent?.project_id || null, 60);
+    // 而一旦停止活动，租约自然到期快速释放给后排。
+    const touchResult = this.touchAgentLeases(agentId, finalProjectId || agent?.project_id || null);
 
     return { success: true, touchedCount: touchResult.touchedCount };
   }
@@ -940,7 +1015,7 @@ export class CoordinatorEngine {
 
   // 3.2 活跃会话租约滑动顺延 (Sliding Window Touch)
   // 每次 Agent 发出工具调用 (遥测) 时自动顺延名下活跃租约，干活期间绝不掉锁，停工后短约快速过期
-  touchAgentLeases(agentId, projectId = null, extendSeconds = 60, maxTotalTtlSeconds = 600) {
+  touchAgentLeases(agentId, projectId = null, extendSeconds = LEASE_POLICY.renewSeconds, maxTotalTtlSeconds = LEASE_POLICY.maxTotalTtlSeconds) {
     if (!agentId) return { touchedCount: 0 };
     const now = Date.now();
 
@@ -1219,8 +1294,9 @@ export class CoordinatorEngine {
       `).all();
 
       for (const wi of waitingIntents) {
-        const waiterAgent = this.db.prepare('SELECT last_heartbeat, pid FROM agents WHERE id = ?').get(wi.agent_id);
-        const isWaiterAlive = waiterAgent && (((now - waiterAgent.last_heartbeat) <= 120000) || (waiterAgent.pid && isPidAlive(waiterAgent.pid)));
+        const waiterAgent = this.db.prepare('SELECT last_heartbeat, pid, liveness_verified_at FROM agents WHERE id = ?').get(wi.agent_id);
+        const waiterVerified = waiterAgent && (now - (waiterAgent.liveness_verified_at || 0)) <= 120000;
+        const isWaiterAlive = waiterAgent && (waiterVerified || ((now - waiterAgent.last_heartbeat) <= 120000) || (waiterAgent.pid && isPidAlive(waiterAgent.pid)));
         if (!isWaiterAlive) {
           this.db.prepare(`UPDATE intents SET status = 'aborted', updated_at = ? WHERE id = ?`).run(now, wi.id);
           this.db.prepare('DELETE FROM wait_queue WHERE intent_id = ?').run(wi.id);
@@ -1237,15 +1313,17 @@ export class CoordinatorEngine {
         }
       }
 
-      // 4. 将超过 2 分钟无心跳且无存活 PID (或超过 10 分钟无心跳的 PID 复用陈旧记录) 的会话同步为 departed
+      // 4. 将超过 2 分钟无心跳且无存活 PID (或超过 10 分钟无心跳的 PID 复用陈旧记录) 的会话同步为 departed。
+      //    注册表管道刚验证过的会话不受 10 分钟门禁限制：它确实活着，只是暂时没调用工具。
       const unconfirmedAgents = this.db.prepare(`
-        SELECT id, pid, last_heartbeat FROM agents
+        SELECT id, pid, last_heartbeat, liveness_verified_at FROM agents
         WHERE status IN ('running', 'waiting', 'idle') AND (? - last_heartbeat) > 120000
       `).all(now);
 
       for (const ag of unconfirmedAgents) {
         const heartbeatAge = now - (ag.last_heartbeat || 0);
-        const alive = ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000;
+        const verified = (now - (ag.liveness_verified_at || 0)) <= 120000;
+        const alive = verified || (ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000);
         if (!alive) {
           this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
         } else {
@@ -1301,6 +1379,8 @@ export class CoordinatorEngine {
 
       if (existingResourceLock) {
         if (existingResourceLock.agent_id === agentId) {
+          // 自己再次执行同类命令（例如连续两次 go test）= 前一个进程已结束，锁仍归自己
+          this.touchAgentLeases(agentId, finalProjectId);
           return { allow: true, reason: 'self-held-resource-lease' };
         } else {
           this.logActivity(agentId, 'hook:blocked', cleanResource, `Blocked access to resource '${cleanResource}' (held by ${existingResourceLock.agent_name})`, finalProjectId);
@@ -1321,7 +1401,7 @@ export class CoordinatorEngine {
         agentId,
         intentSummary: promptHint ? `Running ${cleanResource}: ${promptHint.slice(0, 40)}` : `Auto-claimed resource lock on '${cleanResource}'`,
         claims: [{ type: 'resource', target: cleanResource }],
-        ttlSeconds: 60, // 瞬态命令锁由 PostToolUse 毫秒级释放，安全兜底 TTL 降至 60 秒
+        ttlSeconds: LEASE_POLICY.resourceTtlSeconds, // 覆盖真实命令时长；PostToolUse 结束时毫秒级释放
         projectId: finalProjectId,
         projectRoot: finalProjectRoot
       });
@@ -1398,6 +1478,9 @@ export class CoordinatorEngine {
     }
 
     if (selfHeld) {
+      // 自己再次写同一文件 = 施工仍在继续，顺延名下租约。
+      // 否则一次长编辑会在首次领锁后按固定 TTL 到期，把文件让给其他会话。
+      this.touchAgentLeases(agentId, finalProjectId);
       return { allow: true, reason: 'self-held-lease' };
     }
 
@@ -1405,7 +1488,7 @@ export class CoordinatorEngine {
       agentId,
       intentSummary: promptHint ? `Editing ${filePath}: ${promptHint.slice(0, 40)}` : `Auto-claimed edit on ${filePath}`,
       claims: [{ type: 'file', target: filePath }],
-      ttlSeconds: 60, // 施工走廊短约 + 遥测滑动续期 (Sliding Window)，停工后快速释放
+      ttlSeconds: LEASE_POLICY.fileTtlSeconds, // 覆盖“阅读→思考→改写”间隔，写工具遥测继续滑动续期
       projectId: finalProjectId,
       projectRoot: finalProjectRoot
     });
@@ -1433,7 +1516,7 @@ export class CoordinatorEngine {
   }
 
   // 6. 显式命名资源锁（Resource Locks）支持：测试、开发服务器、构建等
-  acquireResourceLock({ agentId, resourceName, ttlSeconds = 300, reason = 'Resource held', projectId = 'default', projectRoot = null }) {
+  acquireResourceLock({ agentId, resourceName, ttlSeconds = LEASE_POLICY.resourceTtlSeconds, reason = 'Resource held', projectId = 'default', projectRoot = null }) {
     requireAgentId(agentId);
     const target = requireString(resourceName, 'resourceName').trim().toLowerCase();
     const res = this.declareIntent({
@@ -1537,12 +1620,37 @@ export class CoordinatorEngine {
     `).all(projectId);
   }
 
-  getDashboardSnapshot(projectId = null) {
+  /**
+   * 周期性库房整理：活动流水与已终结意图只保留最近 7 天。
+   * 这两张表只用于展示与追溯，无限增长会让快照查询与磁盘占用随会话数线性膨胀。
+   * 每个进程每小时最多执行一次，避免每次快照都扫表。
+   */
+  housekeeping(now = Date.now()) {
+    const lastRun = this._lastHousekeepingAt || 0;
+    if (now - lastRun < 3600000) return { pruned: false };
+    this._lastHousekeepingAt = now;
+    const cutoff = now - 7 * 86400000;
+    try {
+      const logs = this.db.prepare('DELETE FROM activity_log WHERE created_at < ?').run(cutoff);
+      // 只清理已终结的意图；granted/running 可能仍有活跃租约，交由租约过期流程处理
+      const intents = this.db.prepare(`
+        DELETE FROM intents
+        WHERE created_at < ? AND status IN ('completed', 'aborted', 'released')
+          AND id NOT IN (SELECT intent_id FROM leases)
+      `).run(cutoff);
+      return { pruned: true, logs: logs.changes, intents: intents.changes };
+    } catch {
+      return { pruned: false };
+    }
+  }
+
+  getDashboardSnapshot(projectId = null, options = {}) {
     const now = Date.now();
     this.syncClaudeSessions(now);
     this.reapStaleIntentsAndAgents(now);
     this.reapDeadAgentLeases();
     this.expireLeases();
+    this.housekeeping(now);
 
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
 
@@ -1604,6 +1712,10 @@ export class CoordinatorEngine {
       `).all();
     }
 
+    // 默认不返回已离席会话：历史库里它们占绝大多数（实测 194 行里 184 行 departed），
+    // 全量序列化会把每次快照膨胀到 100KB 以上，而界面本来就会把它们过滤掉。
+    // 需要完整历史时显式传 includeDeparted: true。
+    const includeDeparted = options.includeDeparted === true;
     const agents = rawAgents.map((a) => {
       const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now);
 
@@ -1618,7 +1730,7 @@ export class CoordinatorEngine {
         lifecycle_state: lifecycleState,
         is_online: isOnline
       };
-    });
+    }).filter((a) => includeDeparted || a.is_online);
 
     const activeClaims = rawActiveClaims.map((c) => ({
       ...c,
