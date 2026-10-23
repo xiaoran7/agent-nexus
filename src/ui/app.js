@@ -444,6 +444,15 @@ function selectProject(projectId) {
 }
 window.nexusSelectProject = selectProject;
 
+let loadProjectsTimer = null;
+function debouncedLoadProjects() {
+  if (loadProjectsTimer) return;
+  loadProjectsTimer = setTimeout(() => {
+    loadProjectsTimer = null;
+    loadProjects();
+  }, 500);
+}
+
 if (dom.projectSelector) {
   dom.projectSelector.onchange = () => {
     selectProject(dom.projectSelector.value);
@@ -1913,9 +1922,10 @@ function connectWebSocket() {
         if (ws.readyState === WebSocket.OPEN) {
           try {
             ws.send(JSON.stringify({ type: 'ping' }));
+            ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
           } catch {}
         }
-      }, 25000);
+      }, 4000);
 
       try {
         ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
@@ -1935,6 +1945,7 @@ function connectWebSocket() {
             currentDashboardData = payload.data.snapshot;
             renderDashboardSnapshot(payload.data.snapshot);
           }
+          debouncedLoadProjects();
           if (payload.data?.cockpit && dom.viewRouting?.classList.contains('active')) {
             renderRoutingDiagram(payload.data.cockpit);
           } else if (dom.viewRouting?.classList.contains('active')) {
@@ -1945,6 +1956,7 @@ function connectWebSocket() {
 
         if (payload.type === 'agent:telemetry' || payload.type === 'agent:status' || payload.type === 'resource:freed' || payload.type === 'agent:woken') {
           debouncedFetchDashboard();
+          debouncedLoadProjects();
           if (dom.viewRouting?.classList.contains('active')) {
             debouncedFetchRoutingTopology();
           }

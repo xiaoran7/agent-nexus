@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-10-23 新会话主动感知、目录监视与前端心跳探针修复 (Active Session Discovery & Watcher v0.2.15)
+
+### 改了什么
+
+- **服务端主动扫描与目录文件监视双引擎 (`src/daemon/coordinator.js`, `src/daemon/index.js`)**：
+  - **毫秒级目录监视器 (`watchClaudeSessions`)**：守护进程启动即对 `~/.claude/sessions` 目录挂载带 300ms 防抖的文件监视器，新会话一旦开启并创建 `<pid>.json` 立即触发增量同步；
+  - **周期主动扫描兜底**：守护进程主定时器（3s）主动调用 `syncClaudeSessions()`，彻底消除“仅在请求快照时被动顺带同步”的静默盲区；
+  - **增量入库与状态事件广播**：`syncClaudeSessions` 发现新会话时发射包含 `is_new: true` 的 `agent:status` 事件与登记日志；当会话由 `departed` 重连复活或状态变更时实时广播，并补齐 `reapStaleIntentsAndAgents` 超时离席事件通知。
+- **前端实时全景探针与工程列表联动 (`src/ui/app.js`)**：
+  - **WebSocket 轻量周期同步探针**：客户端在保持 WebSocket 活跃连接的同时，定时（4s）向服务端发送轻量 `sync:request` 业务探针，不再仅发送无业务意义的空 ping，杜绝多端状态不同步；
+  - **工程与全局在线总数联动 (`debouncedLoadProjects`)**：在收到会话状态、遥测及快照消息时自动防抖刷新工程清单与全局在线计数，彻底解决单工程视图下无法感知跨项目新会话总数的缺陷。
+- **系统状态端点补齐 (`src/transport/rest.js`)**：
+  - 新增公开端点 `GET /api/status`（包含在席统计、状态计数），彻底解决桌面端托盘 404 轮询报错。
+
+### 验证
+
+- **全量测试套件验证**：`node --test "test/**/*.test.js"` 全量 279 项单测全部通过；
+- **新会话专项测试覆盖**：新增 `test/session-discovery-listener.test.js`（5 项），全覆盖新会话发现、状态切换、目录监视与 `/api/status` 接口。
+
+---
+
 ## 2026-10-23 租约生命周期与在席判定修复 (Lease Policy & Presence Liveness v0.2.14)
 
 ### 改了什么

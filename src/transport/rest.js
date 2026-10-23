@@ -9,7 +9,7 @@ try {
   if (pkg.version) APP_VERSION = pkg.version;
 } catch {}
 
-const PUBLIC_PATHS = new Set(['/health', '/', '/index.html', '/style.css', '/app.js', '/api/dashboard', '/api/cockpit']);
+const PUBLIC_PATHS = new Set(['/health', '/api/status', '/', '/index.html', '/style.css', '/app.js', '/api/dashboard', '/api/cockpit']);
 
 let allowedOriginsCache = { raw: null, list: [] };
 
@@ -98,6 +98,22 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       // 1. Health
       if (url.pathname === '/health') {
         return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: APP_VERSION });
+      }
+
+      // 1.01 Status API (供桌面端托盘与状态轮询)
+      if (url.pathname === '/api/status' && req.method === 'GET') {
+        const snapshot = coordinator.getDashboardSnapshot('all');
+        const activeCount = (snapshot.agents || []).filter(a => a.lifecycle_state !== 'departed' && a.is_online).length;
+        return sendJson(200, {
+          status: 'ok',
+          service: 'agent-nexus',
+          version: APP_VERSION,
+          active_agents_count: activeCount,
+          working: (snapshot.agents || []).filter(a => a.lifecycle_state === 'working').length,
+          waiting: (snapshot.agents || []).filter(a => a.lifecycle_state === 'waiting').length,
+          idle: (snapshot.agents || []).filter(a => a.lifecycle_state === 'idle').length,
+          timestamp: Date.now()
+        });
       }
 
       // 1.1 SSE 实时通知流 (GET /api/events)

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { normalize, resolve, isAbsolute, join } from 'node:path';
-import { existsSync, realpathSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, realpathSync, readdirSync, readFileSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { ValidationError, requireString } from '../domain/errors.js';
 import { resolveProject, resolveProjectDisplayName } from '../domain/project.js';
@@ -447,8 +447,11 @@ export class CoordinatorEngine {
   // 0.1 扫描并长效同步系统 Claude Code 会话进程状态
   syncClaudeSessions(now = Date.now(), customDir = null) {
     const targetDir = customDir !== null && customDir !== undefined ? customDir : this.claudeSessionsDir;
-    if (!targetDir) return;
+    if (!targetDir) return { scanned: 0, added: [], updated: [] };
     const sessions = getClaudeSessionRegistry(targetDir);
+    const added = [];
+    const updated = [];
+
     for (const sess of sessions) {
       if (!sess.alive) continue;
 
@@ -467,6 +470,9 @@ export class CoordinatorEngine {
         // 管道验证通过 = 宿主会话进程确实活着。这个时间戳让长回合（>10 分钟无工具调用）
         // 与等待用户输入的会话不会被 PID 复用门禁误判成 departed。
         const livenessStamp = sess.verified ? now : null;
+        const wasDeparted = agent.status === 'departed' && livenessStamp !== null;
+        const statusChanged = wasDeparted || (agent.status !== mappedStatus && agent.status !== 'waiting');
+        const nameChanged = shouldUpdateName && targetName !== agent.name;
 
         this.db.prepare(`
           UPDATE agents
@@ -481,6 +487,20 @@ export class CoordinatorEngine {
               END
           WHERE id = ?
         `).run(sess.pid, targetName, newHeartbeat, livenessStamp, livenessStamp, mappedStatus, mappedStatus, agent.id);
+
+        if (statusChanged || nameChanged) {
+          updated.push({ id: agent.id, status: mappedStatus, name: targetName });
+          if (wasDeparted) {
+            this.logActivity(agent.id, 'agent:registered', null, `Claude 会话重连在线: ${targetName}`, agent.project_id);
+          }
+          this.eventBus?.emit?.('agent:status', {
+            agent_id: agent.id,
+            status: mappedStatus,
+            project_id: agent.project_id,
+            name: targetName,
+            revived: wasDeparted
+          });
+        }
       } else {
         let projectId = 'default';
         let projectRoot = sess.cwd || '';
@@ -526,7 +546,53 @@ export class CoordinatorEngine {
             `).run(projectId, projectRoot, displayName, now, now);
           } catch {}
         }
+
+        added.push({ id: agentId, name: finalName, status: initialStatus, projectId });
+        this.logActivity(agentId, 'agent:registered', null, `Claude 会话发现接入: ${finalName}`, projectId);
+        this.eventBus?.emit?.('agent:status', {
+          agent_id: agentId,
+          status: initialStatus,
+          project_id: projectId,
+          name: finalName,
+          is_new: true
+        });
       }
+    }
+
+    return { scanned: sessions.length, added, updated };
+  }
+
+  // 0.2 实时监视本地 Claude 会话目录变动 (毫秒级新会话感知)
+  watchClaudeSessions(customDir = null) {
+    const targetDir = customDir !== null && customDir !== undefined ? customDir : this.claudeSessionsDir;
+    if (!targetDir || !existsSync(targetDir)) return null;
+    if (this._sessionWatcher) return this._sessionWatcher;
+
+    let debounceTimer = null;
+    try {
+      this._sessionWatcher = watch(targetDir, { persistent: false }, (eventType, filename) => {
+        if (filename && !filename.endsWith('.json')) return;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          try {
+            this.syncClaudeSessions(Date.now(), targetDir);
+          } catch {}
+        }, 300);
+      });
+      this._sessionWatcher.unref?.();
+      return this._sessionWatcher;
+    } catch {
+      return null;
+    }
+  }
+
+  unwatchClaudeSessions() {
+    if (this._sessionWatcher) {
+      try {
+        this._sessionWatcher.close();
+      } catch {}
+      this._sessionWatcher = null;
     }
   }
 
@@ -1326,6 +1392,7 @@ export class CoordinatorEngine {
         const alive = verified || (ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000);
         if (!alive) {
           this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
+          this.eventBus?.emit?.('agent:status', { agent_id: ag.id, status: 'departed' });
         } else {
           this.db.prepare(`UPDATE agents SET last_heartbeat = ? WHERE id = ?`).run(now, ag.id);
         }

@@ -35,13 +35,24 @@ export function startDaemon(options = {}) {
   messageService.agentResolver = (agentId) => coordinator.getAgent(agentId);
   coordinator.messageService = messageService;
 
+  // 启动即刻感知本机存量与新会长会话
+  try {
+    coordinator.syncClaudeSessions();
+  } catch {}
+
+  // 毫秒级文件系统目录监视器 (非测试环境下启用)
+  const sessionWatcher = isRunningInTest ? null : coordinator.watchClaudeSessions?.();
+
   const cleanupTimer = setInterval(() => {
+    try {
+      coordinator.syncClaudeSessions();
+    } catch {}
     coordinator.reapDeadAgentLeases();
     coordinator.expireLeases();
     // 每小时最多真正执行一次；放在定时器里，无人打开面板时也会回收过期流水
     coordinator.housekeeping();
     stateService.expireSweep(true);
-  }, 5000);
+  }, 3000);
   cleanupTimer.unref();
 
   const tokenStore = new TokenStore();
@@ -56,6 +67,7 @@ export function startDaemon(options = {}) {
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       clearInterval(cleanupTimer);
+      coordinator.unwatchClaudeSessions?.();
       db.close();
       reject(describeListenError(err, port));
     });
@@ -83,7 +95,7 @@ export function startDaemon(options = {}) {
       }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, eventBus, db, tokenStore, cleanupTimer, port: boundPort, dbPath, writeSessionToken });
+      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, eventBus, db, tokenStore, cleanupTimer, sessionWatcher, port: boundPort, dbPath, writeSessionToken });
     });
   });
 }
