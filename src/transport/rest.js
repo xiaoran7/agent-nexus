@@ -26,7 +26,11 @@ function allowedOrigins() {
 
 function isOriginAllowed(req) {
   const origin = req.headers.origin;
-  return Boolean(origin) && allowedOrigins().includes(origin);
+  if (!origin) return false;
+  if (req.headers.host && (origin === `http://${req.headers.host}` || origin === `https://${req.headers.host}`)) {
+    return true;
+  }
+  return allowedOrigins().includes(origin);
 }
 
 function applyCors(req, res) {
@@ -34,7 +38,7 @@ function applyCors(req, res) {
     res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Agent-ID');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Agent-ID, Authorization');
     return true;
   }
   return false;
@@ -44,7 +48,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
   const staticCache = new Map();
 
   return async function handleRest(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
 
     applyCors(req, res);
 

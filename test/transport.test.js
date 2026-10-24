@@ -1050,3 +1050,30 @@ test('关停后不再有活动打到已关闭的数据库', async (t) => {
 
   assert.deepEqual(errors.map((e) => e.message), [], '关停后不应再有异步错误');
 });
+
+test('NEXUS_HOST 与固定 NEXUS_ADMIN_TOKEN 凭据支持', async (t) => {
+  const customToken = 'custom_fixed_admin_token_for_remote_tailnet_123';
+  const { startDaemon, stopDaemon } = await import('../src/daemon/index.js');
+  const daemon = await startDaemon({
+    port: 0,
+    host: '127.0.0.1',
+    adminToken: customToken,
+    dbPath: ':memory:',
+    isTest: true,
+    writeSessionToken: false
+  });
+  t.after(async () => {
+    await stopDaemon(daemon);
+  });
+
+  assert.equal(daemon.host, '127.0.0.1');
+  const res = await fetch(`http://127.0.0.1:${daemon.port}/api/status`, {
+    headers: { Authorization: `Bearer ${customToken}` }
+  });
+  assert.equal(res.status, 200);
+
+  const resAgents = await fetch(`http://127.0.0.1:${daemon.port}/api/agents`, {
+    headers: { Authorization: `Bearer ${customToken}` }
+  });
+  assert.equal(resAgents.status, 200);
+});

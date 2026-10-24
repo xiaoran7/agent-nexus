@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-10-25 支持远端与 Tailnet 部署 (NEXUS_HOST / 固定 NEXUS_ADMIN_TOKEN / CORS Host 自动放行与面板地址动态感知 v0.2.16)
+
+### 改了什么
+
+- **多网卡监听与 Tailnet 支持 (`src/daemon/index.js`)**：
+  - 支持 `NEXUS_HOST`（或 `options.host`）环境变量配置绑定地址，允许绑定到 `0.0.0.0` 或内网/Tailscale IP（如 `100.107.77.33`），缺省保持回环 `127.0.0.1` 安全基线；
+  - 启动日志根据 host 智能呈现内网可达的面板地址与监听端口。
+- **固定管理员凭据持久化支持 (`src/daemon/index.js`, `src/transport/auth.js`)**：
+  - `startDaemon` 支持通过 `NEXUS_ADMIN_TOKEN` 环境变量（或 `options.adminToken`）注入固定 operator 令牌，避免服务器 systemd 重启后令牌轮换导致远程 Web 面板或长期脚本凭据失效。
+- **同源与同 Host 跨域自动放行 (`src/transport/rest.js`)**：
+  - `isOriginAllowed` 自动识别 `origin === 'http://' + req.headers.host` 与 `https`，杜绝远程浏览器通过内网 IP/域名访问时相同 Host 下预检或 POST 触发 403 Origin not allowed。
+- **前端控制台服务地址动态感知 (`src/ui/app.js`)**：
+  - `initApp` 动态同步页面顶部 `.hub-status-pill` 标签为当前 `location.host`，取代固定显示的 `127.0.0.1:4300`。
+
+### 验证
+
+- **全量回归验证**：`node --test "test/**/*.test.js"` 全量 280 项单测全部通过；
+- **专项测试**：在 `test/transport.test.js` 中新增 `NEXUS_HOST 与固定 NEXUS_ADMIN_TOKEN 凭据支持` 用例，覆盖自定义 host 绑定、固定管理员令牌鉴权与 `/api/agents` 权限验证。
+
+---
+
 ## 2026-10-23 新会话主动感知、目录监视与前端心跳探针修复 (Active Session Discovery & Watcher v0.2.15)
 
 ### 改了什么

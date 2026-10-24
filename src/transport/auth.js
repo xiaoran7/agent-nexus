@@ -36,8 +36,10 @@ export function readSessionToken() {
 // 全局令牌发给所有 agent，绑定就名存实亡。
 const OBSERVER_SCOPES = new Set(['read', 'write', 'mint']);
 
-export function generateToken(agentId) {
-  const secret = randomBytes(32).toString('base64url');
+export function generateToken(agentId, fixedSecret = null) {
+  const secret = (typeof fixedSecret === 'string' && fixedSecret.trim())
+    ? fixedSecret.trim()
+    : randomBytes(32).toString('base64url');
   return {
     agent_id: agentId || null,
     secret,

@@ -15,6 +15,8 @@ import { TokenStore, generateToken, getSessionTokenPath } from '../transport/aut
 
 export function startDaemon(options = {}) {
   const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4300', 10);
+  const host = options.host ?? process.env.NEXUS_HOST ?? '127.0.0.1';
+  const fixedAdminToken = options.adminToken || process.env.NEXUS_ADMIN_TOKEN || null;
   const dbPath = options.dbPath || null;
   const uiPath = options.uiPath || join(import.meta.dirname, '../ui/index.html');
   const isRunningInTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
@@ -56,7 +58,7 @@ export function startDaemon(options = {}) {
   cleanupTimer.unref();
 
   const tokenStore = new TokenStore();
-  const operator = tokenStore.issue(generateToken(null));
+  const operator = tokenStore.issue(generateToken(null, fixedAdminToken));
 
   const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService, topologyService);
   const server = createServer(handleRest);
@@ -69,13 +71,14 @@ export function startDaemon(options = {}) {
       clearInterval(cleanupTimer);
       coordinator.unwatchClaudeSessions?.();
       db.close();
-      reject(describeListenError(err, port));
+      reject(describeListenError(err, port, host));
     });
-    server.listen(port, '127.0.0.1', () => {
+    server.listen(port, host, () => {
       server.removeAllListeners('error');
       const boundPort = server.address().port;
-      console.log(`[Agent-Nexus] Daemon listening on http://127.0.0.1:${boundPort}`);
-      console.log(`[Agent-Nexus] Real-time Dashboard: http://127.0.0.1:${boundPort}/`);
+      const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+      console.log(`[Agent-Nexus] Daemon listening on http://${host}:${boundPort}`);
+      console.log(`[Agent-Nexus] Real-time Dashboard: http://${displayHost}:${boundPort}/`);
       if (projectRegistry.llmConfig?.enabled) {
         const cands = projectRegistry.gatewayRouter?.candidates || [];
         const provs = [...new Set(cands.map(c => c.provider))].join(',') || projectRegistry.llmConfig.provider;
@@ -95,15 +98,15 @@ export function startDaemon(options = {}) {
       }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, eventBus, db, tokenStore, cleanupTimer, sessionWatcher, port: boundPort, dbPath, writeSessionToken });
+      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, eventBus, db, tokenStore, cleanupTimer, sessionWatcher, port: boundPort, host, dbPath, writeSessionToken });
     });
   });
 }
 
-function describeListenError(err, port) {
+function describeListenError(err, port, host = '127.0.0.1') {
   if (err.code === 'EADDRINUSE') {
     return new Error(
-      `Port ${port} is already in use, so the daemon could not start.\n` +
+      `Port ${port} (host: ${host}) is already in use, so the daemon could not start.\n` +
       `  - If an earlier Agent-Nexus is still running, stop it, or start this one on another port with NEXUS_PORT.\n` +
       `  - Otherwise another program holds the port; pick a free one with NEXUS_PORT.\n` +
       `  - Note: the hook reads NEXUS_PORT from its own environment, so a globally\n` +

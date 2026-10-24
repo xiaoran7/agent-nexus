@@ -2022,6 +2022,12 @@ if (initialView && ['sessions', 'timeline', 'routing'].includes(initialView)) {
 }
 
 async function initApp() {
+  try {
+    const pill = document.querySelector('.hub-status-pill');
+    if (pill && location?.host) {
+      pill.textContent = location.host;
+    }
+  } catch {}
   await loadProjects();
   connectWebSocket();
 }
