@@ -101,6 +101,8 @@ nexus probe:status                  # Role: edge / Endpoint: edge -> http://<hub
 - **开发态桌面客户端**：`npm run desktop`（纯客户端托盘外壳，连接已安装的探针；未安装时展示离线指引）；
 - **Windows 独立图标 EXE 打包**：`npm run package:win`（自动编译多分辨率青空微晶 `icon.ico`，打包为 Windows Standalone `Agent-Nexus.exe`，并遵循归档铁律归档至工作区 `Deliverables/Agent-Nexus/`）。EXE 内不再内嵌 daemon、`src/` 或 `ws` 依赖，体积只包含客户端外壳。
 
+面板与离线页之间的切换由 `desktop/panel-state.cjs` 统一决策，避免闪屏：连续 3 次探活失败才翻离线页（单次抖动不打断正在看的页面），加载失败按 3s→6s→12s 指数退避重试（封顶 60s），切回面板前先比对当前 URL，已经在面板上就不重复 `loadURL`。`did-fail-load` 只认主框架的真实失败——子资源失败与 `ERR_ABORTED(-3)` 不会把整页踢下线。
+
 
 ### 3. 跨区域多工作区汇聚到单一面板 (Single Hub + Remote Edge)
 
@@ -140,7 +142,7 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> node src/cli.js token <agent-id>
 
 agent 令牌只能读自己的收件箱（读别人的 403），也不能签发令牌。身份以令牌为准，不采信请求体里的 `from`——那是调用方可控的字段，自称 `claude` 的陌生进程和真 Claude Code 无法区分。面板打开 `http://127.0.0.1:4300/?token=<你的令牌>`，令牌会存进 sessionStorage；WebSocket 令牌只能走查询参数，浏览器发不了自定义头。
 
-测试用 `node --test` 跑 `test/**/*.test.js`，共 296 个用例：`comprehensive.test.js` 覆盖协调判冲、路径分段边界、等待队列的可用性复核与宽窄重排、共享状态与 CAS、消息总线、MCP 工具分发、核心状态机闭环与模块锁门禁拦截，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、认证与令牌隔离、跨源策略、Hook 载荷解析、安装器和启动失败处理，`project.test.js` 覆盖多层目录的项目边界探测、Git Worktree 共同根识别与路径归一化，`project-scope.test.js` 覆盖多项目资源与状态隔离，`project-lead.test.js` 覆盖 Project Lead 进场避障排期与 MCP 联动，`notification.test.js` 覆盖主动释放通知与 SSE 实时事件通道，`memory.test.js` 覆盖项目长期工程记忆引擎，`broadcast.test.js` 覆盖总指挥广播与信箱直达，`llm-adapter.test.js` 覆盖大模型适配器（Anthropic、OpenAI 与多候选组网），`gateway-router.test.js` 覆盖 Magpie 启发式错误分类、熔断冷却与多策略路由，`resource-lock.test.js` 覆盖 crewmates 命名资源锁申领、排他互斥与跨工作树相对化路径碰撞，`probe.test.js` 覆盖探针路径解析、PID/状态文件与损坏文件容错、edge 角色安装与判活，`desktop-runner.test.js` 覆盖桌面端纯客户端边界（不含拉起探针的能力）。测试不证明宿主工具已接入。
+测试用 `node --test` 跑 `test/**/*.test.js`，共 303 个用例：`comprehensive.test.js` 覆盖协调判冲、路径分段边界、等待队列的可用性复核与宽窄重排、共享状态与 CAS、消息总线、MCP 工具分发、核心状态机闭环与模块锁门禁拦截，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、认证与令牌隔离、跨源策略、Hook 载荷解析、安装器和启动失败处理，`project.test.js` 覆盖多层目录的项目边界探测、Git Worktree 共同根识别与路径归一化，`project-scope.test.js` 覆盖多项目资源与状态隔离，`project-lead.test.js` 覆盖 Project Lead 进场避障排期与 MCP 联动，`notification.test.js` 覆盖主动释放通知与 SSE 实时事件通道，`memory.test.js` 覆盖项目长期工程记忆引擎，`broadcast.test.js` 覆盖总指挥广播与信箱直达，`llm-adapter.test.js` 覆盖大模型适配器（Anthropic、OpenAI 与多候选组网），`gateway-router.test.js` 覆盖 Magpie 启发式错误分类、熔断冷却与多策略路由，`resource-lock.test.js` 覆盖 crewmates 命名资源锁申领、排他互斥与跨工作树相对化路径碰撞，`probe.test.js` 覆盖探针路径解析、PID/状态文件与损坏文件容错、edge 角色安装与判活，`desktop-runner.test.js` 覆盖桌面端纯客户端边界（不含拉起探针的能力）与面板切换状态机（失败阈值、退避、防重复加载）。测试不证明宿主工具已接入。
 
 daemon 只监听本机，跨源请求默认不放行（浏览器不理会目标地址是否本机，任何网站都能读写你的协调库）。确需跨源时用 `NEXUS_ALLOWED_ORIGINS` 列出来源，逗号分隔；该变量按请求读取，改完无需重启。令牌与跨源白名单是两道独立的闸：白名单管"哪个网页"，令牌管"哪个进程"。
 

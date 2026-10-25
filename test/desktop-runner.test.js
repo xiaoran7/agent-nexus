@@ -71,3 +71,52 @@ test('ProbeClient: 只连探针，不托管探针', async (t) => {
     assert.equal(typeof client.resolveNodeRuntime, 'undefined');
   });
 });
+
+// 闪屏回归：面板状态机必须做到「单次抖动不翻页、失败后指数退避、已在面板上不重复加载」。
+const { PanelState, isPanelKillingFailure } = require('../desktop/panel-state.cjs');
+
+test('PanelState: 面板与离线页之间不再每 3 秒来回翻', async (t) => {
+  await t.test('单次探活失败不翻离线页', () => {
+    const s = new PanelState();
+    assert.equal(s.onHealthResult(false, { isShowingPanel: true }), null);
+    assert.equal(s.onHealthResult(false, { isShowingPanel: true }), null);
+    assert.equal(s.onHealthResult(true, { isShowingPanel: true }), null);
+  });
+
+  await t.test('连续失败达阈值才翻离线页，且已在离线页时不重复翻', () => {
+    const s = new PanelState();
+    s.onHealthResult(false, { isShowingPanel: true });
+    s.onHealthResult(false, { isShowingPanel: true });
+    assert.equal(s.onHealthResult(false, { isShowingPanel: true }), 'offline');
+    assert.equal(s.onHealthResult(false, { isShowingPanel: false }), null);
+  });
+
+  await t.test('探针恢复后切回面板；已在面板上则不重复 loadURL', () => {
+    const s = new PanelState();
+    assert.equal(s.onHealthResult(true, { isShowingPanel: false }), 'panel');
+    assert.equal(s.onHealthResult(true, { isShowingPanel: true }), null);
+  });
+
+  await t.test('加载失败按 3s→6s→12s 退避，成功后归零', () => {
+    const s = new PanelState();
+    assert.equal(s.onPanelLoadFailed().retryInMs, 3000);
+    assert.equal(s.onPanelLoadFailed().retryInMs, 6000);
+    assert.equal(s.onPanelLoadFailed().retryInMs, 12000);
+    s.onPanelLoadSucceeded();
+    assert.equal(s.onPanelLoadFailed().retryInMs, 3000);
+  });
+
+  await t.test('退避封顶 60 秒，不会无限增长', () => {
+    const s = new PanelState();
+    let last = 0;
+    for (let i = 0; i < 12; i++) last = s.onPanelLoadFailed().retryInMs;
+    assert.equal(last, 60000);
+  });
+
+  await t.test('只有主框架的真实失败才把面板踢下线', () => {
+    assert.equal(isPanelKillingFailure({ errorCode: -105, validatedURL: 'http://127.0.0.1:4300/' }), true);
+    assert.equal(isPanelKillingFailure({ errorCode: -105, validatedURL: 'http://x/', isMainFrame: false }), false);
+    assert.equal(isPanelKillingFailure({ errorCode: -3, validatedURL: 'http://x/' }), false);
+    assert.equal(isPanelKillingFailure({ errorCode: -105, validatedURL: 'file:///offline.html' }), false);
+  });
+});

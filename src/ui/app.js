@@ -644,6 +644,9 @@ function handleLeadAwakened(data) {
 }
 
 // 渲染活跃助手 (只渲染 working / waiting / idle，过滤掉离线僵尸会话)
+let lastAgentsHtml = null;
+let lastAgentsMetaHtml = null;
+
 function renderActiveAgents(agents, activeClaims) {
   if (!dom.agentsContainer) return;
 
@@ -677,23 +680,32 @@ function renderActiveAgents(agents, activeClaims) {
   if (dom.agentsMeta) {
     const remoteOnlineCount = validAgents.filter(a => a.is_remote).length;
     const remoteTag = remoteOnlineCount > 0 ? ` · 含远端 ${remoteOnlineCount}` : '';
+    let metaHtml;
     if (currentProjectId === 'all') {
-      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席 · 跨项目全景${remoteTag}`;
+      metaHtml = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席 · 跨项目全景${remoteTag}`;
     } else {
       const globalCount = totalGlobalOnlineAgents > validAgents.length ? totalGlobalOnlineAgents : validAgents.length;
       const overviewHint = globalCount > validAgents.length
         ? ` <span class="global-overview-hint">(全局跨项目 ${globalCount} 个会话 · <a href="javascript:void(0)" onclick="nexusSelectProject('all')" class="view-all-link">查看全景</a>)</span>`
         : '';
-      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席${remoteTag}${overviewHint}`;
+      metaHtml = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席${remoteTag}${overviewHint}`;
+    }
+    if (metaHtml !== lastAgentsMetaHtml) {
+      dom.agentsMeta.innerHTML = metaHtml;
+      lastAgentsMetaHtml = metaHtml;
     }
   }
 
   if (validAgents.length === 0) {
-    dom.agentsContainer.innerHTML = '<div class="empty-hint">暂无活跃会话，当 Claude Code / Codex 启动时将自动感知接入</div>';
+    const emptyHtml = '<div class="empty-hint">暂无活跃会话，当 Coding Assistant / Codex 启动时将自动感知接入</div>';
+    if (emptyHtml !== lastAgentsHtml) {
+      dom.agentsContainer.innerHTML = emptyHtml;
+      lastAgentsHtml = emptyHtml;
+    }
     return;
   }
 
-  dom.agentsContainer.innerHTML = validAgents.map(a => {
+  const agentsHtml = validAgents.map(a => {
     const displayName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id, a.current_intent || a.current_intent_summary);
     const nameSafe = escapeHtml(displayName);
     const providerSafe = escapeHtml((a.provider || 'Claude').toUpperCase());
@@ -732,6 +744,13 @@ function renderActiveAgents(agents, activeClaims) {
       </div>
     `;
   }).join('');
+
+  // 内容没变就不重写 DOM：整块 innerHTML 重建会让卡片里的脉冲动画
+  // 每 3 秒从头播放，看起来像"一直闪"。
+  if (agentsHtml !== lastAgentsHtml) {
+    dom.agentsContainer.innerHTML = agentsHtml;
+    lastAgentsHtml = agentsHtml;
+  }
 }
 
 // 渲染锁定资源与文件

@@ -8,6 +8,7 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain } = require('electron');
 const path = require('node:path');
 const { ProbeClient } = require('./probe-client.cjs');
+const { PanelState, isPanelKillingFailure } = require('./panel-state.cjs');
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -46,6 +47,29 @@ function showPanel() {
   mainWindow.loadURL(probe.panelUrl());
 }
 
+// 是否已经在展示面板：用当前 URL 判断，而不是靠一个可能失真的布尔标志。
+function isShowingPanel() {
+  if (!mainWindow) return false;
+  try {
+    return mainWindow.webContents.getURL().startsWith(probe.baseUrl);
+  } catch {
+    return false;
+  }
+}
+
+const panelState = new PanelState();
+let retryTimer = null;
+
+function schedulePanelRetry(delayMs) {
+  if (retryTimer || !mainWindow) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!mainWindow) return;
+    if (!panelState.shouldRetryPanel(isShowingPanel())) return;
+    showPanel();
+  }, delayMs);
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -73,9 +97,21 @@ function createMainWindow() {
   });
 
   // 探针没起来时面板会加载失败：落到离线指引页，由状态轮询负责重连。
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, _desc, validatedURL) => {
-    if (validatedURL && validatedURL.startsWith('file://')) return;
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, _desc, validatedURL, isMainFrame) => {
+    if (!isPanelKillingFailure({ errorCode, validatedURL, isMainFrame })) return;
     showOffline();
+    const { retryInMs } = panelState.onPanelLoadFailed();
+    schedulePanelRetry(retryInMs);
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    // 面板真正加载成功，退避与失败计数归零。
+    if (!isShowingPanel()) return;
+    panelState.onPanelLoadSucceeded();
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
   });
 
   mainWindow.on('close', (event) => {
@@ -170,9 +206,10 @@ async function startStatusPolling() {
 
   const tick = async () => {
     const health = await probe.checkAlive();
+    const action = panelState.onHealthResult(health.alive, { isShowingPanel: isShowingPanel() });
 
     if (!health.alive) {
-      showOffline();
+      if (action === 'offline') showOffline();
       if (tray) {
         tray.setToolTip('Agent-Nexus: 探针离线');
         tray.setImage(nativeImage.createFromPath(icons.busy));
@@ -181,7 +218,9 @@ async function startStatusPolling() {
       return;
     }
 
-    if (showingOffline) showPanel();
+    // 退避重试负责把离线页换回面板；这里只在没有待执行重试时补一刀，
+    // 避免轮询与重试定时器同时 loadURL 造成页面反复加载。
+    if (action === 'panel' && !retryTimer) showPanel();
 
     try {
       const token = probe.getToken();

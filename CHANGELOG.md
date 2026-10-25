@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-10-25 修复桌面端闪屏 (Panel Flicker Fix v0.2.20)
+
+### 改了什么
+
+- **面板切换状态机 (`desktop/panel-state.cjs`, `desktop/main.cjs`)**：
+  - 闪屏根因：主进程每 3 秒轮询探针，一次探活失败就 `loadFile` 离线页，下次成功又 `loadURL` 面板，页面反复从头加载；`did-fail-load` 还会因子框架失败与 `ERR_ABORTED(-3)` 误触发，放大成每 3 秒一次的"连上→断开→连上"；
+  - 新增 `PanelState`：连续 **3 次**探活失败才翻离线页（单次抖动不打断正在看的页面）；面板加载失败按 **3s→6s→12s→24s** 指数退避重试、封顶 60s；`did-finish-load` 成功后计数与退避归零；
+  - 新增 `isPanelKillingFailure`：只认主框架（`isMainFrame !== false`）的真实失败，忽略子资源/子框架失败、`ERR_ABORTED(-3)` 与离线页自身的 `file://` 加载；
+  - 切回面板前用 `webContents.getURL()` 比对当前 URL，已在面板上就不重复 `loadURL`；轮询在有退避定时器待执行时不再插手，避免两个来源同时导航。
+- **活跃助手列表去抖 (`src/ui/app.js`)**：`renderActiveAgents` 生成 HTML 后与上次结果比对，内容未变不重写 `innerHTML`。此前每次轮询都整块重建 DOM，卡片内的脉冲动画会随之从头播放。
+- **版本清单同步**：`package.json` / `package-lock.json` / `src/transport/rest.js` 统一至 `0.2.20`。
+
+### 验证
+
+- **单元测试**：`test/desktop-runner.test.js` 增至 **13 项**，新增 `PanelState` 六组断言（单次失败不翻页、达阈值才翻、恢复后切回、3s→6s→12s 退避、封顶 60s、只认主框架失败）；全量 **303 项**通过；
+- **真机验证**：重新打包 `Agent-Nexus-v0.2.20-win32-x64` 并启动，3 分 24 秒内 renderer 进程始终为同一个（无重建），renderer 到 `127.0.0.1:4300` 的 7 条连接在 120 秒采样中**零变更**——页面未再重新加载。
+
+---
+
 ## 2026-10-25 边缘探针取代远端同步桥 (Edge Probe Role v0.2.19)
 
 ### 改了什么
