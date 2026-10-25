@@ -2,10 +2,17 @@
 // Agent-Nexus MCP Stdio Transport Server
 // =============================================================================
 
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { resolveProject } from '../domain/project.js';
 import { ALL_NEXUS_TOOLS, handleMcpTool } from './server.js';
-import { readSessionToken } from '../transport/auth.js';
+import { readSessionToken, readRemoteConfig, resolveNexusEndpoint } from '../transport/auth.js';
+
+let MCP_VERSION = '0.2.17';
+try {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  if (pkg.version) MCP_VERSION = pkg.version;
+} catch {}
 
 export function startMcpStdio(options = {}) {
   const targetDir = options.projectRoot || process.cwd();
@@ -13,16 +20,24 @@ export function startMcpStdio(options = {}) {
   const projectId = options.projectId || info.projectId;
   const projectRoot = options.projectRoot || info.projectRoot;
 
-  const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4300', 10);
-  const baseUrl = options.baseUrl || `http://127.0.0.1:${port}`;
-  let cachedToken = options.token || process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN || readSessionToken() || '';
+  const endpoint = resolveNexusEndpoint({
+    baseUrl: options.baseUrl,
+    host: options.host,
+    port: options.port,
+    token: options.token,
+    nodeId: options.nodeId
+  });
+  const baseUrl = endpoint.baseUrl;
+  const nodeId = endpoint.nodeId;
+  let cachedToken = endpoint.token || '';
 
   function getActiveToken(forceRefresh = false) {
     if (options.token) return options.token;
     if (process.env.NEXUS_TOKEN) return process.env.NEXUS_TOKEN;
     if (process.env.NEXUS_ADMIN_TOKEN) return process.env.NEXUS_ADMIN_TOKEN;
     if (forceRefresh || !cachedToken) {
-      cachedToken = readSessionToken() || '';
+      const remoteCfg = readRemoteConfig();
+      cachedToken = remoteCfg?.token || readSessionToken() || '';
     }
     return cachedToken;
   }
@@ -36,7 +51,7 @@ export function startMcpStdio(options = {}) {
     process.env.NEXUS_AGENT_ID ||
     (process.env.CLAUDE_CODE_SESSION_ID ? `claude-${process.env.CLAUDE_CODE_SESSION_ID}` :
       (process.env.CODEX_SESSION_ID ? `codex-${process.env.CODEX_SESSION_ID}` :
-        `agent-${process.pid}`));
+        (endpoint.isRemoteHub ? `agent-${nodeId}-${process.pid}` : `agent-${process.pid}`)));
 
   function send(msg) {
     output.write(JSON.stringify(msg) + '\n');
@@ -284,7 +299,7 @@ export function startMcpStdio(options = {}) {
           },
           serverInfo: {
             name: 'agent-nexus',
-            version: '0.2.12'
+            version: MCP_VERSION
           }
         }
       });

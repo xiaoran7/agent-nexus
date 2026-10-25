@@ -3,15 +3,19 @@
 // =============================================================================
 
 function getNexusToken() {
-  if (typeof window !== 'undefined' && window.__NEXUS_TOKEN__) {
-    return window.__NEXUS_TOKEN__;
-  }
   const fromQuery = new URLSearchParams(location.search).get('token');
   if (fromQuery) {
     sessionStorage.setItem('nexusToken', fromQuery);
     return fromQuery;
   }
-  return sessionStorage.getItem('nexusToken') || '';
+  const stored = sessionStorage.getItem('nexusToken');
+  if (stored) {
+    return stored;
+  }
+  if (typeof window !== 'undefined' && window.__NEXUS_TOKEN__) {
+    return window.__NEXUS_TOKEN__;
+  }
+  return '';
 }
 
 let currentProjectId = 'default';
@@ -119,7 +123,9 @@ function updateGlobalAgentRegistry(agents = [], claims = [], timeline = []) {
       id: a.id,
       name: a.name || resolvedName,
       displayName: resolvedName,
-      provider: a.provider
+      provider: a.provider,
+      hostId: a.host_id || null,
+      isRemote: Boolean(a.is_remote)
     });
   });
 
@@ -669,14 +675,16 @@ function renderActiveAgents(agents, activeClaims) {
   }
 
   if (dom.agentsMeta) {
+    const remoteOnlineCount = validAgents.filter(a => a.is_remote).length;
+    const remoteTag = remoteOnlineCount > 0 ? ` · 含远端 ${remoteOnlineCount}` : '';
     if (currentProjectId === 'all') {
-      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席 · 跨项目全景`;
+      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席 · 跨项目全景${remoteTag}`;
     } else {
       const globalCount = totalGlobalOnlineAgents > validAgents.length ? totalGlobalOnlineAgents : validAgents.length;
       const overviewHint = globalCount > validAgents.length
         ? ` <span class="global-overview-hint">(全局跨项目 ${globalCount} 个会话 · <a href="javascript:void(0)" onclick="nexusSelectProject('all')" class="view-all-link">查看全景</a>)</span>`
         : '';
-      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席${overviewHint}`;
+      dom.agentsMeta.innerHTML = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席${remoteTag}${overviewHint}`;
     }
   }
 
@@ -696,6 +704,8 @@ function renderActiveAgents(agents, activeClaims) {
     const projName = getProjectDisplayName(a.project_id, a.workspace_dir);
     const projSafe = escapeHtml(projName);
     const showProj = (currentProjectId === 'all' || !currentProjectId) && projSafe;
+    const hostSafe = a.is_remote && a.host_id ? escapeHtml(a.host_id) : '';
+    const showHost = Boolean(hostSafe) && (!showProj || !projName.includes(`[${a.host_id}]`));
 
     return `
       <div class="agent-card-item is-${a.uiState}">
@@ -703,6 +713,7 @@ function renderActiveAgents(agents, activeClaims) {
           <div class="agent-name-group">
             <span class="agent-status-badge badge-${a.uiState}">${a.badgeText}</span>
             <span class="agent-title" title="${nameSafe}">${nameSafe}</span>
+            ${showHost ? `<span class="agent-host-badge" title="远端工作区节点: ${hostSafe}">🌐 ${hostSafe}</span>` : ''}
             ${showProj ? `<span class="agent-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
           </div>
           <span class="agent-runtime-tag">${providerSafe}</span>
@@ -757,9 +768,10 @@ function renderActiveLocks(claims, agents) {
 
   const now = Date.now();
   dom.locksContainer.innerHTML = claims.map(c => {
-    const holder = (agents || []).find(a => a.id === c.agent_id);
+    const holder = (agents || []).find(a => a.id === c.agent_id) || globalAgentMap.get(c.agent_id);
     const resolvedHolder = resolveAgentName(c.agent_id, c.agent_name || holder?.name);
     const holderName = escapeHtml(resolvedHolder);
+    const holderHost = (holder?.is_remote || holder?.isRemote) ? escapeHtml(holder.host_id || holder.hostId || '') : '';
     const shortTarget = escapeHtml(c.claim_target.split(/[\/\\]/).pop());
     const fullTarget = escapeHtml(c.claim_target);
     const remainingSec = Math.max(0, Math.ceil((c.expires_at - now) / 1000));
@@ -769,7 +781,7 @@ function renderActiveLocks(claims, agents) {
       <div class="lock-card-item">
         <div class="lock-target-info">
           <span class="lock-target-name" title="${fullTarget}">${shortTarget}</span>
-          <span class="lock-holder-desc"><strong class="holder-name" title="完整会话标识: ${escapeHtml(c.agent_id)}">${holderName}</strong> · 剩余 ${remainingSec}s</span>
+          <span class="lock-holder-desc"><strong class="holder-name" title="完整会话标识: ${escapeHtml(c.agent_id)}">${holderName}</strong>${holderHost ? ` <span class="agent-host-badge">🌐 ${holderHost}</span>` : ''} · 剩余 ${remainingSec}s</span>
         </div>
         <div class="lock-actions">
           ${leaseId ? `<button class="btn-release-sm" onclick="releaseLock('${leaseId}', '${escapeHtml(c.agent_id)}')">释放</button>` : ''}
@@ -1112,6 +1124,8 @@ function renderRoutingDiagram(cockpitData) {
         const projName = getProjectDisplayName(a.project_id, a.workspace_dir);
         const projSafe = escapeHtml(projName);
         const showProj = (currentProjectId === 'all' || !currentProjectId) && projSafe;
+        const hostSafe = a.is_remote && a.host_id ? escapeHtml(a.host_id) : '';
+        const showHost = Boolean(hostSafe) && (!showProj || !projName.includes(`[${a.host_id}]`));
 
         let statusBadge = '<span class="session-status-tag status-idle"><span class="dot"></span>待命</span>';
         if (a.uiState === 'working') {
@@ -1126,6 +1140,7 @@ function renderRoutingDiagram(cockpitData) {
               <div class="route-card-identity">
                 <span class="route-agent-name" title="完整会话标识: ${idSafe}">${nameSafe}</span>
                 <span class="route-provider-badge">${providerSafe}</span>
+                ${showHost ? `<span class="route-host-badge" title="远端工作区节点: ${hostSafe}">🌐 ${hostSafe}</span>` : ''}
                 ${showProj ? `<span class="route-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
               </div>
               ${statusBadge}

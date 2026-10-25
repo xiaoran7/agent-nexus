@@ -1125,6 +1125,27 @@ body.resizing-row {
   flex-shrink: 0;
 }
 
+.agent-host-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #0284c7;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .agent-host-badge {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
 .agent-project-badge {
   font-size: 10px;
   font-weight: 600;
@@ -1744,6 +1765,26 @@ body.resizing-row {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
+}
+
+.route-host-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #0284c7;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-theme="dark"] .route-host-badge {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.3);
 }
 
 .route-project-badge {

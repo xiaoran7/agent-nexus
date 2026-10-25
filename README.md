@@ -8,7 +8,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://www.npmjs.com/package/@xiaoran7/agent-nexus)
 [![GitHub Release](https://img.shields.io/github/v/release/xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://github.com/xiaoran7/agent-nexus/releases)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D24-10b981.svg?style=flat-square)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-236%20passed-10b981.svg?style=flat-square)](https://github.com/xiaoran7/agent-nexus)
+[![Tests](https://img.shields.io/badge/tests-285%20passed-10b981.svg?style=flat-square)](https://github.com/xiaoran7/agent-nexus)
 [![License: MIT](https://img.shields.io/github/license/xiaoran7/agent-nexus.svg?style=flat-square&color=64748b)](LICENSE)
 
 Agent-Nexus 专为解决多 Agent 并发写代码时的**文件互相覆盖、测试端口争抢、Git Worktree 跨工作树合并冲突**而设计。通过轻量全局 Hook 门禁、三级细粒度资源锁（File / Module / Symbol）与等待唤醒机制，实现**目标项目 0 改动、0 文件、0 污染**的静默防撞保护，并内置具备启发式错误归因与熔断冷却的弹性 AI 网关。
@@ -62,6 +62,22 @@ npm.cmd test
 
 - **开发态桌面托盘启动**：`npm run desktop`（启动 Electron 桌面托盘常驻，自动探测/拉起后台服务并无感注入免密 Token）；
 - **Windows 独立图标 EXE 打包**：`npm run package:win`（自动编译多分辨率青空微晶 `icon.ico`，打包为 Windows Standalone `Agent-Nexus.exe`，并遵循归档铁律归档至工作区 `Deliverables/Agent-Nexus/`）。
+
+### 3. 跨区域多工作区汇聚到单一面板 (Single Hub + Remote Edge)
+
+无需在远端开发机（如美西沙箱 `us-zenix`）额外部署第二套面板或数据库，通过 Tailscale 内网即可将本机与远端工作区的全部会话、文件锁与实时动态汇聚到同一个 Hub 面板：
+
+```bash
+# 1) 在中心 Hub 主机（如本机工作站）绑定内网/Tailnet 并使用固定管理令牌启动
+NEXUS_HOST=0.0.0.0 NEXUS_ADMIN_TOKEN=<你的固定长令牌> nexus start
+
+# 2) 在远端工作区（如 us-zenix）一次性写入连接凭据并安装全局 Hook（无需配 shell 环境变量）
+nexus connect http://<Hub的Tailscale_IP>:4300 --token <你的固定长令牌> --node-id us-zenix
+nexus hook:install --claude
+
+# 3) （可选）在远端工作区后台运行无端口、无数据库的轻量边缘同步桥，实现空闲会话秒级发现与关窗即刻收锁
+nexus bridge
+```
 
 默认面板为 `http://127.0.0.1:4300`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`，`NEXUS_DB_PATH` 的父目录不存在时会自动创建。必须用 `npm ci`（或 `npm install`）安装依赖后再启动：唯一运行时依赖是 `ws`，缺失时 daemon 会在 `src/transport/ws.js` 直接报 `ERR_MODULE_NOT_FOUND`。端口被占用时启动会失败并提示改用 `NEXUS_PORT`，不会带原始堆栈崩溃。
 

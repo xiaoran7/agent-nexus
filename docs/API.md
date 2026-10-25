@@ -188,7 +188,7 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
   ```
 - **响应 (入参非法)**：`400`，`{"error": "\"claims[].target\" is required and must be a non-empty string", "field": "claims[].target"}`。Hook 收到 4xx 会按"协调库无法评估"处理并拦截（退出码 2），不会当成放行。
 
-### 4. 命名资源锁接口 (Resource Locks)
+### 5. 命名资源锁接口 (Resource Locks)
 针对 `tests`（全量测试）、`dev-server`（开发服务器端口）、`build`（打包构建）等系统排他性资源提供互斥锁定。
 
 - **`GET /api/resources/locks?project_id=default`**：列出当前项目所有活跃的排他资源锁。
@@ -198,6 +198,29 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
 - **`POST /api/resources/unlock`**：
   - 请求体：`{ "agent_id": "a1", "resource_name": "tests" }`
   - 响应：`{ "success": true, "resource_name": "tests" }`
+
+### 6. 远端工作区会话快照汇聚 (Remote Workspace Session Sync)
+- **路径**：`POST /api/agents/sync-remote`
+- **说明**：供远端节点（如 `nexus bridge` 或远端 Hook `peer_sessions` 捎带）上报已在边缘本地完成 PID / 命名管道存活校验的会话列表。中心 Hub 按 `host_id` 隔离节点身份，绝不对异机 `pid` 执行本机 `process.kill` 探针；当 `full_snapshot: true` 且某远端会话从列表中消失时，自动将其标为 `departed` 并立即回收其持有的活跃租约。
+- **请求体**：
+  ```json
+  {
+    "host_id": "us-zenix",
+    "full_snapshot": true,
+    "sessions": [
+      {
+        "pid": 88101,
+        "sessionId": "zenix-sess-alpha",
+        "name": "美西沙箱联调",
+        "cwd": "/root/Claudespace/Project/gate",
+        "status": "idle",
+        "alive": true,
+        "verified": true
+      }
+    ]
+  }
+  ```
+- **响应**：`{ "scanned": 1, "added": [...], "updated": [...], "departed": [...] }`
 
 ---
 

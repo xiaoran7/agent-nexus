@@ -25,6 +25,7 @@
 | **点对点通信与广播协调消息流** | `src/domain/messages.js` | `test/inter-session-dialogue.test.js` |
 | **SQLite WAL 存储与原子事务** | `src/storage/database.js` | `test/helpers.js` |
 | **PreToolUse 拦截门禁与命令推导** | `src/hook/nexus-hook.mjs` | `test/transport.test.js` |
+| **跨节点单 Hub 汇聚与无状态边缘桥 (`connect` / `bridge`)** | `src/daemon/bridge.js`, `src/transport/auth.js` | `test/remote-workspace-hub.test.js` |
 | **标准 Stdio MCP 传输端点** | `src/mcp/stdio.js`, `src/mcp/server.js` | `test/mcp-stdio.test.js` |
 
 长期偏好见 [MEMORY.md](MEMORY.md)。

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { ValidationError, LEASE_POLICY } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.2.11';
+let APP_VERSION = '0.2.17';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;
@@ -424,6 +424,19 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const agent = coordinator.registerAgent(data);
         return sendJson(200, { success: true, agent });
       }
+      // 2.1 远端工作区（如 us-zenix）会话注册表实时汇聚端点
+      if (url.pathname === '/api/agents/sync-remote' && req.method === 'POST') {
+        const data = await readJson();
+        const hostId = data.host_id || data.hostId || data.node_id || 'remote';
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        const fullSnapshot = data.full_snapshot !== false && data.fullSnapshot !== false;
+        const syncRes = coordinator.syncRemoteClaudeSessions({
+          hostId,
+          sessions,
+          fullSnapshot
+        });
+        return sendJson(200, { success: true, host_id: hostId, ...syncRes });
+      }
 
       // 3. Token minting
       if (url.pathname === '/api/tokens' && req.method === 'POST') {
@@ -483,6 +496,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         }
         const result = coordinator.releaseAgentLeases({
           agentId,
+          sessionId: data.session_id || null,
+          hostId: data.host_id || null,
           projectId: data.project_id || 'default',
           reason: data.reason || 'git_action',
           scope: data.scope || 'all'
@@ -490,11 +505,21 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, result);
       }
 
-      // 6. Universal Hook fast check (支持文件冲突与命名资源锁检查)
+      // 6. Universal Hook fast check (支持文件冲突与命名资源锁检查 + 远端会话顺带捎带)
       if (url.pathname === '/api/hook/check' && req.method === 'POST') {
         const data = await readJson();
+        if (data.host_id && Array.isArray(data.peer_sessions)) {
+          try {
+            coordinator.syncRemoteClaudeSessions({
+              hostId: data.host_id,
+              sessions: data.peer_sessions,
+              fullSnapshot: true
+            });
+          } catch {}
+        }
         const checkResult = coordinator.fastCheckAndAutoClaim({
           agentId: data.agent_id,
+          hostId: data.host_id || null,
           provider: data.provider || 'unknown',
           sessionId: data.session_id || 'default',
           name: data.name || null,
@@ -504,7 +529,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           projectId: data.project_id || 'default',
           workspaceDir: data.workspace_dir || '',
           projectRoot: data.project_root || null,
-          pid: data.pid || null
+          pid: data.pid || null,
+          livenessVerified: Boolean(data.liveness_verified)
         });
         return sendJson(200, checkResult);
       }
@@ -512,8 +538,18 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       // 6.01 Tool Telemetry 实时工具调用与活跃态势上报
       if (url.pathname === '/api/hook/telemetry' && req.method === 'POST') {
         const data = await readJson();
+        if (data.host_id && Array.isArray(data.peer_sessions)) {
+          try {
+            coordinator.syncRemoteClaudeSessions({
+              hostId: data.host_id,
+              sessions: data.peer_sessions,
+              fullSnapshot: true
+            });
+          } catch {}
+        }
         const result = coordinator.recordTelemetry({
           agentId: data.agent_id,
+          hostId: data.host_id || null,
           provider: data.provider || 'unknown',
           sessionId: data.session_id || 'default',
           name: data.name || null,
@@ -521,8 +557,10 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           toolAction: data.action || data.tool_action,
           toolTarget: data.target || data.tool_target || data.file_path,
           workspaceDir: data.workspace_dir || '',
+          projectRoot: data.project_root || null,
           projectId: data.project_id || 'default',
-          pid: data.pid || null
+          pid: data.pid || null,
+          livenessVerified: Boolean(data.liveness_verified)
         });
         return sendJson(200, result);
       }
@@ -557,6 +595,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         }
         const result = coordinator.releaseResourceLock({
           agentId,
+          sessionId: body.session_id || null,
+          hostId: body.host_id || null,
           resourceName,
           projectId: body.project_id || 'default'
         });
@@ -647,26 +687,30 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           const stat = statSync(filePath);
           let cached = staticCache.get(target.name);
           if (!cached || cached.mtime !== stat.mtimeMs) {
-            let buffer = readFileSync(filePath);
-            if (target.name === 'index.html') {
-              // 自动注入活动会话令牌，实现本地浏览器与 WebSocket 全双工零配置自动握手
-              const sessionToken = readSessionToken() || '';
-              const scriptInject = `<script>window.__NEXUS_TOKEN__ = ${JSON.stringify(sessionToken)};</script>\n</head>`;
-              const htmlStr = buffer.toString('utf8').replace('</head>', scriptInject);
-              buffer = Buffer.from(htmlStr, 'utf8');
-            }
             cached = {
-              buffer,
+              buffer: readFileSync(filePath),
               mime: target.mime,
               mtime: stat.mtimeMs
             };
             staticCache.set(target.name, cached);
           }
+          let outBuffer = cached.buffer;
+          if (target.name === 'index.html') {
+            // 仅对本机回环请求自动注入当前运行实例的内存会话令牌，避免多实例串号，且绝不向公网/内网未授权访客泄漏令牌
+            const remoteAddr = req.socket?.remoteAddress || '';
+            const isLoopback = remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
+            if (isLoopback) {
+              const sessionToken = tokenStore?.localOperatorToken || readSessionToken() || '';
+              const scriptInject = `<script>window.__NEXUS_TOKEN__ = ${JSON.stringify(sessionToken)};</script>\n</head>`;
+              const htmlStr = outBuffer.toString('utf8').replace('</head>', scriptInject);
+              outBuffer = Buffer.from(htmlStr, 'utf8');
+            }
+          }
           res.writeHead(200, {
             'Content-Type': cached.mime,
             'Cache-Control': 'no-cache'
           });
-          res.end(cached.buffer);
+          res.end(outBuffer);
           return;
         }
       }

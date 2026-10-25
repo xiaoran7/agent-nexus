@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { normalize, resolve, isAbsolute, join } from 'node:path';
+import { normalize, resolve, isAbsolute, join, posix } from 'node:path';
 import { existsSync, realpathSync, readdirSync, readFileSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { ValidationError, requireString } from '../domain/errors.js';
-import { resolveProject, resolveProjectDisplayName } from '../domain/project.js';
+import { resolveProject, resolveProjectDisplayName, getLocalNodeId, normalizeNodeId, isSameNode } from '../domain/project.js';
 
 export { ValidationError };
 
@@ -193,18 +193,26 @@ function resolveSafe(baseDir, value) {
   if (baseDir && /^[a-zA-Z]:[/\\]/.test(baseDir) && process.platform !== 'win32') {
     const cleanBase = baseDir.replace(/\\/g, '/').replace(/\/+$/, '');
     const cleanRel = value.replace(/\\/g, '/').replace(/^\/+/, '');
-    return `${cleanBase}/${cleanRel}`;
+    return posix.normalize(`${cleanBase}/${cleanRel}`);
+  }
+  if (baseDir && baseDir.startsWith('/') && !baseDir.startsWith('//') && process.platform === 'win32') {
+    return posix.resolve(baseDir, value.replace(/\\/g, '/'));
   }
   return baseDir ? resolve(baseDir, value) : resolve(value);
 }
 
 function toComparablePath(value, baseDir, projectRoot) {
   let resolved = resolveSafe(baseDir, value);
-  try {
-    if (existsSync(resolved)) {
-      resolved = realpathSync(resolved);
-    }
-  } catch {}
+  const isPosixForeign = process.platform === 'win32' && resolved.startsWith('/') && !resolved.startsWith('//');
+  const isWinForeign = process.platform !== 'win32' && /^[a-zA-Z]:[/\\]/.test(resolved);
+
+  if (!isPosixForeign && !isWinForeign) {
+    try {
+      if (existsSync(resolved)) {
+        resolved = realpathSync(resolved);
+      }
+    } catch {}
+  }
 
   // 跨 Worktree 相对化对齐：若指定了 projectRoot 且 baseDir 与 projectRoot 不一致，将工作树内的文件映射到主工程路径
   if (projectRoot && baseDir) {
@@ -213,13 +221,16 @@ function toComparablePath(value, baseDir, projectRoot) {
     const canonicalTarget = resolved.replace(/\\/g, '/').toLowerCase();
 
     if (canonicalBase !== canonicalProj && canonicalTarget.startsWith(canonicalBase + '/')) {
-      const rel = canonicalTarget.slice(canonicalBase.length + 1);
+      const rel = resolved.replace(/\\/g, '/').slice(baseDir.replace(/\\/g, '/').replace(/\/+$/, '').length + 1);
       resolved = resolveSafe(projectRoot, rel);
     }
   }
 
-  let normalized = resolved.replace(/\\/g, '/');
-  return normalize(normalized).replace(/\\/g, '/').toLowerCase();
+  let normalized = posix.normalize(resolved.replace(/\\/g, '/'));
+  if (normalized.length > 1 && normalized.endsWith('/') && !/^[a-zA-Z]:\/$/.test(normalized)) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized.toLowerCase();
 }
 
 function requireAgentId(value) {
@@ -301,15 +312,24 @@ export function isExecutingWorkingTool(tool, heartbeat, now) {
   return false;
 }
 
-export function computeAgentLifecycleState(agent, now) {
+export function computeAgentLifecycleState(agent, now, localNodeId = null) {
+  if (agent.status === 'departed') {
+    return { lifecycleState: 'departed', isOnline: false };
+  }
   const heartbeatAge = now - (agent.last_heartbeat || 0);
   const isHeartbeatFresh = heartbeatAge <= 120000;
-  // 会话进程的命名管道由进程独占创建、退出即消失，且名称含随机串不可复用。
+  // 会话进程的命名管道（本机或远端节点已验证上报）由进程独占创建、退出即消失，且名称含随机串不可复用。
   // 只要注册表刚验证过管道仍在，就无需依赖 PID 或心跳时间，长回合与等待输入的会话也能保持在席。
   const isLivenessVerified = (now - (agent.liveness_verified_at || 0)) <= 120000;
+  // 跨机保护：只有归属当前机器的会话才能在本机调用 isPidAlive(pid) 探针！
+  // 远端节点（如 us-zenix）的 PID 在本机不存在或属于无关进程，绝不能跨机探测。
+  const effectiveLocalNode = localNodeId || getLocalNodeId();
+  const isLocalAgent = !agent.host_id || isSameNode(agent.host_id, effectiveLocalNode);
   // 进程探针保护：如果心跳已超过 10 分钟 (600,000ms)，单纯的 PID 存活极有可能是操作系统 PID 回收复用给无关系统进程 (如 svchost)，不视作该 Agent 在线
-  const isPidActive = isLivenessVerified || (agent.pid ? (isPidAlive(agent.pid) && heartbeatAge <= 600000) : false);
-  const isOnline = isHeartbeatFresh || isPidActive;
+  const isPidActive = isLivenessVerified || (isLocalAgent && agent.pid ? (isPidAlive(agent.pid) && heartbeatAge <= 600000) : false);
+  // 远端会话若仍持有未过期活跃租约（如长思考编辑阶段），在租约 TTL 内同样视为在线，避免因只读操作无 Hook 心跳而闪烁离线
+  const hasActiveRemoteLease = !isLocalAgent && (agent.active_leases_count || 0) > 0;
+  const isOnline = isHeartbeatFresh || isPidActive || hasActiveRemoteLease;
 
   if (!isOnline) {
     return { lifecycleState: 'departed', isOnline: false };
@@ -320,7 +340,7 @@ export function computeAgentLifecycleState(agent, now) {
     return { lifecycleState: 'waiting', isOnline: true };
   }
 
-  // 2. 施工中 (working): 只要有工作（包括持有有效租约、或执行 Read/Grep/Glob/Bash/Edit/Write 等任何工具并在活跃窗口内）
+  // 2. 施工中 (working): 只要有工作（包括持有有效租约、或执行写工具并在活跃窗口内）
   if (
     (agent.active_leases_count || 0) > 0 ||
     agent.status === 'running' ||
@@ -340,6 +360,7 @@ export class CoordinatorEngine {
     this.db = db;
     this.eventBus = eventBus;
     this.options = options;
+    this.localNodeId = normalizeNodeId(options.nodeId || getLocalNodeId());
     const isTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
     this.claudeSessionsDir = options.claudeSessionsDir !== undefined ? options.claudeSessionsDir : (isTest ? null : join(homedir(), '.claude', 'sessions'));
   }
@@ -449,34 +470,105 @@ export class CoordinatorEngine {
     const targetDir = customDir !== null && customDir !== undefined ? customDir : this.claudeSessionsDir;
     if (!targetDir) return { scanned: 0, added: [], updated: [] };
     const sessions = getClaudeSessionRegistry(targetDir);
+    return this._ingestSessionEntries(sessions, this.localNodeId, now, { isRemote: false, fullSnapshot: false });
+  }
+
+  /**
+   * 0.1b 接收远端工作区（如 us-zenix）推送或 Hook 捎带的 Claude 会话注册表快照
+   * 远端已在本地完成 PID / 命名管道存活校验，Hub 直接信任其 alive/verified 结论，绝不调用本机 process.kill
+   */
+  syncRemoteClaudeSessions({ hostId, sessions = [], fullSnapshot = true, now = Date.now() } = {}) {
+    const cleanHost = normalizeNodeId(hostId);
+    if (!Array.isArray(sessions)) return { scanned: 0, added: [], updated: [], departed: [] };
+    const normalizedSessions = sessions
+      .filter(s => s && s.sessionId)
+      .map(s => ({
+        pid: Number.isInteger(Number(s.pid)) && Number(s.pid) > 0 ? Number(s.pid) : null,
+        sessionId: String(s.sessionId),
+        name: s.name ? cleanUtf8String(String(s.name), '') : null,
+        cwd: s.cwd ? String(s.cwd) : null,
+        projectId: s.projectId || s.project_id || null,
+        projectRoot: s.projectRoot || s.project_root || null,
+        displayName: s.displayName || s.display_name || null,
+        status: s.status || 'idle',
+        startedAt: s.startedAt || now,
+        updatedAt: s.updatedAt || now,
+        alive: s.alive !== false,
+        verified: Boolean(s.verified ?? (s.alive !== false))
+      }));
+
+    return this._ingestSessionEntries(normalizedSessions, cleanHost, now, {
+      isRemote: !isSameNode(cleanHost, this.localNodeId),
+      fullSnapshot: Boolean(fullSnapshot)
+    });
+  }
+
+  _ingestSessionEntries(sessions, hostId, now, { isRemote = false, fullSnapshot = false } = {}) {
+    const cleanHost = normalizeNodeId(hostId || this.localNodeId);
     const added = [];
     const updated = [];
+    const departed = [];
+    const aliveAgentIds = new Set();
 
     for (const sess of sessions) {
-      if (!sess.alive) continue;
+      if (!sess.alive) {
+        // 远端明确报告某会话已死亡：立即回收租约并标记离席
+        const deadRow = this.db.prepare(`
+          SELECT * FROM agents
+          WHERE host_id = ? AND (session_id = ? OR id = ?)
+        `).get(cleanHost, sess.sessionId, `claude-${sess.sessionId}`);
+        if (deadRow && deadRow.status !== 'departed') {
+          this.releaseAgentLeases({
+            agentId: deadRow.id,
+            projectId: deadRow.project_id,
+            reason: 'process_exit',
+            scope: 'all'
+          });
+          this.db.prepare(`UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE id = ?`).run(deadRow.id);
+          this.eventBus?.emit?.('agent:status', { agent_id: deadRow.id, host_id: cleanHost, status: 'departed' });
+          departed.push(deadRow.id);
+        }
+        continue;
+      }
 
-      let agent = this.db.prepare(`
+      const candidates = this.db.prepare(`
         SELECT * FROM agents
-        WHERE session_id = ? OR id = ? OR id = ? OR (provider = 'claude' AND session_id LIKE ? || '%')
-      `).get(sess.sessionId, sess.sessionId, `claude-${sess.sessionId}`, sess.sessionId.slice(0, 8));
+        WHERE session_id = ?
+           OR id = ?
+           OR id = ?
+           OR id = ?
+           OR (provider = 'claude' AND LENGTH(session_id) = 8 AND ? LIKE session_id || '%')
+      `).all(
+        sess.sessionId,
+        sess.sessionId,
+        `claude-${sess.sessionId}`,
+        `agent-${sess.sessionId}`,
+        sess.sessionId
+      );
+      let agent = candidates.find(a => isSameNode(a.host_id, cleanHost)) || null;
 
       const cleanName = sess.name && !isMechanicalAgentName(sess.name) ? sess.name : null;
 
       if (agent) {
+        aliveAgentIds.add(agent.id);
         const shouldUpdateName = cleanName && (isMechanicalAgentName(agent.name) || !agent.name);
         const targetName = shouldUpdateName ? cleanName : agent.name;
-        const newHeartbeat = Math.max(agent.last_heartbeat || 0, sess.updatedAt || now);
+        // 远端上报或已验证存活时，将心跳刷新至 now（避免远端 idle 会话的静态文件 updatedAt 停留在过去导致误判超时）
+        const newHeartbeat = sess.verified
+          ? Math.max(agent.last_heartbeat || 0, now)
+          : Math.max(agent.last_heartbeat || 0, sess.updatedAt || now);
         const mappedStatus = sess.status === 'busy' ? 'running' : 'idle';
         // 管道验证通过 = 宿主会话进程确实活着。这个时间戳让长回合（>10 分钟无工具调用）
         // 与等待用户输入的会话不会被 PID 复用门禁误判成 departed。
         const livenessStamp = sess.verified ? now : null;
-        const wasDeparted = agent.status === 'departed' && livenessStamp !== null;
+        const wasDeparted = agent.status === 'departed' && (livenessStamp !== null || isRemote);
         const statusChanged = wasDeparted || (agent.status !== mappedStatus && agent.status !== 'waiting');
         const nameChanged = shouldUpdateName && targetName !== agent.name;
 
         this.db.prepare(`
           UPDATE agents
-          SET pid = ?,
+          SET pid = COALESCE(?, pid),
+              host_id = ?,
               name = ?,
               last_heartbeat = ?,
               liveness_verified_at = COALESCE(?, liveness_verified_at),
@@ -486,15 +578,17 @@ export class CoordinatorEngine {
                 ELSE ?
               END
           WHERE id = ?
-        `).run(sess.pid, targetName, newHeartbeat, livenessStamp, livenessStamp, mappedStatus, mappedStatus, agent.id);
+        `).run(sess.pid, cleanHost, targetName, newHeartbeat, livenessStamp, livenessStamp || (isRemote ? now : null), mappedStatus, mappedStatus, agent.id);
 
         if (statusChanged || nameChanged) {
-          updated.push({ id: agent.id, status: mappedStatus, name: targetName });
+          updated.push({ id: agent.id, status: mappedStatus, name: targetName, hostId: cleanHost });
           if (wasDeparted) {
-            this.logActivity(agent.id, 'agent:registered', null, `Claude 会话重连在线: ${targetName}`, agent.project_id);
+            const hostPrefix = isRemote ? `[${cleanHost}] ` : '';
+            this.logActivity(agent.id, 'agent:registered', null, `${hostPrefix}Claude 会话重连在线: ${targetName}`, agent.project_id);
           }
           this.eventBus?.emit?.('agent:status', {
             agent_id: agent.id,
+            host_id: cleanHost,
             status: mappedStatus,
             project_id: agent.project_id,
             name: targetName,
@@ -502,55 +596,67 @@ export class CoordinatorEngine {
           });
         }
       } else {
-        let projectId = 'default';
-        let projectRoot = sess.cwd || '';
-        if (sess.cwd) {
+        let projectId = sess.projectId || 'default';
+        let projectRoot = sess.projectRoot || sess.cwd || '';
+        let resolvedDisplay = sess.displayName || null;
+        if (!sess.projectId && sess.cwd) {
           try {
             const pInfo = resolveProject(sess.cwd);
             if (pInfo && pInfo.projectId) {
               projectId = pInfo.projectId;
               projectRoot = pInfo.projectRoot;
+              resolvedDisplay = resolvedDisplay || pInfo.displayName;
             }
           } catch {}
         }
 
-        const agentId = `claude-${sess.sessionId}`;
+        const defaultId = `claude-${sess.sessionId}`;
+        const crossHostCollision = this.db.prepare('SELECT host_id FROM agents WHERE id = ?').get(defaultId);
+        const agentId = (crossHostCollision && !isSameNode(crossHostCollision.host_id, cleanHost))
+          ? `claude-${cleanHost}-${sess.sessionId}`
+          : defaultId;
+        aliveAgentIds.add(agentId);
         const finalName = cleanName || 'Claude 助手';
         const initialStatus = sess.status === 'busy' ? 'running' : 'idle';
 
         this.db.prepare(`
-          INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, liveness_verified_at)
-          VALUES (?, ?, ?, 'claude', ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO agents (id, project_id, host_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, liveness_verified_at)
+          VALUES (?, ?, ?, ?, 'claude', ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
+            host_id = excluded.host_id,
             name = CASE WHEN excluded.name != '' THEN excluded.name ELSE agents.name END,
-            pid = excluded.pid,
+            pid = COALESCE(excluded.pid, agents.pid),
             last_heartbeat = excluded.last_heartbeat,
             liveness_verified_at = COALESCE(excluded.liveness_verified_at, agents.liveness_verified_at),
             status = CASE
               WHEN agents.status = 'waiting' THEN agents.status
               ELSE excluded.status
             END
-        `).run(agentId, projectId, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid, sess.verified ? now : null);
+        `).run(agentId, projectId, cleanHost, finalName, sess.sessionId, sess.cwd || '', initialStatus, now, sess.startedAt || now, sess.pid, sess.verified ? now : null);
 
-        if (sess.cwd && projectId && projectId !== 'all') {
+        if ((sess.cwd || projectRoot) && projectId && projectId !== 'all') {
           try {
-            const canonicalRoot = toComparablePath(sess.cwd);
-            const displayName = resolveProjectDisplayName(sess.cwd, canonicalRoot, projectId);
+            const rawRoot = projectRoot || sess.cwd;
+            const canonicalRoot = toComparablePath(rawRoot);
+            const displayName = resolvedDisplay || resolveProjectDisplayName(rawRoot, canonicalRoot, projectId);
             this.db.prepare(`
-              INSERT INTO projects (id, root_path, display_name, created_at, last_activity)
-              VALUES (?, ?, ?, ?, ?)
+              INSERT INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
+              VALUES (?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
                 display_name = CASE WHEN excluded.display_name IS NOT NULL AND excluded.display_name != '' THEN excluded.display_name ELSE projects.display_name END,
+                host_id = COALESCE(excluded.host_id, projects.host_id),
                 last_activity = excluded.last_activity
-            `).run(projectId, projectRoot, displayName, now, now);
+            `).run(projectId, projectRoot, displayName, cleanHost, now, now);
           } catch {}
         }
 
-        added.push({ id: agentId, name: finalName, status: initialStatus, projectId });
-        this.logActivity(agentId, 'agent:registered', null, `Claude 会话发现接入: ${finalName}`, projectId);
+        added.push({ id: agentId, name: finalName, status: initialStatus, projectId, hostId: cleanHost });
+        const hostPrefix = isRemote ? `[${cleanHost}] ` : '';
+        this.logActivity(agentId, 'agent:registered', null, `${hostPrefix}Claude 会话发现接入: ${finalName}`, projectId);
         this.eventBus?.emit?.('agent:status', {
           agent_id: agentId,
+          host_id: cleanHost,
           status: initialStatus,
           project_id: projectId,
           name: finalName,
@@ -559,7 +665,28 @@ export class CoordinatorEngine {
       }
     }
 
-    return { scanned: sessions.length, added, updated };
+    // 若本次为某远端节点的全量注册表快照，则将该节点上已不在注册表中的旧 Claude 会话精准收割并释放持有的锁
+    if (isRemote && fullSnapshot) {
+      const existingRemoteClaude = this.db.prepare(`
+        SELECT id, project_id FROM agents
+        WHERE host_id = ? AND provider = 'claude' AND status != 'departed'
+      `).all(cleanHost);
+      for (const row of existingRemoteClaude) {
+        if (!aliveAgentIds.has(row.id)) {
+          this.releaseAgentLeases({
+            agentId: row.id,
+            projectId: row.project_id,
+            reason: 'process_exit',
+            scope: 'all'
+          });
+          this.db.prepare(`UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE id = ?`).run(row.id);
+          this.eventBus?.emit?.('agent:status', { agent_id: row.id, host_id: cleanHost, status: 'departed' });
+          departed.push(row.id);
+        }
+      }
+    }
+
+    return { scanned: sessions.length, added, updated, departed };
   }
 
   // 0.2 实时监视本地 Claude 会话目录变动 (毫秒级新会话感知)
@@ -596,20 +723,48 @@ export class CoordinatorEngine {
     }
   }
 
+  /**
+   * 统一收敛同一会话的规范 Agent ID：
+   * 解决“会话目录发现先入库 claude-<uuid>，随后全局 Hook 因无环境变量上报 agent-<uuid>”导致的双卡分裂与锁孤儿问题。
+   */
+  resolveCanonicalAgentId(rawAgentId, sessionId = null, hostId = null) {
+    if (!rawAgentId || typeof rawAgentId !== 'string') return rawAgentId;
+    const direct = this.db.prepare('SELECT id FROM agents WHERE id = ?').get(rawAgentId);
+    if (direct) return direct.id;
+
+    const cleanHost = normalizeNodeId(hostId || this.localNodeId);
+    const derivedSession = (sessionId && sessionId !== 'default')
+      ? String(sessionId)
+      : (rawAgentId.startsWith('agent-') ? rawAgentId.slice(6) : (rawAgentId.startsWith('claude-') ? rawAgentId.slice(7) : null));
+
+    if (derivedSession && (rawAgentId === `agent-${derivedSession}` || rawAgentId === `claude-${derivedSession}`)) {
+      const peers = this.db.prepare(`
+        SELECT id, host_id FROM agents
+        WHERE session_id = ? OR id = ? OR id = ?
+      `).all(derivedSession, `claude-${derivedSession}`, `agent-${derivedSession}`);
+      const sameHostPeer = peers.find(p => isSameNode(p.host_id, cleanHost));
+      if (sameHostPeer) return sameHostPeer.id;
+    }
+    return rawAgentId;
+  }
+
   // 1. Agent 注册或心跳续期
   registerAgent(params = {}) {
-    const id = params.id || params.agentId || params.agent_id;
-    requireAgentId(id);
+    const rawId = params.id || params.agentId || params.agent_id;
+    requireAgentId(rawId);
 
     const now = Date.now();
+    const finalHostId = normalizeNodeId(params.hostId || params.host_id || this.localNodeId);
+    const isLocalAgent = isSameNode(finalHostId, this.localNodeId);
     const finalSessionId = (params.sessionId ?? params.session_id) == null ? 'default' : String(params.sessionId ?? params.session_id);
+    const id = this.resolveCanonicalAgentId(rawId, finalSessionId, finalHostId);
     const finalProvider = (params.provider ?? 'unknown') == null ? 'unknown' : String(params.provider);
     let finalName = sanitizeAgentName(params.name, id, finalProvider, finalSessionId);
     if (isMechanicalAgentName(finalName)) {
       const existing = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(id);
       if (existing?.name && !isMechanicalAgentName(existing.name)) {
         finalName = existing.name;
-      } else if (this.claudeSessionsDir) {
+      } else if (isLocalAgent && this.claudeSessionsDir) {
         const reg = getClaudeSessionRegistry(this.claudeSessionsDir);
         const matched = reg.find(s => s.sessionId === finalSessionId || `claude-${s.sessionId}` === id);
         if (matched?.name && !isMechanicalAgentName(matched.name)) {
@@ -619,17 +774,19 @@ export class CoordinatorEngine {
     }
     const finalProjectId = params.projectId || params.project_id || 'default';
     const workspaceDir = params.workspaceDir || params.workspace_dir || '';
+    const projectRootParam = params.projectRoot || params.project_root || '';
     const rawPid = params.pid;
     const parsedPid = rawPid ? parseInt(rawPid, 10) : null;
     const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
     const cleanTool = cleanUtf8String(params.lastTool || params.tool || params.toolName, null);
     const cleanAction = cleanUtf8String(params.lastAction || params.action || params.toolAction, null);
     const cleanTarget = cleanUtf8String(params.lastTarget || params.target || params.toolTarget, null);
+    const livenessVerified = params.livenessVerified || params.liveness_verified ? now : null;
 
     // 心跳不是协同事件：写工具每次都会触发 Hook 上报，如果每次都落一条 activity_log，
     // 时间线会被心跳刷屏（实测占 41%），真正的冲突与释放被淹没。
     // 只有首次登记、名称/归属变化或从离线恢复才值得记一条。
-    const existingRow = this.db.prepare('SELECT name, project_id, status FROM agents WHERE id = ?').get(id);
+    const existingRow = this.db.prepare('SELECT name, project_id, status, host_id FROM agents WHERE id = ?').get(id);
     const isNewAgent = !existingRow;
     const identityChanged = existingRow && (
       existingRow.name !== finalName ||
@@ -638,13 +795,15 @@ export class CoordinatorEngine {
     const cameBackOnline = existingRow && existingRow.status === 'departed';
 
     const stmt = this.db.prepare(`
-      INSERT INTO agents (id, project_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, last_tool, last_action, last_target)
-      VALUES (?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, project_id, host_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, last_tool, last_action, last_target, liveness_verified_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
+        host_id = excluded.host_id,
         name = excluded.name,
-        workspace_dir = excluded.workspace_dir,
+        workspace_dir = CASE WHEN excluded.workspace_dir != '' THEN excluded.workspace_dir ELSE agents.workspace_dir END,
         last_heartbeat = excluded.last_heartbeat,
+        liveness_verified_at = COALESCE(excluded.liveness_verified_at, agents.liveness_verified_at),
         -- 被回收为 departed 的会话重新上报心跳，说明它又活了，必须把状态带回在线档位，
         -- 否则数据库状态与会话实际存活长期矛盾。
         status = CASE WHEN agents.status = 'departed' THEN 'idle' ELSE agents.status END,
@@ -653,15 +812,16 @@ export class CoordinatorEngine {
         last_action = CASE WHEN excluded.last_action IS NOT NULL THEN excluded.last_action ELSE agents.last_action END,
         last_target = CASE WHEN excluded.last_target IS NOT NULL THEN excluded.last_target ELSE agents.last_target END
     `);
-    stmt.run(id, finalProjectId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid, cleanTool, cleanAction, cleanTarget);
+    stmt.run(id, finalProjectId, finalHostId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid, cleanTool, cleanAction, cleanTarget, livenessVerified);
 
-    if (workspaceDir && finalProjectId && finalProjectId !== 'all') {
+    const effectiveProjPath = projectRootParam || workspaceDir;
+    if (effectiveProjPath && finalProjectId && finalProjectId !== 'all') {
       try {
-        const canonicalRoot = toComparablePath(workspaceDir);
-        const displayName = resolveProjectDisplayName(workspaceDir, canonicalRoot, finalProjectId);
+        const canonicalRoot = toComparablePath(effectiveProjPath);
+        const displayName = resolveProjectDisplayName(effectiveProjPath, canonicalRoot, finalProjectId);
         this.db.prepare(`
-          INSERT INTO projects (id, root_path, display_name, created_at, last_activity)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
+          VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
             display_name = CASE
@@ -675,30 +835,36 @@ export class CoordinatorEngine {
               THEN excluded.display_name
               ELSE projects.display_name
             END,
+            host_id = COALESCE(excluded.host_id, projects.host_id),
             last_activity = excluded.last_activity
-        `).run(finalProjectId, canonicalRoot, displayName, now, now);
+        `).run(finalProjectId, effectiveProjPath, displayName, finalHostId, now, now);
       } catch {}
     }
 
     if (isNewAgent || identityChanged || cameBackOnline) {
       const reason = isNewAgent ? 'registered' : (cameBackOnline ? 'rejoined' : 'renamed');
-      this.logActivity(id, 'agent:registered', null, `Agent ${finalName} (${finalProvider}) ${reason}`, finalProjectId);
+      const hostTag = !isLocalAgent ? `[${finalHostId}] ` : '';
+      this.logActivity(id, 'agent:registered', null, `${hostTag}Agent ${finalName} (${finalProvider}) ${reason}`, finalProjectId);
     }
     return this.getAgent(id);
   }
 
   // 1.1 实时工具与调用态势上报 (Tool Telemetry)
   recordTelemetry(params = {}) {
-    const agentId = params.agentId || params.agent_id || params.id;
-    requireAgentId(agentId);
+    const rawAgentId = params.agentId || params.agent_id || params.id;
+    requireAgentId(rawAgentId);
     const now = Date.now();
     const finalProjectId = params.projectId || params.project_id || 'default';
+    const rawHost = params.hostId || params.host_id || null;
+    const cleanHost = rawHost ? normalizeNodeId(rawHost) : null;
+    const agentId = this.resolveCanonicalAgentId(rawAgentId, params.sessionId || params.session_id, cleanHost || this.localNodeId);
     const cleanTool = cleanUtf8String(params.toolName || params.tool || params.lastTool, null);
     const cleanAction = cleanUtf8String(params.toolAction || params.action || params.lastAction, cleanTool);
     const cleanTarget = cleanUtf8String(params.toolTarget || params.target || params.lastTarget, null);
     const rawPid = params.pid;
     const parsedPid = rawPid ? parseInt(rawPid, 10) : null;
     const finalPid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
+    const livenessStamp = (params.livenessVerified || params.liveness_verified) ? now : null;
 
     let agent = this.getAgent(agentId, finalProjectId);
     if (params.name && !isMechanicalAgentName(params.name)) {
@@ -707,29 +873,37 @@ export class CoordinatorEngine {
     if (!agent) {
       this.registerAgent({
         id: agentId,
+        hostId: cleanHost || this.localNodeId,
+        name: params.name || null,
         provider: params.provider,
         sessionId: params.sessionId || params.session_id,
         workspaceDir: params.workspaceDir || params.workspace_dir,
+        projectRoot: params.projectRoot || params.project_root || null,
         projectId: finalProjectId,
         pid: finalPid,
         lastTool: cleanTool,
         lastAction: cleanAction,
-        lastTarget: cleanTarget
+        lastTarget: cleanTarget,
+        livenessVerified: Boolean(livenessStamp)
       });
     } else {
       this.db.prepare(`
         UPDATE agents
         SET last_heartbeat = ?,
+            host_id = COALESCE(?, host_id),
+            liveness_verified_at = COALESCE(?, liveness_verified_at),
+            status = CASE WHEN status = 'departed' THEN 'idle' ELSE status END,
             last_tool = COALESCE(?, last_tool),
             last_action = COALESCE(?, last_action),
             last_target = COALESCE(?, last_target),
             pid = CASE WHEN ? IS NOT NULL THEN ? ELSE pid END
         WHERE id = ?
-      `).run(now, cleanTool, cleanAction, cleanTarget, finalPid, finalPid, agentId);
+      `).run(now, cleanHost, livenessStamp, cleanTool, cleanAction, cleanTarget, finalPid, finalPid, agentId);
     }
 
     this.eventBus.emit('agent:telemetry', {
       agent_id: agentId,
+      host_id: cleanHost || agent?.host_id || this.localNodeId,
       project_id: finalProjectId,
       tool: cleanTool,
       action: cleanAction,
@@ -750,7 +924,7 @@ export class CoordinatorEngine {
       ? this.db.prepare('SELECT * FROM agents WHERE id = ? AND project_id = ?').get(id, projectId)
       : this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
     if (!raw) return null;
-    const { lifecycleState, isOnline } = computeAgentLifecycleState(raw, Date.now());
+    const { lifecycleState, isOnline } = computeAgentLifecycleState(raw, Date.now(), this.localNodeId);
     return {
       ...raw,
       lifecycle_state: lifecycleState,
@@ -969,8 +1143,9 @@ export class CoordinatorEngine {
   }
 
   // 3.1 批量释放指定 Agent 的全部或指定范围租约 (用于 git commit / git push 后的零感自动释放)
-  releaseAgentLeases({ agentId, projectId = 'default', reason = 'git_action', scope = 'all' }) {
-    requireAgentId(agentId);
+  releaseAgentLeases({ agentId: rawAgentId, sessionId = null, hostId = null, projectId = 'default', reason = 'git_action', scope = 'all' }) {
+    requireAgentId(rawAgentId);
+    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, hostId);
     const now = Date.now();
     const finalProjectId = projectId || 'default';
 
@@ -1279,7 +1454,7 @@ export class CoordinatorEngine {
     const now = Date.now();
     // 查找所有持有活跃未过期租约且登记了 pid 的 Agent
     const activeHolders = this.db.prepare(`
-      SELECT DISTINCT a.id, a.name, a.pid, l.project_id
+      SELECT DISTINCT a.id, a.name, a.pid, a.host_id, l.project_id
       FROM agents a
       JOIN leases l ON a.id = l.agent_id
       WHERE a.pid IS NOT NULL AND a.pid > 0 AND l.expires_at > ?
@@ -1291,6 +1466,12 @@ export class CoordinatorEngine {
     const deadAgents = [];
 
     for (const holder of activeHolders) {
+      // 核心跨机防误杀门禁：只有本机会话才能执行 process.kill(pid, 0) 操作系统进程探针！
+      // 远端工作区（如 us-zenix）的 PID 属于远端内核命名空间，在本机必然报 ESRCH 或命中无关进程。
+      if (holder.host_id && !isSameNode(holder.host_id, this.localNodeId)) {
+        continue;
+      }
+
       let isAlive = true;
       try {
         // 在 POSIX 与 Windows 上，process.kill(pid, 0) 不发送终止信号，
@@ -1360,9 +1541,10 @@ export class CoordinatorEngine {
       `).all();
 
       for (const wi of waitingIntents) {
-        const waiterAgent = this.db.prepare('SELECT last_heartbeat, pid, liveness_verified_at FROM agents WHERE id = ?').get(wi.agent_id);
+        const waiterAgent = this.db.prepare('SELECT last_heartbeat, pid, host_id, liveness_verified_at FROM agents WHERE id = ?').get(wi.agent_id);
+        const isLocalWaiter = !waiterAgent?.host_id || isSameNode(waiterAgent.host_id, this.localNodeId);
         const waiterVerified = waiterAgent && (now - (waiterAgent.liveness_verified_at || 0)) <= 120000;
-        const isWaiterAlive = waiterAgent && (waiterVerified || ((now - waiterAgent.last_heartbeat) <= 120000) || (waiterAgent.pid && isPidAlive(waiterAgent.pid)));
+        const isWaiterAlive = waiterAgent && (waiterVerified || ((now - waiterAgent.last_heartbeat) <= 120000) || (isLocalWaiter && waiterAgent.pid && isPidAlive(waiterAgent.pid)));
         if (!isWaiterAlive) {
           this.db.prepare(`UPDATE intents SET status = 'aborted', updated_at = ? WHERE id = ?`).run(now, wi.id);
           this.db.prepare('DELETE FROM wait_queue WHERE intent_id = ?').run(wi.id);
@@ -1381,19 +1563,24 @@ export class CoordinatorEngine {
 
       // 4. 将超过 2 分钟无心跳且无存活 PID (或超过 10 分钟无心跳的 PID 复用陈旧记录) 的会话同步为 departed。
       //    注册表管道刚验证过的会话不受 10 分钟门禁限制：它确实活着，只是暂时没调用工具。
+      //    远端会话若仍持有活跃租约也不提前标记 departed，等租约正常释放或到期。
       const unconfirmedAgents = this.db.prepare(`
-        SELECT id, pid, last_heartbeat, liveness_verified_at FROM agents
+        SELECT id, pid, host_id, last_heartbeat, liveness_verified_at,
+               (SELECT count(*) FROM leases l WHERE l.agent_id = agents.id AND l.expires_at > ?) as active_leases_count
+        FROM agents
         WHERE status IN ('running', 'waiting', 'idle') AND (? - last_heartbeat) > 120000
-      `).all(now);
+      `).all(now, now);
 
       for (const ag of unconfirmedAgents) {
         const heartbeatAge = now - (ag.last_heartbeat || 0);
+        const isLocal = !ag.host_id || isSameNode(ag.host_id, this.localNodeId);
         const verified = (now - (ag.liveness_verified_at || 0)) <= 120000;
-        const alive = verified || (ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000);
+        const hasRemoteLease = !isLocal && (ag.active_leases_count || 0) > 0;
+        const alive = verified || hasRemoteLease || (isLocal && ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000);
         if (!alive) {
           this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
-          this.eventBus?.emit?.('agent:status', { agent_id: ag.id, status: 'departed' });
-        } else {
+          this.eventBus?.emit?.('agent:status', { agent_id: ag.id, host_id: ag.host_id || this.localNodeId, status: 'departed' });
+        } else if (isLocal && ag.pid) {
           this.db.prepare(`UPDATE agents SET last_heartbeat = ? WHERE id = ?`).run(now, ag.id);
         }
       }
@@ -1403,8 +1590,9 @@ export class CoordinatorEngine {
   }
 
   // 5. 极速权限检查与自动补报 (针对通用 Hook 与资源锁)
-  fastCheckAndAutoClaim({ agentId, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null }) {
-    requireAgentId(agentId);
+  fastCheckAndAutoClaim({ agentId: rawAgentId, hostId = null, name = null, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null, livenessVerified = false }) {
+    requireAgentId(rawAgentId);
+    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, hostId);
     const finalProjectId = projectId || 'default';
     const now = Date.now();
 
@@ -1417,14 +1605,21 @@ export class CoordinatorEngine {
       } catch {}
     }
 
+    const preferredName = (name && !isMechanicalAgentName(name))
+      ? name
+      : ((promptHint && !isMechanicalAgentName(promptHint)) ? promptHint.slice(0, 40) : sanitizeAgentName(null, agentId, provider, sessionId, promptHint));
+
     this.registerAgent({
       id: agentId,
-      name: (promptHint && !isMechanicalAgentName(promptHint)) ? promptHint.slice(0, 40) : sanitizeAgentName(null, agentId, provider, sessionId, promptHint),
+      hostId: hostId || this.localNodeId,
+      name: preferredName,
       provider,
       sessionId,
       workspaceDir: workspaceDir || '',
+      projectRoot: finalProjectRoot,
       projectId: finalProjectId,
-      pid
+      pid,
+      livenessVerified
     });
 
     this.reapDeadAgentLeases();
@@ -1602,8 +1797,9 @@ export class CoordinatorEngine {
     };
   }
 
-  releaseResourceLock({ agentId, resourceName, projectId = 'default' }) {
-    requireAgentId(agentId);
+  releaseResourceLock({ agentId: rawAgentId, sessionId = null, hostId = null, resourceName, projectId = 'default' }) {
+    requireAgentId(rawAgentId);
+    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, hostId);
     const target = requireString(resourceName, 'resourceName').trim().toLowerCase();
     const activeClaim = this.db.prepare(`
       SELECT c.intent_id
@@ -1784,10 +1980,14 @@ export class CoordinatorEngine {
     // 需要完整历史时显式传 includeDeparted: true。
     const includeDeparted = options.includeDeparted === true;
     const agents = rawAgents.map((a) => {
-      const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now);
+      const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now, this.localNodeId);
+      const cleanHost = normalizeNodeId(a.host_id || this.localNodeId);
+      const isRemote = !isSameNode(cleanHost, this.localNodeId);
 
       return {
         ...a,
+        host_id: cleanHost,
+        is_remote: isRemote,
         name: sanitizeAgentName(a.name, a.id, a.provider, a.session_id, a.current_intent),
         current_intent: cleanUtf8String(a.current_intent, ''),
         blocked_reason: cleanUtf8String(a.blocked_reason, null),
@@ -1813,6 +2013,7 @@ export class CoordinatorEngine {
     }));
 
     return {
+      localNodeId: this.localNodeId,
       agents,
       activeClaims,
       timeline
@@ -1870,7 +2071,9 @@ export class CoordinatorEngine {
     let departedCount = 0;
 
     for (const a of rawAgents) {
-      const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now);
+      const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now, this.localNodeId);
+      const cleanHost = normalizeNodeId(a.host_id || this.localNodeId);
+      const isRemote = !isSameNode(cleanHost, this.localNodeId);
 
       if (lifecycleState === 'working') {
         workingCount++;
@@ -1900,6 +2103,8 @@ export class CoordinatorEngine {
       nodes.push({
         id: a.id,
         node_type: 'session',
+        host_id: cleanHost,
+        is_remote: isRemote,
         name: safeName,
         provider: a.provider || 'agent',
         session_id: a.session_id,

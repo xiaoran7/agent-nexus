@@ -25,7 +25,11 @@ export function startDaemon(options = {}) {
   const eventBus = new EventEmitter();
   const db = createDatabase(dbPath);
 
-  const coordinator = new CoordinatorEngine(db, eventBus);
+  const coordinator = new CoordinatorEngine(db, eventBus, {
+    isTest: isRunningInTest,
+    nodeId: options.nodeId,
+    claudeSessionsDir: options.claudeSessionsDir
+  });
   const stateService = new StateService(db, eventBus);
   const messageService = new MessageService(db, eventBus);
   const memoryService = new ProjectMemoryService(db, eventBus);
@@ -59,6 +63,7 @@ export function startDaemon(options = {}) {
 
   const tokenStore = new TokenStore();
   const operator = tokenStore.issue(generateToken(null, fixedAdminToken));
+  tokenStore.localOperatorToken = operator.secret;
 
   const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService, topologyService);
   const server = createServer(handleRest);

@@ -3,17 +3,88 @@
 // Agent-Nexus Universal Hook (通用拦截脚本)
 // =============================================================================
 
-import { request } from 'node:http';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { basename, isAbsolute, join, relative } from 'node:path';
+import { basename, isAbsolute, join, posix, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveProject } from '../domain/project.js';
-import { readSessionToken } from '../transport/auth.js';
+import { resolveNexusEndpoint } from '../transport/auth.js';
 
-const PORT = parseInt(process.env.NEXUS_PORT || '4300', 10);
-const HOST = process.env.NEXUS_HOST || '127.0.0.1';
-// daemon 要求令牌。优先读取环境变量，缺省时自动回退读取本机活动会话令牌（~/.agent-nexus/session.token）
-const TOKEN = process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN || readSessionToken() || null;
+const ENDPOINT = resolveNexusEndpoint();
+const PORT = ENDPOINT.port;
+const HOST = ENDPOINT.host;
+const PROTOCOL = ENDPOINT.protocol;
+const TOKEN = ENDPOINT.token;
+const NODE_ID = ENDPOINT.nodeId;
+const IS_REMOTE_HUB = ENDPOINT.isRemoteHub;
+const doRequest = PROTOCOL === 'https:' ? httpsRequest : httpRequest;
+
+function isLocalPidAlive(pid) {
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+/**
+ * 在当前机器本地扫描 ~/.claude/sessions 并验证本地进程/管道存活与真实 Git 项目根
+ * 用于远端节点（如 us-zenix）顺带向中心 Hub 同步同机所有在席会话，无需 Hub 跨机读盘或跨机探 PID
+ */
+function collectLocalClaudePeerSessions() {
+  const result = [];
+  try {
+    const dir = process.env.NEXUS_CLAUDE_SESSIONS_DIR || join(homedir(), '.claude', 'sessions');
+    if (!existsSync(dir)) return result;
+    const files = readdirSync(dir);
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const data = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+        if (!data || !data.sessionId || !data.pid) continue;
+        const pidAlive = isLocalPidAlive(data.pid);
+        let pipeAlive = false;
+        if (data.messagingSocketPath) {
+          try { pipeAlive = existsSync(data.messagingSocketPath); } catch {}
+        }
+        const hasPipe = Boolean(data.messagingSocketPath);
+        const alive = hasPipe ? pipeAlive : pidAlive;
+        if (!alive) continue;
+
+        let projectId = null;
+        let projectRoot = null;
+        let displayName = null;
+        if (data.cwd) {
+          try {
+            const pInfo = resolveProject(data.cwd);
+            projectId = pInfo.projectId;
+            projectRoot = pInfo.projectRoot;
+            displayName = pInfo.displayName;
+          } catch {}
+        }
+
+        result.push({
+          pid: data.pid,
+          sessionId: data.sessionId,
+          name: data.name || null,
+          cwd: data.cwd || null,
+          projectId,
+          projectRoot,
+          displayName,
+          status: data.status || 'idle',
+          startedAt: data.startedAt || null,
+          updatedAt: data.updatedAt || null,
+          alive: true,
+          verified: true
+        });
+      } catch {}
+    }
+  } catch {}
+  return result;
+}
 
 function readStdinJson() {
   try {
@@ -53,12 +124,14 @@ function resolveAgentIdentity(payload) {
                    (process.env.ZCODE_SESSION_ID ? 'zcode' : null) ||
                    'agent';
 
-  const sessionId = process.env.NEXUS_SESSION_ID ||
-                    payload.session_id ||
-                    process.env.CLAUDE_CODE_SESSION_ID ||
-                    process.env.CODEX_SESSION_ID ||
-                    process.env.ZCODE_SESSION_ID ||
-                    `${process.ppid || process.pid}`;
+  const rawSessionId = process.env.NEXUS_SESSION_ID ||
+                       payload.session_id ||
+                       process.env.CLAUDE_CODE_SESSION_ID ||
+                       process.env.CODEX_SESSION_ID ||
+                       process.env.ZCODE_SESSION_ID ||
+                       null;
+  // 若无持久化 UUID 而退回本机进程号，在跨机模式下拼入 NODE_ID 防止两台机器碰巧相同 PID 撞车
+  const sessionId = rawSessionId || (IS_REMOTE_HUB ? `${NODE_ID}-${process.ppid || process.pid}` : `${process.ppid || process.pid}`);
 
   const agentId = `${provider}-${sessionId}`;
   const promptHint = process.env.NEXUS_AGENT_PROMPT || payload.prompt || null;
@@ -72,6 +145,7 @@ function resolveAgentIdentity(payload) {
   let pid = Number.isInteger(parsedPid) && parsedPid > 0 ? parsedPid : null;
   let name = payload.name || null;
   let finalPrompt = promptHint;
+  let livenessVerified = false;
 
   if (provider === 'claude') {
     const claudeInfo = findClaudeSessionInfo(sessionId);
@@ -85,10 +159,15 @@ function resolveAgentIdentity(payload) {
       if (!finalPrompt && claudeInfo.name) {
         finalPrompt = claudeInfo.name;
       }
+      if (claudeInfo.messagingSocketPath) {
+        try { livenessVerified = existsSync(claudeInfo.messagingSocketPath); } catch {}
+      } else if (claudeInfo.pid) {
+        livenessVerified = isLocalPidAlive(claudeInfo.pid);
+      }
     }
   }
 
-  return { provider, sessionId, agentId, promptHint: finalPrompt, pid, name };
+  return { provider, sessionId, agentId, promptHint: finalPrompt, pid, name, livenessVerified };
 }
 
 // 只有真正改文件的工具才值得去问协调库。Read/Grep/Glob/LS 之类拿到 file_path
@@ -203,6 +282,13 @@ function extractBashTarget(payload, workspaceDir) {
   // cp/mv/install 改写的是目的端（最后一个路径），其余写入命令取第一个。
   const target = COPY_COMMAND_RE.test(cleanCmd) ? paths[paths.length - 1] : paths[0];
 
+  if (workspaceDir && workspaceDir.startsWith('/')) {
+    const abs = posix.isAbsolute(target) ? posix.normalize(target) : posix.join(workspaceDir, target);
+    const rel = posix.relative(posix.normalize(workspaceDir), abs);
+    if (!rel || rel.startsWith('..') || posix.isAbsolute(rel)) return null;
+    return target;
+  }
+
   const abs = isAbsolute(target) ? target : join(workspaceDir, target);
   const rel = relative(workspaceDir, abs);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
@@ -226,7 +312,7 @@ function isGitCommitOrPush(payload) {
 function notifyGitRelease(payload) {
   return new Promise((resolvePromise) => {
     const data = JSON.stringify(payload);
-    const req = request({
+    const req = doRequest({
       host: HOST,
       port: PORT,
       path: '/api/hook/git-release',
@@ -237,7 +323,7 @@ function notifyGitRelease(payload) {
         'Content-Length': Buffer.byteLength(data),
         ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
       },
-      timeout: 1500,
+      timeout: IS_REMOTE_HUB ? 2500 : 1500,
     }, (res) => {
       let buf = '';
       res.on('data', (c) => buf += c);
@@ -264,7 +350,7 @@ function notifyGitRelease(payload) {
 function notifyResourceRelease(payload) {
   return new Promise((resolvePromise) => {
     const data = JSON.stringify(payload);
-    const req = request({
+    const req = doRequest({
       host: HOST,
       port: PORT,
       path: '/api/hook/resource-release',
@@ -275,7 +361,7 @@ function notifyResourceRelease(payload) {
         'Content-Length': Buffer.byteLength(data),
         ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
       },
-      timeout: 1500,
+      timeout: IS_REMOTE_HUB ? 2500 : 1500,
     }, (res) => {
       let buf = '';
       res.on('data', (c) => buf += c);
@@ -303,7 +389,7 @@ function reportTelemetry(payload) {
   return new Promise((resolvePromise) => {
     try {
       const data = JSON.stringify(payload);
-      const req = request({
+      const req = doRequest({
         host: HOST,
         port: PORT,
         path: '/api/hook/telemetry',
@@ -314,7 +400,7 @@ function reportTelemetry(payload) {
           'Content-Length': Buffer.byteLength(data),
           ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
         },
-        timeout: 400,
+        timeout: IS_REMOTE_HUB ? 1500 : 400,
       }, (res) => {
         res.resume();
         resolvePromise(true);
@@ -335,7 +421,7 @@ function reportTelemetry(payload) {
 function checkPermission(payload) {
   return new Promise((resolvePromise) => {
     const data = JSON.stringify(payload);
-    const req = request({
+    const req = doRequest({
       host: HOST,
       port: PORT,
       path: '/api/hook/check',
@@ -346,7 +432,7 @@ function checkPermission(payload) {
         'Content-Length': Buffer.byteLength(data),
         ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
       },
-      timeout: 1000,
+      timeout: IS_REMOTE_HUB ? 2500 : 1000,
     }, (res) => {
       let buf = '';
       res.on('data', (c) => buf += c);
@@ -406,6 +492,8 @@ async function main() {
     if (targetResource) {
       const releaseRes = await notifyResourceRelease({
         agent_id: identity.agentId,
+        host_id: NODE_ID,
+        session_id: identity.sessionId,
         resource_name: targetResource,
         project_id: projectInfo.projectId,
         workspace_dir: workspaceDir,
@@ -419,6 +507,8 @@ async function main() {
     if (isGitCommitOrPush(payload)) {
       const releaseRes = await notifyGitRelease({
         agent_id: identity.agentId,
+        host_id: NODE_ID,
+        session_id: identity.sessionId,
         project_id: projectInfo.projectId,
         workspace_dir: workspaceDir,
         reason: 'git_lifecycle'
@@ -439,10 +529,16 @@ async function main() {
     ? (toolInput.command ? toolInput.command.slice(0, 80) : 'Run Command')
     : (toolTarget ? `${toolName} ${basename(toolTarget)}` : toolName);
 
+  // 远端模式下，顺手采集同机 ~/.claude/sessions 活跃会话快照一并捎带给中心 Hub
+  // 仅当扫描结果非空时捎带，防止非 Claude Code 宿主（无 ~/.claude/sessions 目录）误传空快照
+  const rawPeers = IS_REMOTE_HUB ? collectLocalClaudePeerSessions() : null;
+  const peerSessions = rawPeers && rawPeers.length > 0 ? rawPeers : undefined;
+
   if (toolName) {
     try {
       await reportTelemetry({
         agent_id: identity.agentId,
+        host_id: NODE_ID,
         provider: identity.provider,
         session_id: identity.sessionId,
         name: identity.name,
@@ -450,8 +546,11 @@ async function main() {
         action: toolAction,
         target: toolTarget,
         workspace_dir: workspaceDir,
+        project_root: projectInfo.projectRoot,
         project_id: projectInfo.projectId,
-        pid: identity.pid
+        pid: identity.pid,
+        liveness_verified: identity.livenessVerified,
+        ...(peerSessions ? { peer_sessions: peerSessions } : {})
       });
     } catch {}
   }
@@ -460,6 +559,7 @@ async function main() {
   if (isGitCommitOrPush(payload)) {
     const releaseRes = await notifyGitRelease({
       agent_id: identity.agentId,
+      host_id: NODE_ID,
       project_id: projectInfo.projectId,
       workspace_dir: workspaceDir,
       reason: 'git_lifecycle'
@@ -475,6 +575,7 @@ async function main() {
   if (targetResource) {
     const resourceRes = await checkPermission({
       agent_id: identity.agentId,
+      host_id: NODE_ID,
       provider: identity.provider,
       session_id: identity.sessionId,
       name: identity.name,
@@ -483,7 +584,9 @@ async function main() {
       project_id: projectInfo.projectId,
       project_root: projectInfo.projectRoot,
       workspace_dir: workspaceDir,
-      pid: identity.pid
+      pid: identity.pid,
+      liveness_verified: identity.livenessVerified,
+      ...(peerSessions ? { peer_sessions: peerSessions } : {})
     });
 
     if (resourceRes.allow === false) {
@@ -513,6 +616,7 @@ async function main() {
 
   const res = await checkPermission({
     agent_id: identity.agentId,
+    host_id: NODE_ID,
     provider: identity.provider,
     session_id: identity.sessionId,
     name: identity.name,
@@ -521,7 +625,9 @@ async function main() {
     project_id: projectInfo.projectId,
     project_root: projectInfo.projectRoot,
     workspace_dir: workspaceDir,
-    pid: identity.pid
+    pid: identity.pid,
+    liveness_verified: identity.livenessVerified,
+    ...(peerSessions && !toolName ? { peer_sessions: peerSessions } : {})
   });
 
   if (res.allow === false) {

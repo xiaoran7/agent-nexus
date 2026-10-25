@@ -1,7 +1,7 @@
 import { ProjectLead } from './project-lead.js';
 import { NullAdapter, AnthropicAdapter, GatewayRouterAdapter, parseLlmConfig } from './llm-adapter.js';
 import { GatewayRouter } from './gateway-router.js';
-import { resolveProjectDisplayName } from './project.js';
+import { resolveProjectDisplayName, getLocalNodeId, normalizeNodeId, isSameNode } from './project.js';
 
 export class ProjectRegistry {
   constructor(db, coordinator, eventBus, llmAdapterFactory = null, memoryService = null) {
@@ -114,8 +114,10 @@ export class ProjectRegistry {
     // 强制排除保留的虚拟全景 'all' 与空 id，确保下拉选单主权清晰且无冲突
     const projects = this.db.prepare("SELECT * FROM projects WHERE id != 'all' AND id != '' ORDER BY last_activity DESC").all();
 
-    // 统计当前各个项目的在线助手数量
+    // 统计当前各个项目的在线助手数量与远端节点标识
     const onlineMap = new Map();
+    const projectHostMap = new Map();
+    const localNodeId = this.coordinator?.localNodeId || getLocalNodeId();
     try {
       if (this.coordinator) {
         const snap = this.coordinator.getDashboardSnapshot('all');
@@ -123,32 +125,54 @@ export class ProjectRegistry {
           if (a.is_online) {
             onlineMap.set(a.project_id, (onlineMap.get(a.project_id) || 0) + 1);
           }
+          if (a.host_id && !projectHostMap.has(a.project_id)) {
+            projectHostMap.set(a.project_id, a.host_id);
+          }
         }
       }
     } catch {}
 
     const result = [];
-    const seenDisplayNames = new Map(); // displayName -> index in result
+    const seenDisplayNames = new Map(); // dedupeKey -> index in result
 
     for (const p of projects) {
-      let displayName = p.display_name;
-      if (!displayName || /^Project\s+[0-9a-f]{16}$/i.test(displayName) || displayName === `Project ${p.id}`) {
-        displayName = resolveProjectDisplayName(p.root_path, p.root_path, p.id);
+      let baseDisplayName = p.display_name;
+      if (!baseDisplayName || /^Project\s+[0-9a-f]{16}$/i.test(baseDisplayName) || baseDisplayName === `Project ${p.id}`) {
+        baseDisplayName = resolveProjectDisplayName(p.root_path, p.root_path, p.id);
       }
+      const hostId = normalizeNodeId(projectHostMap.get(p.id) || p.host_id || localNodeId);
+      const isRemote = !isSameNode(hostId, localNodeId);
+      // 远端工作区工程自动携带节点标识（如 "Agent-Nexus [us-zenix]"），既避免与本机同名工程混淆，又防止被幽灵去重逻辑吞并
+      const displayName = (isRemote && !baseDisplayName.includes(`[${hostId}]`))
+        ? `${baseDisplayName} [${hostId}]`
+        : baseDisplayName;
       const onlineCount = onlineMap.get(p.id) || 0;
       const item = {
         ...p,
+        host_id: hostId,
+        is_remote: isRemote,
         display_name: displayName,
         online_agents_count: onlineCount
       };
 
-      // 避免重复的显示名称（如旧版遗留的同名幽灵工程）
+      // 仅对“其中一方无真实路径”的历史幽灵工程去重；两个拥有不同真实 root_path 的独立工作区全部保留
       if (seenDisplayNames.has(displayName)) {
         const existingIdx = seenDisplayNames.get(displayName);
         const existing = result[existingIdx];
-        if (p.root_path && (!existing.root_path || existing.root_path === '')) {
+        const pHasRoot = Boolean(p.root_path && p.root_path !== '');
+        const existingHasRoot = Boolean(existing.root_path && existing.root_path !== '');
+
+        if (pHasRoot && existingHasRoot && p.root_path !== existing.root_path) {
+          // 同节点下不同物理路径的同名仓库：补充短 ID 区分，绝不互相吞并
+          const disambiguated = {
+            ...item,
+            display_name: `${displayName} (${p.id.slice(0, 6)})`
+          };
+          seenDisplayNames.set(disambiguated.display_name, result.length);
+          result.push(disambiguated);
+        } else if (pHasRoot && !existingHasRoot) {
           result[existingIdx] = item;
-        } else if (onlineCount > (existing.online_agents_count || 0)) {
+        } else if (!pHasRoot && !existingHasRoot && onlineCount > (existing.online_agents_count || 0)) {
           result[existingIdx] = item;
         }
       } else {

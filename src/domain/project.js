@@ -1,21 +1,58 @@
 import { existsSync, realpathSync, statSync, readFileSync } from 'node:fs';
-import { resolve, dirname, basename, relative } from 'node:path';
+import { resolve, dirname, basename, relative, posix } from 'node:path';
 import { createHash } from 'node:crypto';
+import { hostname } from 'node:os';
 
 const PROJECT_MARKERS = ['.nexus', '.git', 'package.json', 'CLAUDE.md'];
 
 /**
- * 规范化文件系统路径：统一转为物理路径（解析软链接）、正斜杠，并处理 Windows 盘符与跨平台大小写
+ * 获取当前节点的标准身份标识 (Node / Host ID)
+ * 优先读取 NEXUS_NODE_ID 环境变量，否则使用操作系统主机名
+ */
+export function getLocalNodeId() {
+  const raw = process.env.NEXUS_NODE_ID || hostname() || 'local';
+  return normalizeNodeId(raw);
+}
+
+export function normalizeNodeId(raw) {
+  if (!raw || typeof raw !== 'string') return 'local';
+  const clean = raw.trim();
+  return clean || 'local';
+}
+
+export function isSameNode(hostA, hostB) {
+  const a = normalizeNodeId(hostA).toLowerCase();
+  const b = normalizeNodeId(hostB).toLowerCase();
+  if (a === b) return true;
+  const local = getLocalNodeId().toLowerCase();
+  const aIsLocal = a === 'local' || a === local;
+  const bIsLocal = b === 'local' || b === local;
+  return aIsLocal && bIsLocal;
+}
+
+/**
+ * 规范化文件系统路径：统一转为物理路径（解析软链接）、正斜杠，并处理 Windows 盘符与跨平台大小写。
+ * 跨平台保护：Windows 宿主机收到远端 POSIX 绝对路径（以 / 开头且非 // UNC）时，保持纯 POSIX 路径与原始大小写，
+ * 确保远端 Linux 计算的 hashProjectId 与 Windows Hub 计算结果 100% 字节级一致，不被拼上 d: 盘符。
  */
 export function canonicalizePath(p) {
   if (!p || typeof p !== 'string') return '';
   // 若是 Windows 盘符绝对路径 (如 C:/... 或 c:\...)，遵循 Windows 大小写不敏感契约规范为小写
   if (/^[a-zA-Z]:[/\\]/.test(p)) {
-    let normalized = p.replace(/\\/g, '/');
+    let normalized = posix.normalize(p.replace(/\\/g, '/'));
     if (normalized.length > 3 && normalized.endsWith('/')) {
       normalized = normalized.slice(0, -1);
     }
     return normalized.toLowerCase();
+  }
+
+  // 在 Windows 平台上收到纯 POSIX 绝对路径（如美西 Linux 的 /root/Claudespace/Project/foo）
+  if (process.platform === 'win32' && p.startsWith('/') && !p.startsWith('//')) {
+    let normalized = posix.normalize(p);
+    if (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.slice(0, -1);
+    }
+    return normalized;
   }
 
   let resolved = resolve(p);
@@ -108,6 +145,20 @@ function resolveGitCommonRoot(gitCandidatePath, currentDir) {
  */
 export function resolveProject(startDir) {
   const targetDir = startDir || process.cwd();
+  // 跨系统异构绝对路径（Windows 收到 POSIX /root/... 或 Linux 收到 Windows D:\...）：不查本机磁盘，直接按目录本身规范化
+  const isForeignPosix = process.platform === 'win32' && typeof targetDir === 'string' && targetDir.startsWith('/') && !targetDir.startsWith('//');
+  const isForeignWin = process.platform !== 'win32' && typeof targetDir === 'string' && /^[a-zA-Z]:[/\\]/.test(targetDir);
+  if (isForeignPosix || isForeignWin) {
+    const foreignRoot = canonicalizePath(targetDir);
+    return {
+      projectId: hashProjectId(foreignRoot),
+      projectRoot: foreignRoot,
+      displayName: resolveProjectDisplayName(targetDir, foreignRoot),
+      marker: null,
+      worktree: { isWorktree: false, name: null, worktreeRoot: foreignRoot }
+    };
+  }
+
   let current = resolve(targetDir);
 
   while (true) {
@@ -237,6 +288,9 @@ function resolveCrossPath(baseDir, filePath) {
     const cleanBase = baseDir.replace(/\\/g, '/').replace(/\/+$/, '');
     const cleanRel = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
     return `${cleanBase}/${cleanRel}`;
+  }
+  if (baseDir && baseDir.startsWith('/') && !baseDir.startsWith('//') && process.platform === 'win32') {
+    return posix.resolve(baseDir, filePath.replace(/\\/g, '/'));
   }
   return resolve(baseDir || process.cwd(), filePath);
 }

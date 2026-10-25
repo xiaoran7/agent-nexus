@@ -25,16 +25,18 @@ export function createDatabase(customPath = null) {
       id TEXT PRIMARY KEY,
       root_path TEXT NOT NULL,
       display_name TEXT,
+      host_id TEXT DEFAULT 'local',
       created_at INTEGER NOT NULL,
       last_activity INTEGER NOT NULL
     );
-    INSERT OR IGNORE INTO projects (id, root_path, display_name, created_at, last_activity)
-    VALUES ('default', '', 'Default Project', 0, 0);
+    INSERT OR IGNORE INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
+    VALUES ('default', '', 'Default Project', 'local', 0, 0);
 
-    -- 1. Agent 注册表 (带项目作用域与进程号、工具调用态势追踪)
+    -- 1. Agent 注册表 (带项目作用域、节点身份与进程号、工具调用态势追踪)
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default',
+      host_id TEXT NOT NULL DEFAULT 'local',
       name TEXT NOT NULL,
       provider TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -203,8 +205,16 @@ function migrateOldSchemaIfNeeded(db) {
     }
   }
 
-  // 针对 agents 表的进度追踪与进程监控字段平滑补列
+  // 针对 projects 表的跨节点标识补列
+  try {
+    db.exec(`ALTER TABLE projects ADD COLUMN host_id TEXT DEFAULT 'local';`);
+  } catch {
+    // 忽略已存在列
+  }
+
+  // 针对 agents 表的进度追踪、节点身份与进程监控字段平滑补列
   const agentColumns = [
+    { name: 'host_id', type: "TEXT NOT NULL DEFAULT 'local'" },
     { name: 'current_intent', type: 'TEXT' },
     { name: 'progress_summary', type: 'TEXT' },
     { name: 'pid', type: 'INTEGER' },

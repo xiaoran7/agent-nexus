@@ -1,10 +1,90 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { homedir, hostname } from 'node:os';
 
 export function getSessionTokenPath() {
   return join(homedir(), '.agent-nexus', 'session.token');
+}
+
+export function getRemoteConfigPath() {
+  return process.env.NEXUS_REMOTE_CONFIG_PATH || join(homedir(), '.agent-nexus', 'remote.json');
+}
+
+export function readRemoteConfig(customPath = null) {
+  // 测试隔离：除非显式指定了 customPath 或 NEXUS_REMOTE_CONFIG_PATH，否则单测运行期间不读取开发者宿主机的 ~/.agent-nexus/remote.json
+  const isRunningInTest = Boolean(process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
+  if (isRunningInTest && !customPath && !process.env.NEXUS_REMOTE_CONFIG_PATH) {
+    return null;
+  }
+  try {
+    const cfgPath = customPath || getRemoteConfigPath();
+    if (existsSync(cfgPath)) {
+      const parsed = JSON.parse(readFileSync(cfgPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function writeRemoteConfig(config, customPath = null) {
+  const cfgPath = customPath || getRemoteConfigPath();
+  mkdirSync(dirname(cfgPath), { recursive: true });
+  writeFileSync(cfgPath, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 });
+  return cfgPath;
+}
+
+export function clearRemoteConfig(customPath = null) {
+  const cfgPath = customPath || getRemoteConfigPath();
+  if (existsSync(cfgPath)) {
+    unlinkSync(cfgPath);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 统一解析当前客户端（Hook / MCP / Bridge / CLI）应连接的 Nexus Hub 端点与节点身份
+ * 优先级：显式参数 > 环境变量 (NEXUS_HUB_URL / NEXUS_HOST / NEXUS_PORT / NEXUS_TOKEN / NEXUS_NODE_ID) > ~/.agent-nexus/remote.json > 本机回环默认
+ */
+export function resolveNexusEndpoint(overrides = {}) {
+  const remoteCfg = readRemoteConfig(overrides.remoteConfigPath || null) || {};
+  const rawUrl = overrides.hubUrl || process.env.NEXUS_HUB_URL || process.env.NEXUS_URL || remoteCfg.hubUrl || null;
+
+  let protocol = 'http:';
+  let host = overrides.host || process.env.NEXUS_HOST || remoteCfg.host || '127.0.0.1';
+  let port = overrides.port ?? (process.env.NEXUS_PORT ? parseInt(process.env.NEXUS_PORT, 10) : (remoteCfg.port || 4300));
+
+  if (rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      protocol = u.protocol || 'http:';
+      host = overrides.host || process.env.NEXUS_HOST || u.hostname || host;
+      port = overrides.port ?? (process.env.NEXUS_PORT ? parseInt(process.env.NEXUS_PORT, 10) : (u.port ? parseInt(u.port, 10) : (protocol === 'https:' ? 443 : 80)));
+    } catch {}
+  }
+
+  const baseUrl = overrides.baseUrl || `${protocol}//${host}:${port}`;
+  const token = overrides.token ||
+                process.env.NEXUS_TOKEN ||
+                process.env.NEXUS_ADMIN_TOKEN ||
+                remoteCfg.token ||
+                readSessionToken() ||
+                null;
+  const nodeId = (overrides.nodeId || process.env.NEXUS_NODE_ID || remoteCfg.nodeId || hostname() || 'local').trim();
+  const isRemoteHub = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+
+  return {
+    protocol,
+    host,
+    port,
+    baseUrl,
+    token,
+    nodeId,
+    isRemoteHub
+  };
 }
 
 export function readSessionToken() {

@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-25 单中心 Hub 面板与跨区域工作区汇聚 (Single Hub + Remote Workspace Node Isolation & Edge Bridge v0.2.17)
+
+### 改了什么
+
+- **节点身份隔离与跨机 PID 误杀根治 (`src/storage/database.js`, `src/daemon/coordinator.js`, `src/domain/project.js`)**：
+  - `agents` 与 `projects` 表新增 `host_id` 字段及自动平滑迁移；
+  - `reapDeadAgentLeases`、`reapStaleIntentsAndAgents` 与 `computeAgentLifecycleState` 严格按 `isSameNode(agent.host_id, localNodeId)` 门控本机 `process.kill(pid, 0)` 探针，彻底解决远端工作区（如美西 `us-zenix`）会话上报异机 PID 后被本机 3 秒收割器误判 `ESRCH` 杀锁、闪烁离席的顽疾；
+  - 新增 `resolveCanonicalAgentId` 与 8 位缩写会话精准归并规则，根除同一会话先被目录扫描发现、后经无环境变量 Hook 上报时分裂成 `claude-*` 与 `agent-*` 双卡片及同名 8 位前缀误吞并问题。
+- **跨操作系统异构路径对齐与同名跨机工程区分 (`src/domain/project.js`, `src/domain/project-registry.js`, `src/hook/nexus-hook.mjs`)**：
+  - Windows Hub 处理 Linux POSIX 路径（如 `/root/Claudespace/Project/...`）时走纯 `path.posix` 规范化，绝不污染本机盘符（`d:`），确保远端多会话在中心 Hub 上精确判冲拦截；
+  - `ProjectRegistry.listProjects()` 保留不同 `root_path` 的同名跨机仓库并自动标注 `[<host_id>]`（如 `Agent-Nexus [us-zenix]`），不再被本机同名项目静默合并。
+- **零守护远端连接配置与边缘同步桥 (`src/transport/auth.js`, `src/daemon/bridge.js`, `src/cli.js`, `src/mcp/stdio.js`, `src/transport/rest.js`)**：
+  - 新增 `nexus connect <hub-url> --token <token> [--node-id <id>]` 与 `nexus disconnect`，将远端连接凭据持久化至 `~/.agent-nexus/remote.json`（`0600` 权限），使宿主派生的无环境变量全局 Hook 与 `nexus mcp` 自动直连中心 Hub，跨洋超时自适应放宽至 `1500ms / 2500ms`；
+  - 新增 `POST /api/agents/sync-remote` 接口、远端 Hook `peer_sessions` 顺带捎带机制，以及零端口、零数据库的轻量同步命令 `nexus bridge [--once]`：远端新开空闲会话毫秒级上屏，远端关窗退出立即自动回收其持有的编辑锁。
+- **前端跨节点徽标与回环令牌安全收敛 (`src/ui/app.js`, `src/ui/style.css`, `src/transport/rest.js`, `src/daemon/index.js`)**：
+  - 面板在席会话、独占文件锁卡片与协同路由走廊新增 `🌐 <host_id>` 远端节点徽标及 `· 含远端 N` 统计；
+  - 修复前端 `?token=` 查询参数被 `window.__NEXUS_TOKEN__` 覆盖导致 401 的缺陷，并收敛 `index.html` 仅对本机回环请求注入当前实例内存 `localOperatorToken`。
+
+### 验证
+
+- **全量回归与跨节点集成测试**：`node --test "test/*.test.js"` 全量 **285 项**测试全部通过（0 失败），新增 `test/remote-workspace-hub.test.js` 覆盖异构路径、跨机 PID 保活、同名跨机工程区分、真实 Hook 子进程互斥拦截、`sync-remote` 关窗锁回收与 `Edge Bridge` 生命周期；
+- **真实浏览器渲染验收**：独立内存实例加载本机 + `us-zenix` 并发会话与文件锁，验证零控制台报错与青空 UI 徽标渲染。
+
+---
+
 ## 2026-10-25 支持远端与 Tailnet 部署 (NEXUS_HOST / 固定 NEXUS_ADMIN_TOKEN / CORS Host 自动放行与面板地址动态感知 v0.2.16)
 
 ### 改了什么
