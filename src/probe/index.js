@@ -308,6 +308,12 @@ export function isProbeInstalled() {
   return existsSync(getAutostartPath()) || existsSync(getSystemdUnitPath());
 }
 
+// 状态里要报「实际生效」的自启项：Linux 走 systemd 时并没有 .desktop 文件。
+function effectiveAutostartPath() {
+  if (!IS_WIN && existsSync(getSystemdUnitPath())) return getSystemdUnitPath();
+  return getAutostartPath();
+}
+
 export async function checkProbeHealth({ host = '127.0.0.1', port = DEFAULT_PORT, timeoutMs = 1200 } = {}) {
   const probeHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
   const baseUrl = `http://${probeHost}:${port}`;
@@ -343,7 +349,7 @@ export async function probeStatus({ port = DEFAULT_PORT, host = '127.0.0.1' } = 
     baseUrl: health.baseUrl,
     version: health.version || (alive && state?.version) || null,
     hubUrl: isEdge ? (state?.hubUrl || null) : null,
-    autostartPath: getAutostartPath(),
+    autostartPath: effectiveAutostartPath(),
     launcherPath: existsSync(getProbeLauncherPath()) ? getProbeLauncherPath() : null,
     logPath: getProbeLogPath(),
     entry,
