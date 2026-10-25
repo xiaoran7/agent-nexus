@@ -14,7 +14,9 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createHarness } from './helpers.js';
+import { createDatabase } from '../src/storage/database.js';
 import { startDaemon, stopDaemon } from '../src/daemon/index.js';
 import { pushRemoteSessionsOnce } from '../src/daemon/bridge.js';
 import { ProjectRegistry } from '../src/domain/project-registry.js';
@@ -369,4 +371,40 @@ test('Edge Bridge 与远端连接配置生命周期：扫描本地活跃会话�
   assert.equal(cleared, true);
   assert.equal(readRemoteConfig(remoteCfgPath), null);
 });
+
+test('存量旧版数据库平滑迁移：旧版无 host_id 列的 nexus.db 启动时不报 SQL logic error', (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'nexus-legacy-db-'));
+  const legacyDbPath = join(tempDir, 'legacy.db');
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+  const oldDb = new DatabaseSync(legacyDbPath);
+  oldDb.exec(`
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      root_path TEXT NOT NULL,
+      display_name TEXT,
+      created_at INTEGER NOT NULL,
+      last_activity INTEGER NOT NULL
+    );
+    CREATE TABLE agents (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default',
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      workspace_dir TEXT,
+      status TEXT NOT NULL DEFAULT 'idle',
+      last_heartbeat INTEGER NOT NULL,
+      registered_at INTEGER NOT NULL
+    );
+  `);
+  oldDb.close();
+
+  const upgradedDb = createDatabase(legacyDbPath);
+  const defaultProj = upgradedDb.prepare('SELECT id, host_id FROM projects WHERE id = ?').get('default');
+  assert.equal(defaultProj.id, 'default');
+  assert.equal(defaultProj.host_id, 'local');
+  upgradedDb.close();
+});
+
 

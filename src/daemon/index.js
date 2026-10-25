@@ -11,16 +11,17 @@ import { ProjectMemoryService } from '../domain/memory.js';
 import { TopologyService } from '../domain/topology.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
-import { TokenStore, generateToken, getSessionTokenPath } from '../transport/auth.js';
+import { TokenStore, generateToken, getSessionTokenPath, readSessionToken, readHubConfig } from '../transport/auth.js';
 
 export function startDaemon(options = {}) {
-  const port = options.port ?? parseInt(process.env.NEXUS_PORT || '4300', 10);
-  const host = options.host ?? process.env.NEXUS_HOST ?? '127.0.0.1';
-  const fixedAdminToken = options.adminToken || process.env.NEXUS_ADMIN_TOKEN || null;
+  const isRunningInTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
+  const hubConfig = isRunningInTest ? null : readHubConfig();
+  const port = options.port ?? parseInt(process.env.NEXUS_PORT || String(hubConfig?.port || '4300'), 10);
+  const host = options.host ?? process.env.NEXUS_HOST ?? hubConfig?.host ?? '127.0.0.1';
   const dbPath = options.dbPath || null;
   const uiPath = options.uiPath || join(import.meta.dirname, '../ui/index.html');
-  const isRunningInTest = !!(options.isTest || process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
   const writeSessionToken = options.writeSessionToken ?? (dbPath !== ':memory:' && !isRunningInTest && port === 4300);
+  const fixedAdminToken = options.adminToken || process.env.NEXUS_ADMIN_TOKEN || hubConfig?.adminToken || (writeSessionToken ? readSessionToken() : null) || null;
 
   const eventBus = new EventEmitter();
   const db = createDatabase(dbPath);
@@ -128,7 +129,7 @@ function describeListenError(err, port, host = '127.0.0.1') {
 
 export async function stopDaemon({ server, wss, db, cleanupTimer, writeSessionToken }) {
   if (cleanupTimer) clearInterval(cleanupTimer);
-  if (writeSessionToken) {
+  if (writeSessionToken && !readHubConfig()?.adminToken) {
     try {
       const tokenPath = getSessionTokenPath();
       if (existsSync(tokenPath)) unlinkSync(tokenPath);

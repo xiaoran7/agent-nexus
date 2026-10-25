@@ -7,6 +7,27 @@ export function getSessionTokenPath() {
   return join(homedir(), '.agent-nexus', 'session.token');
 }
 
+export function getHubConfigPath() {
+  return process.env.NEXUS_HUB_CONFIG_PATH || join(homedir(), '.agent-nexus', 'hub.json');
+}
+
+export function readHubConfig(customPath = null) {
+  const isRunningInTest = Boolean(process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === 'test');
+  if (isRunningInTest && !customPath && !process.env.NEXUS_HUB_CONFIG_PATH) {
+    return null;
+  }
+  try {
+    const cfgPath = customPath || getHubConfigPath();
+    if (existsSync(cfgPath)) {
+      const parsed = JSON.parse(readFileSync(cfgPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 export function getRemoteConfigPath() {
   return process.env.NEXUS_REMOTE_CONFIG_PATH || join(homedir(), '.agent-nexus', 'remote.json');
 }

@@ -29,8 +29,6 @@ export function createDatabase(customPath = null) {
       created_at INTEGER NOT NULL,
       last_activity INTEGER NOT NULL
     );
-    INSERT OR IGNORE INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
-    VALUES ('default', '', 'Default Project', 'local', 0, 0);
 
     -- 1. Agent 注册表 (带项目作用域、节点身份与进程号、工具调用态势追踪)
     CREATE TABLE IF NOT EXISTS agents (
@@ -169,6 +167,12 @@ export function createDatabase(customPath = null) {
 
   // 针对已存在的旧版本表结构进行平滑补列迁移
   migrateOldSchemaIfNeeded(db);
+
+  // 确保补齐 host_id 列后再插入默认项目（兼容存量旧版 nexus.db 平滑升级）
+  db.exec(`
+    INSERT OR IGNORE INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
+    VALUES ('default', '', 'Default Project', 'local', 0, 0);
+  `);
 
   // 补列完成后，统一创建索引与热点查询加速索引
   db.exec(`
