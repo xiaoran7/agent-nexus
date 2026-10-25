@@ -17,13 +17,17 @@
   - `probe:status` 新增 `Role` 与 `Edge node` 两行，edge 角色的 `Endpoint` 显示为 `edge -> http://<hub>:4300`。
 - **Linux 交给 systemd 拉起 (`src/probe/index.js`)**：
   - 已写 `systemctl --user` 单元时，`probe:start` 改走 `systemctl --user start` 而不是直接 spawn：直接 spawn 会绕过 `Restart=always`，且开机后服务再拉一次会变成两个探针进程；
-  - `isProbeInstalled` 同时认 XDG `.desktop` 与 systemd 单元（此前只认前者，Linux 上恒为「未安装」）。
+  - `isProbeInstalled` 同时认 XDG `.desktop` 与 systemd 单元（此前只认前者，Linux 上恒为「未安装」）；`probe:status` 的 `Auto-start` 也改为显示实际生效的 systemd 单元路径；
+  - `resolveNodeRuntime` 优先用 `process.execPath`，并把裸命令名解析为绝对路径——真机部署时正是 `ExecStart='node'` 导致 systemd 拒绝启动（要求绝对路径）；
+  - 非交互 SSH / cron 下没有 `XDG_RUNTIME_DIR`，`systemctl --user` 会报 `Failed to connect to bus: No medium found`；所有 systemctl 调用统一按 uid 补 `/run/user/<uid>`。
 - **版本清单同步**：`package.json` / `package-lock.json` / `src/transport/rest.js` 统一至 `0.2.19`（上一版 `package-lock.json` 漏同步，仍停在 `0.2.17`）。
 
 ### 验证
 
-- **单元测试**：`test/probe.test.js` 由 5 项增至 **9 项**，覆盖「未绑定 Hub 时拒绝安装 edge」「安装后记录 role/nodeId 且启动器带 `--edge`/`--node`、不带 `--port`」「edge 状态按进程判活并回传 hubUrl」；
-- **端到端**：以临时 `NEXUS_PROBE_DIR` / `NEXUS_REMOTE_CONFIG_PATH` / `NEXUS_CLAUDE_SESSIONS_DIR` 起真实 `nexus probe --edge --node us-zenix`，假 Hub 收到 `POST /api/agents/sync-remote`（`host_id: us-zenix`、`full_snapshot: true`、`Authorization: Bearer`），`probe.json` 写入 `role/nodeId/hubUrl`，日志落盘，`SIGTERM` 后进程退出。
+- **单元测试**：`test/probe.test.js` 由 5 项增至 **9 项**，覆盖「未绑定 Hub 时拒绝安装 edge」「安装后记录 role/nodeId 且启动器带 `--edge`/`--node`、不带 `--port`」「edge 状态按进程判活并回传 hubUrl」；全量 **296 项**通过；
+- **端到端**：以临时 `NEXUS_PROBE_DIR` / `NEXUS_REMOTE_CONFIG_PATH` / `NEXUS_CLAUDE_SESSIONS_DIR` 起真实 `nexus probe --edge --node us-zenix`，假 Hub 收到 `POST /api/agents/sync-remote`（`host_id: us-zenix`、`full_snapshot: true`、`Authorization: Bearer`），`probe.json` 写入 `role/nodeId/hubUrl`，日志落盘，`SIGTERM` 后进程退出；
+- **美西机 `us-zenix` 真机部署**：`probe:install --edge` 装成 systemd user 单元（`enabled` + `Linger=yes`，重启后无需登录），`probe:status` 显示 `Role: edge / Endpoint: edge -> http://100.79.74.121:4300 / Edge node: us-zenix`；旧 `nexus-bridge.service` 已 stop、disable 并删除单元文件（备份 `/root/nexus-bridge.service.bak-20261025`），`systemctl list-units 'nexus-bridge*'` 为空；
+- **存活与恢复**：`kill -9` 探针后 systemd 3 秒内拉起新 PID，中心 Hub `/api/agents` 中 `us-zenix` 的 4 个活跃会话心跳持续刷新（<10s），面板无需任何改动。
 
 ---
 
