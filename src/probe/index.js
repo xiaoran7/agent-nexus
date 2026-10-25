@@ -58,10 +58,18 @@ function getSystemdUnitPath() {
   return join(configHome, 'systemd', 'user', 'agent-nexus-probe.service');
 }
 
-function hasSystemd() {
+// 非交互 SSH / cron 下没有 XDG_RUNTIME_DIR，`systemctl --user` 会报
+// "Failed to connect to bus: No medium found"。这里按 uid 补出运行时目录。
+function userSystemctl(args, timeout = 5000) {
+  const env = { ...process.env };
+  if (!env.XDG_RUNTIME_DIR) env.XDG_RUNTIME_DIR = `/run/user/${process.getuid?.() ?? ''}`;
+  return execFileSync('systemctl', ['--user', ...args], { stdio: 'ignore', timeout, env });
+}
+
+function systemdUnitReachable() {
   if (IS_WIN) return false;
   try {
-    execFileSync('systemctl', ['--user', '--version'], { stdio: 'ignore', timeout: 2000 });
+    userSystemctl(['show-environment'], 3000);
     return true;
   } catch {
     return false;
@@ -80,20 +88,39 @@ export function resolveNodeRuntime() {
   }
 
   const candidates = [
+    process.execPath,
     'D:\\nodejs\\node.exe',
     'C:\\Program Files\\nodejs\\node.exe',
     join(process.env.LOCALAPPDATA || '', 'Programs', 'node', 'node.exe'),
     join(process.env.PROGRAMFILES || 'C:\\Program Files', 'nodejs', 'node.exe'),
+    '/usr/bin/node',
+    '/usr/local/bin/node',
     'node.exe',
     'node'
   ];
 
   for (const candidate of candidates) {
-    if (candidate.includes('\\') && !existsSync(candidate)) continue;
+    if (!candidate) continue;
+    if ((candidate.includes('\\') || candidate.startsWith('/')) && !existsSync(candidate)) continue;
     try {
       execFileSync(candidate, ['-e', 'require("node:sqlite")'], { stdio: 'ignore', windowsHide: true, timeout: 5000 });
-      return { executable: candidate, asNode: false };
+      // systemd 要求 ExecStart 是绝对路径，裸命令名要解析成实际路径再落盘。
+      const absolute = candidate.includes('\\') || candidate.startsWith('/') ? candidate : resolveCommandPath(candidate);
+      if (!absolute) continue;
+      return { executable: absolute, asNode: false };
     } catch {}
+  }
+  return null;
+}
+
+function resolveCommandPath(command) {
+  const exts = IS_WIN ? ['', '.exe', '.cmd', '.bat'] : [''];
+  const dirs = (process.env.PATH || '').split(IS_WIN ? ';' : ':').filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = join(dir, command + ext);
+      if (existsSync(candidate)) return candidate;
+    }
   }
   return null;
 }
@@ -232,7 +259,7 @@ function writeWindowsAutostart(launcherPath) {
 
 function writePosixAutostart(entry) {
   const execLine = [quotePosix(entry.executable), ...buildProbeArgs(entry).map(quotePosix)].join(' ');
-  if (hasSystemd()) {
+  if (systemdUnitReachable()) {
     const unitPath = getSystemdUnitPath();
     ensureDir(unitPath);
     const unit = [
@@ -254,8 +281,8 @@ function writePosixAutostart(entry) {
     ].join('\n');
     writeFileSync(unitPath, unit, 'utf8');
     try {
-      execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore', timeout: 5000 });
-      execFileSync('systemctl', ['--user', 'enable', 'agent-nexus-probe.service'], { stdio: 'ignore', timeout: 5000 });
+      userSystemctl(['daemon-reload']);
+      userSystemctl(['enable', 'agent-nexus-probe.service']);
     } catch {}
     return unitPath;
   }
@@ -416,9 +443,9 @@ export async function startProbe(options = {}) {
 
   // Linux 上装了 systemd user 单元就交给 systemd 拉起：直接 spawn 会绕过
   // Restart=always，并且开机后服务再拉一次就变成两个探针进程。
-  if (!IS_WIN && hasSystemd() && existsSync(getSystemdUnitPath())) {
+  if (!IS_WIN && systemdUnitReachable() && existsSync(getSystemdUnitPath())) {
     try {
-      execFileSync('systemctl', ['--user', 'start', 'agent-nexus-probe.service'], { stdio: 'ignore', timeout: 15000 });
+      userSystemctl(['start', 'agent-nexus-probe.service'], 15000);
     } catch {}
     const deadline = Date.now() + (options.timeoutMs || 15000);
     while (Date.now() < deadline) {
@@ -498,9 +525,9 @@ export async function stopProbe(options = {}) {
     }
   }
 
-  if (!IS_WIN && hasSystemd() && existsSync(getSystemdUnitPath())) {
+  if (!IS_WIN && systemdUnitReachable() && existsSync(getSystemdUnitPath())) {
     try {
-      execFileSync('systemctl', ['--user', 'stop', 'agent-nexus-probe.service'], { stdio: 'ignore', timeout: 5000 });
+      userSystemctl(['stop', 'agent-nexus-probe.service']);
     } catch {}
   }
 
@@ -523,10 +550,10 @@ export async function uninstallProbe(options = {}) {
     } catch {}
   }
 
-  if (!IS_WIN && hasSystemd()) {
+  if (!IS_WIN && systemdUnitReachable()) {
     try {
-      execFileSync('systemctl', ['--user', 'disable', 'agent-nexus-probe.service'], { stdio: 'ignore', timeout: 5000 });
-      execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore', timeout: 5000 });
+      userSystemctl(['disable', 'agent-nexus-probe.service']);
+      userSystemctl(['daemon-reload']);
     } catch {}
   }
 
