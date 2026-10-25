@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { startDaemon, stopDaemon } from './daemon/index.js';
 import { startEdgeBridge, pushRemoteSessionsOnce } from './daemon/bridge.js';
 import { installAll, installClaudeHook, installCodexHook, installZCodeHook, installProjectMcp } from './installer/index.js';
 import { resolveProject, getLocalNodeId } from './domain/project.js';
@@ -15,23 +14,25 @@ const hooks = {
 };
 
 if (cmd === 'start') {
-  startDaemon()
-    .then((daemon) => {
-      const shutdown = async () => {
-        console.log('\n[Agent-Nexus] Gracefully shutting down daemon...');
-        try {
-          await stopDaemon(daemon);
-          console.log('[Agent-Nexus] Daemon stopped cleanly.');
-          process.exit(0);
-        } catch (err) {
-          console.error('[Agent-Nexus] Error during shutdown:', err);
-          process.exit(1);
-        }
-      };
+  import('./daemon/index.js')
+    .then(({ startDaemon, stopDaemon }) =>
+      startDaemon().then((daemon) => {
+        const shutdown = async () => {
+          console.log('\n[Agent-Nexus] Gracefully shutting down daemon...');
+          try {
+            await stopDaemon(daemon);
+            console.log('[Agent-Nexus] Daemon stopped cleanly.');
+            process.exit(0);
+          } catch (err) {
+            console.error('[Agent-Nexus] Error during shutdown:', err);
+            process.exit(1);
+          }
+        };
 
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
-    })
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+      })
+    )
     .catch((err) => {
       console.error(`\n[Agent-Nexus] Startup failed:\n${err.message}\n`);
       process.exit(1);
