@@ -49,16 +49,9 @@ async function main() {
   fs.mkdirSync(appStagingDir, { recursive: true });
 
   console.log('[Build] Staging application source files...');
-  // 拷贝核心业务源码
-  copyRecursiveSync(path.join(ROOT_DIR, 'src'), path.join(appStagingDir, 'src'));
+  // 桌面端是纯客户端：只打包 desktop/ 与探针通信所需的最小外壳，
+  // 不再内嵌 daemon、src/ 与 ws 依赖——探针由 `nexus probe:install` 独立安装。
   copyRecursiveSync(path.join(ROOT_DIR, 'desktop'), path.join(appStagingDir, 'desktop'));
-
-  // 拷贝必需的生产依赖
-  const nodeModulesTarget = path.join(appStagingDir, 'node_modules');
-  fs.mkdirSync(nodeModulesTarget, { recursive: true });
-  if (fs.existsSync(path.join(ROOT_DIR, 'node_modules', 'ws'))) {
-    copyRecursiveSync(path.join(ROOT_DIR, 'node_modules', 'ws'), path.join(nodeModulesTarget, 'ws'));
-  }
 
   // 写入面向 Desktop 的 package.json
   const desktopPkg = {
@@ -69,7 +62,7 @@ async function main() {
     main: 'desktop/main.cjs',
     author: 'tangwg',
     license: 'MIT',
-    dependencies: pkg.dependencies || { ws: '^8.21.3' }
+    dependencies: {}
   };
   fs.writeFileSync(path.join(appStagingDir, 'package.json'), JSON.stringify(desktopPkg, null, 2), 'utf8');
 

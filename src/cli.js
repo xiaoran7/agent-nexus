@@ -1,9 +1,22 @@
 #!/usr/bin/env node
+import { appendFileSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { startEdgeBridge, pushRemoteSessionsOnce } from './daemon/bridge.js';
 import { installAll, installClaudeHook, installCodexHook, installZCodeHook, installProjectMcp } from './installer/index.js';
 import { resolveProject, getLocalNodeId } from './domain/project.js';
 import { startMcpStdio } from './mcp/stdio.js';
 import { readSessionToken, writeRemoteConfig, clearRemoteConfig, resolveNexusEndpoint } from './transport/auth.js';
+import {
+  installProbe,
+  uninstallProbe,
+  startProbe,
+  stopProbe,
+  probeStatus,
+  writeProbePid,
+  writeProbeState,
+  clearProbeState,
+  getProbeLogPath
+} from './probe/index.js';
 
 const cmd = process.argv[2];
 
@@ -14,29 +27,19 @@ const hooks = {
 };
 
 if (cmd === 'start') {
-  import('./daemon/index.js')
-    .then(({ startDaemon, stopDaemon }) =>
-      startDaemon().then((daemon) => {
-        const shutdown = async () => {
-          console.log('\n[Agent-Nexus] Gracefully shutting down daemon...');
-          try {
-            await stopDaemon(daemon);
-            console.log('[Agent-Nexus] Daemon stopped cleanly.');
-            process.exit(0);
-          } catch (err) {
-            console.error('[Agent-Nexus] Error during shutdown:', err);
-            process.exit(1);
-          }
-        };
-
-        process.on('SIGINT', shutdown);
-        process.on('SIGTERM', shutdown);
-      })
-    )
-    .catch((err) => {
-      console.error(`\n[Agent-Nexus] Startup failed:\n${err.message}\n`);
-      process.exit(1);
-    });
+  runDaemon({ managed: false });
+} else if (cmd === 'probe') {
+  runDaemon({ managed: true });
+} else if (cmd === 'probe:install') {
+  probeInstall();
+} else if (cmd === 'probe:uninstall') {
+  probeUninstall();
+} else if (cmd === 'probe:start') {
+  probeStart();
+} else if (cmd === 'probe:stop') {
+  probeStop();
+} else if (cmd === 'probe:status') {
+  probeReport();
 } else if (cmd === 'connect') {
   connectRemoteHub();
 } else if (cmd === 'disconnect') {
@@ -63,6 +66,164 @@ if (cmd === 'start') {
   console.error(`Unknown command: ${cmd}\n`);
   printHelp();
   process.exit(1);
+}
+
+// 探针是无人值守进程：日志不能指望启动器（cmd/VBS）重定向——
+// 实测 detached 启动时 `>>` 会静默丢输出。这里由进程自己接管 stdout/stderr，
+// 保证崩溃与启动失败在 probe.log 里一定留痕。
+function redirectProbeOutput() {
+  const logPath = getProbeLogPath();
+  try {
+    mkdirSync(dirname(logPath), { recursive: true });
+    const fd = openSync(logPath, 'a');
+    const write = (chunk, encoding, callback) => {
+      try {
+        writeSync(fd, typeof chunk === 'string' ? chunk : Buffer.from(chunk));
+      } catch {}
+      if (typeof encoding === 'function') encoding();
+      else if (typeof callback === 'function') callback();
+      return true;
+    };
+    process.stdout.write = write;
+    process.stderr.write = write;
+    const stamp = new Date().toISOString();
+    writeSync(fd, `\n[Agent-Nexus] Probe starting (pid ${process.pid}) at ${stamp}\n`);
+  } catch {}
+}
+
+function runDaemon({ managed }) {
+  if (managed) redirectProbeOutput();
+  const opts = managed ? parseDaemonArgs() : {};
+
+  import('./daemon/index.js')
+    .then(({ startDaemon, stopDaemon }) =>
+      startDaemon({ ...opts, probe: managed }).then((daemon) => {
+        if (managed) {
+          try {
+            writeProbePid(process.pid);
+            writeProbeState({ pid: process.pid, port: daemon.port, host: daemon.host, startedAt: Date.now() });
+          } catch {}
+        }
+        const shutdown = async () => {
+          if (managed) {
+            try {
+              clearProbeState();
+            } catch {}
+          } else {
+            console.log('\n[Agent-Nexus] Gracefully shutting down daemon...');
+          }
+          try {
+            await stopDaemon(daemon);
+            if (!managed) console.log('[Agent-Nexus] Daemon stopped cleanly.');
+            process.exit(0);
+          } catch (err) {
+            console.error('[Agent-Nexus] Error during shutdown:', err);
+            process.exit(1);
+          }
+        };
+
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+      })
+    )
+    .catch((err) => {
+      const message = `\n[Agent-Nexus] Startup failed:\n${err.message}\n`;
+      if (managed) {
+        try {
+          writeProbeState({ pid: process.pid, error: err.message, failedAt: Date.now() });
+          appendFileSync(getProbeLogPath(), message);
+        } catch {}
+      } else {
+        console.error(message);
+      }
+      process.exit(1);
+    });
+}
+
+function parseDaemonArgs() {
+  const args = process.argv.slice(3);
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' && args[i + 1]) opts.port = parseInt(args[++i], 10);
+    else if (args[i] === '--host' && args[i + 1]) opts.host = args[++i];
+  }
+  return opts;
+}
+
+function probeInstall() {
+  const args = process.argv.slice(3);
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' && args[i + 1]) opts.port = parseInt(args[++i], 10);
+    else if (args[i] === '--host' && args[i + 1]) opts.host = args[++i];
+    else if (args[i] === '--no-start') opts.start = false;
+  }
+
+  installProbe(opts)
+    .then((res) => {
+      console.log('[Agent-Nexus] Background probe installed.');
+      console.log(`  • Node runtime: ${res.node}`);
+      console.log(`  • Launcher:     ${res.launcherPath}`);
+      console.log(`  • Auto-start:   ${res.autostartPath}`);
+      console.log(`  • Log:          ${getProbeLogPath()}`);
+      console.log(`  • Running now:  ${res.started ? 'yes' : 'no (starts on next login, or run `nexus probe:start`)'}`);
+      console.log('\n  The desktop app is a pure client now: open it any time, it attaches to this probe.');
+    })
+    .catch((err) => {
+      console.error(`\n[Agent-Nexus] Probe install failed:\n${err.message}\n`);
+      process.exit(1);
+    });
+}
+
+function probeUninstall() {
+  uninstallProbe()
+    .then((res) => {
+      console.log('[Agent-Nexus] Background probe removed.');
+      for (const file of res.removed) console.log(`  • removed ${file}`);
+      console.log(`  • auto-start entry: ${res.autostartPath}`);
+    })
+    .catch((err) => {
+      console.error(`\n[Agent-Nexus] Probe uninstall failed:\n${err.message}\n`);
+      process.exit(1);
+    });
+}
+
+function probeStart() {
+  startProbe()
+    .then((res) => {
+      if (res.alreadyRunning) {
+        console.log(`[Agent-Nexus] Probe already running at ${res.baseUrl}${res.version ? ` (v${res.version})` : ''}.`);
+      } else {
+        console.log(`[Agent-Nexus] Probe started at ${res.baseUrl}${res.version ? ` (v${res.version})` : ''}.`);
+      }
+    })
+    .catch((err) => {
+      console.error(`\n[Agent-Nexus] Probe start failed:\n${err.message}\n`);
+      process.exit(1);
+    });
+}
+
+function probeStop() {
+  stopProbe()
+    .then((res) => {
+      console.log(res.stopped ? '[Agent-Nexus] Probe stopped.' : '[Agent-Nexus] Probe is still shutting down.');
+    })
+    .catch((err) => {
+      console.error(`\n[Agent-Nexus] Probe stop failed:\n${err.message}\n`);
+      process.exit(1);
+    });
+}
+
+async function probeReport() {
+  const status = await probeStatus();
+  console.log('\n[Agent-Nexus] Background probe status:');
+  console.log(`  Installed:  ${status.installed ? 'yes' : 'no'}`);
+  console.log(`  Running:    ${status.running ? 'yes' : 'no'}`);
+  console.log(`  Endpoint:   ${status.baseUrl}`);
+  console.log(`  PID:        ${status.pid ?? (status.stalePid ? `${status.stalePid} (stale)` : '(none)')}`);
+  console.log(`  Version:    ${status.version ?? '(unknown)'}`);
+  console.log(`  Auto-start: ${status.autostartPath}`);
+  console.log(`  Log:        ${status.logPath}\n`);
 }
 
 function parseMcpArgs() {
@@ -258,7 +419,13 @@ function showProjectInfo(targetDir) {
 function printHelp() {
   console.log(`
 Agent-Nexus CLI:
-  nexus start                    启动中心 Hub daemon 与实时单面板
+  nexus start                    前台启动中心 Hub daemon 与实时单面板
+  nexus probe                    以后台探针模式运行 daemon（无窗口、写日志与 pid 文件）
+  nexus probe:install [--port N] [--host H] [--no-start]
+                                 安装开机自启的后台探针（Windows 用 VBS+cmd，Linux 用 systemd user）
+  nexus probe:uninstall          移除探针、开机自启项并停止进程
+  nexus probe:start | probe:stop 手动启停已安装的探针
+  nexus probe:status             查看探针安装/运行状态、端口、PID 与日志位置
   nexus connect --hub <url> --token <tok> [--node <name>]
                                  将远端工作区（如 us-zenix）绑定至中心 Hub 面板（免部署第二面板）
   nexus disconnect               解除远端 Hub 绑定，恢复本机默认回环

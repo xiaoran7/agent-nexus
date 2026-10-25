@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-25 后台探针与前端解耦 (Background Probe / Pure-Client Desktop v0.2.18)
+
+### 改了什么
+
+- **新增无窗口后台探针 (`src/probe/index.js`, `src/cli.js`)**：
+  - 探针 = 无 UI、无窗口、开机自启的常驻协调进程，持有 Hub、SQLite 与全部协同逻辑；新增 `nexus probe` 子命令以托管模式运行 daemon，并写 `probe.pid` / `probe.json`；
+  - 新增 `nexus probe:install [--port N] [--host H] [--no-start]`、`probe:uninstall`、`probe:start`、`probe:stop`、`probe:status` 全生命周期命令；
+  - Windows 落点为 `~/.agent-nexus/probe.cmd` 启动器 + 启动文件夹 `Agent-Nexus Probe.vbs`（`WScript.Shell.Run(..., 0, False)` 以 0 号窗口运行，全程无控制台黑框）；Linux 优先 `systemctl --user` unit（`Restart=always`），无 systemd 时退回 XDG autostart；
+  - 探针解释器独立探测系统 Node（必须支持 `node:sqlite`），不依赖打包后的 Electron 运行时，可用 `NEXUS_NODE_PATH` 覆盖。
+- **日志自持，不依赖启动器重定向 (`src/cli.js`)**：
+  - 实测 `detached` 启动下 cmd 的 `>>` 重定向会静默丢输出（日志恒为 0 字节）；改为探针进程启动时自行接管 `stdout/stderr` 写入 `~/.agent-nexus/probe.log`，崩溃与启动失败必定留痕，超过 4MB 自动清空。
+- **桌面端降级为纯客户端 (`desktop/main.cjs`, `desktop/probe-client.cjs`, `desktop/offline.html`)**：
+  - 删除 `desktop/daemon-runner.cjs`：桌面端不再探测、不再 spawn、不再关停任何 daemon，探针与前端彻底解耦、可分别安装升级；
+  - 新增 `ProbeClient`：只做探活、读 `session.token`、拼面板地址三件事，不暴露任何拉起探针的能力；
+  - 探针离线时加载 `desktop/offline.html` 指引页（提示 `nexus probe:install` / `probe:start`），每 3 秒自动重连；托盘菜单新增“重启探针”指引项。
+- **打包产物瘦身 (`scripts/build-exe.cjs`, `package.json`)**：
+  - EXE 不再内嵌 `src/`、daemon 与 `ws` 依赖，只打包 `desktop/` 客户端外壳；`package.json` 的 `files` 补入 `desktop/`，新增 `probe:install` / `probe:status` npm 脚本。
+
+### 验证
+
+- **全量回归**：`node --test "test/*.test.js"` 全量 **293 项**全部通过（0 失败），新增 `test/probe.test.js`（探针路径、PID/状态文件、损坏文件容错）并重写 `test/desktop-runner.test.js`（纯客户端边界断言）；
+- **真机安装验收**：以独立 `NEXUS_PROBE_DIR` / `NEXUS_STARTUP_DIR` / `NEXUS_DB_PATH` 在 4313 端口完成 `probe:install → probe:status → probe:stop → probe:start → probe:uninstall` 全流程，确认自启 VBS、启动器、日志与 PID 文件落点正确，探针无窗口运行且 `/health` 返回 `0.2.18`。
+
+---
+
 ## 2026-10-25 单中心 Hub 面板与跨区域工作区汇聚 (Single Hub + Remote Workspace Node Isolation & Edge Bridge v0.2.17)
 
 ### 改了什么
