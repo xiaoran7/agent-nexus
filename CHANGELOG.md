@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-10-26 修复 Linux CI 项目展示名大小写降级 (Display Name Case Fix)
+
+### 改了什么
+
+- **展示名改用原始大小写路径反查 (`src/daemon/coordinator.js`)**：
+  - 失败根因：`registerAgent` 用 `toComparablePath()` 的输出反查展示名，而该函数为保证跨机 `projectId` 一致会**强制小写**；Windows 上 `realpathSync.native` 能从磁盘还原真实目录名，Linux 上该路径不存在（如 `d:/claudespace/...`）只能降级取 basename，于是 `Agent-Nexus` 变成 `agent-nexus`；
+  - 新增 `pickDisplayPath()`：只接受与项目根同源的候选路径（避免误把子目录名当项目名），优先取磁盘上可寻址的真实路径，本机不可寻址时取保留原始大小写的那个候选；
+  - `registerAgent` 改为把 `projectRoot` 与 `workspaceDir` 一并作为候选，后者才是用户侧原始大小写。
+
+### 验证
+
+- **本地 (Windows)**：`node --test test/remote-workspace-hub.test.js` 6 项全绿；全量 **303 项**通过；
+- **美西 (Linux, us-zenix)**：打补丁后同一用例由失败转全绿，全量 **303 项**通过——修复前该用例在 Linux 必挂（`agent-nexus` ≠ `Agent-Nexus`）。
+
+---
+
 ## 2026-10-25 修复桌面端闪屏 (Panel Flicker Fix v0.2.20)
 
 ### 改了什么

@@ -233,6 +233,20 @@ function toComparablePath(value, baseDir, projectRoot) {
   return normalized.toLowerCase();
 }
 
+// toComparablePath 会统一小写以保证跨机 projectId 一致，但展示名必须保留真实大小写。
+// 只接受与项目根同源的候选（避免把子目录名当项目名），优先磁盘上可寻址的真实路径。
+function pickDisplayPath(candidates, canonicalRoot) {
+  const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const sameRoot = candidates.filter((p) => typeof p === 'string' && p !== '' && norm(p) === canonicalRoot);
+  for (const p of sameRoot) {
+    try {
+      if (existsSync(p)) return p;
+    } catch {}
+  }
+  // 本机不可寻址（如 Linux 上的 Windows 盘符路径）时，取保留原始大小写的那个候选
+  return sameRoot.find((p) => norm(p) !== p) || sameRoot[0] || canonicalRoot;
+}
+
 function requireAgentId(value) {
   return requireString(value, 'agent_id');
 }
@@ -818,7 +832,9 @@ export class CoordinatorEngine {
     if (effectiveProjPath && finalProjectId && finalProjectId !== 'all') {
       try {
         const canonicalRoot = toComparablePath(effectiveProjPath);
-        const displayName = resolveProjectDisplayName(effectiveProjPath, canonicalRoot, finalProjectId);
+        // projectRoot 可能已被 canonicalizePath 统一小写，workspaceDir 才是用户侧原始大小写
+        const displayPath = pickDisplayPath([projectRootParam, workspaceDir], canonicalRoot);
+        const displayName = resolveProjectDisplayName(displayPath, canonicalRoot, finalProjectId);
         this.db.prepare(`
           INSERT INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
           VALUES (?, ?, ?, ?, ?, ?)
