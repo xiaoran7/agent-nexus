@@ -85,6 +85,17 @@ nexus probe:uninstall   # 移除探针、自启项与启动器
 
 探针日志由进程自己写入 `~/.agent-nexus/probe.log`（不依赖启动器重定向，detached 启动下 `>>` 会静默丢输出），超过 4MB 自动清空。探针不会出现在任务栏，也没有控制台窗口。
 
+**边缘探针（edge）**：同一套探针也能装在远端工作区（如美西 `us-zenix`），替代原先单独的 `nexus bridge` 常驻服务。它**不开端口、不建本地数据库、不跑面板**，只监听本机 `~/.claude/sessions` 并把会话快照推给中心 Hub：
+
+```bash
+# 远端工作区：先绑定中心 Hub（写入 ~/.agent-nexus/remote.json），再装边缘探针
+nexus connect --hub http://<Hub的Tailscale_IP>:4300 --token <令牌> --node us-zenix
+nexus probe:install --edge          # 节点名默认取 remote.json 的 nodeId
+nexus probe:status                  # Role: edge / Endpoint: edge -> http://<hub>:4300
+```
+
+`--edge` 与 `--node <id>` 同样适用于 `nexus probe`，可前台调试。Linux 上 `probe:install` 会写 `systemctl --user` 单元并通过 `systemctl start` 拉起，避免绕过 `Restart=always` 或开机后重复起进程。边缘探针不需要端口，因此 `probe:status` 以进程存活判活。
+
 ### 桌面端常驻与 Windows 独立 EXE 打包
 
 - **开发态桌面客户端**：`npm run desktop`（纯客户端托盘外壳，连接已安装的探针；未安装时展示离线指引）；
@@ -107,6 +118,8 @@ nexus hook:install --claude
 nexus bridge
 ```
 
+> 长期常驻更推荐用边缘探针替代 `nexus bridge`：`nexus probe:install --edge` 自带开机自启与崩溃重启，语义与 `bridge` 完全一致（见上文「边缘探针」）。
+
 默认面板为 `http://127.0.0.1:4300`，端口可通过 `NEXUS_PORT` 修改；数据库使用 `NEXUS_DB_PATH` 或用户目录下 `.agent-nexus/nexus.db`，`NEXUS_DB_PATH` 的父目录不存在时会自动创建。必须用 `npm ci`（或 `npm install`）安装依赖后再启动：唯一运行时依赖是 `ws`，缺失时 daemon 会在 `src/transport/ws.js` 直接报 `ERR_MODULE_NOT_FOUND`。端口被占用时启动会失败并提示改用 `NEXUS_PORT`，不会带原始堆栈崩溃。
 
 前端控制台支持 **三态视图切换**：
@@ -127,7 +140,7 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> node src/cli.js token <agent-id>
 
 agent 令牌只能读自己的收件箱（读别人的 403），也不能签发令牌。身份以令牌为准，不采信请求体里的 `from`——那是调用方可控的字段，自称 `claude` 的陌生进程和真 Claude Code 无法区分。面板打开 `http://127.0.0.1:4300/?token=<你的令牌>`，令牌会存进 sessionStorage；WebSocket 令牌只能走查询参数，浏览器发不了自定义头。
 
-测试用 `node --test` 跑 `test/**/*.test.js`，共 293 个用例：`comprehensive.test.js` 覆盖协调判冲、路径分段边界、等待队列的可用性复核与宽窄重排、共享状态与 CAS、消息总线、MCP 工具分发、核心状态机闭环与模块锁门禁拦截，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、认证与令牌隔离、跨源策略、Hook 载荷解析、安装器和启动失败处理，`project.test.js` 覆盖多层目录的项目边界探测、Git Worktree 共同根识别与路径归一化，`project-scope.test.js` 覆盖多项目资源与状态隔离，`project-lead.test.js` 覆盖 Project Lead 进场避障排期与 MCP 联动，`notification.test.js` 覆盖主动释放通知与 SSE 实时事件通道，`memory.test.js` 覆盖项目长期工程记忆引擎，`broadcast.test.js` 覆盖总指挥广播与信箱直达，`llm-adapter.test.js` 覆盖大模型适配器（Anthropic、OpenAI 与多候选组网），`gateway-router.test.js` 覆盖 Magpie 启发式错误分类、熔断冷却与多策略路由，`resource-lock.test.js` 覆盖 crewmates 命名资源锁申领、排他互斥与跨工作树相对化路径碰撞，`probe.test.js` 覆盖探针路径解析、PID/状态文件与损坏文件容错，`desktop-runner.test.js` 覆盖桌面端纯客户端边界（不含拉起探针的能力）。测试不证明宿主工具已接入。
+测试用 `node --test` 跑 `test/**/*.test.js`，共 296 个用例：`comprehensive.test.js` 覆盖协调判冲、路径分段边界、等待队列的可用性复核与宽窄重排、共享状态与 CAS、消息总线、MCP 工具分发、核心状态机闭环与模块锁门禁拦截，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、认证与令牌隔离、跨源策略、Hook 载荷解析、安装器和启动失败处理，`project.test.js` 覆盖多层目录的项目边界探测、Git Worktree 共同根识别与路径归一化，`project-scope.test.js` 覆盖多项目资源与状态隔离，`project-lead.test.js` 覆盖 Project Lead 进场避障排期与 MCP 联动，`notification.test.js` 覆盖主动释放通知与 SSE 实时事件通道，`memory.test.js` 覆盖项目长期工程记忆引擎，`broadcast.test.js` 覆盖总指挥广播与信箱直达，`llm-adapter.test.js` 覆盖大模型适配器（Anthropic、OpenAI 与多候选组网），`gateway-router.test.js` 覆盖 Magpie 启发式错误分类、熔断冷却与多策略路由，`resource-lock.test.js` 覆盖 crewmates 命名资源锁申领、排他互斥与跨工作树相对化路径碰撞，`probe.test.js` 覆盖探针路径解析、PID/状态文件与损坏文件容错、edge 角色安装与判活，`desktop-runner.test.js` 覆盖桌面端纯客户端边界（不含拉起探针的能力）。测试不证明宿主工具已接入。
 
 daemon 只监听本机，跨源请求默认不放行（浏览器不理会目标地址是否本机，任何网站都能读写你的协调库）。确需跨源时用 `NEXUS_ALLOWED_ORIGINS` 列出来源，逗号分隔；该变量按请求读取，改完无需重启。令牌与跨源白名单是两道独立的闸：白名单管"哪个网页"，令牌管"哪个进程"。
 

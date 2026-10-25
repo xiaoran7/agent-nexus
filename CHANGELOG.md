@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-10-25 边缘探针取代远端同步桥 (Edge Probe Role v0.2.19)
+
+### 改了什么
+
+- **探针新增 `edge` 角色 (`src/probe/index.js`, `src/cli.js`)**：
+  - `nexus probe --edge [--node <id>]` 与 `nexus probe:install --edge`：同一套探针产品可直接装在远端工作区（如美西 `us-zenix`），**不开端口、不建本地数据库、不跑面板**，只监听本机 `~/.claude/sessions` 并把会话快照推给中心 Hub——语义与 `nexus bridge` 一致，但自带开机自启与崩溃重启；
+  - 安装时强制校验 `~/.agent-nexus/remote.json` 已有 `hubUrl` 与 `token`，缺失直接报错并提示先跑 `nexus connect`，避免装出一个永远推不出去的探针；
+  - `probe-entry.json` 记录 `role` 与 `nodeId`（缺省取 `NEXUS_NODE_ID` → `remote.json` 的 nodeId → 主机名），启动器据此追加 `--edge` / `--node`，且不再写 `--port` / `--host`。
+- **边缘探针按进程判活 (`src/probe/index.js`)**：
+  - `probeStatus` / `startProbe` / `stopProbe` 对 `edge` 角色改用 PID 存活判断（不开端口就没有 `/health` 可打），状态里回传 `hubUrl` 供面板核对；
+  - `probe:status` 新增 `Role` 与 `Edge node` 两行，edge 角色的 `Endpoint` 显示为 `edge -> http://<hub>:4300`。
+- **Linux 交给 systemd 拉起 (`src/probe/index.js`)**：
+  - 已写 `systemctl --user` 单元时，`probe:start` 改走 `systemctl --user start` 而不是直接 spawn：直接 spawn 会绕过 `Restart=always`，且开机后服务再拉一次会变成两个探针进程；
+  - `isProbeInstalled` 同时认 XDG `.desktop` 与 systemd 单元（此前只认前者，Linux 上恒为「未安装」）。
+- **版本清单同步**：`package.json` / `package-lock.json` / `src/transport/rest.js` 统一至 `0.2.19`（上一版 `package-lock.json` 漏同步，仍停在 `0.2.17`）。
+
+### 验证
+
+- **单元测试**：`test/probe.test.js` 由 5 项增至 **9 项**，覆盖「未绑定 Hub 时拒绝安装 edge」「安装后记录 role/nodeId 且启动器带 `--edge`/`--node`、不带 `--port`」「edge 状态按进程判活并回传 hubUrl」；
+- **端到端**：以临时 `NEXUS_PROBE_DIR` / `NEXUS_REMOTE_CONFIG_PATH` / `NEXUS_CLAUDE_SESSIONS_DIR` 起真实 `nexus probe --edge --node us-zenix`，假 Hub 收到 `POST /api/agents/sync-remote`（`host_id: us-zenix`、`full_snapshot: true`、`Authorization: Bearer`），`probe.json` 写入 `role/nodeId/hubUrl`，日志落盘，`SIGTERM` 后进程退出。
+
+---
+
 ## 2026-10-25 后台探针与前端解耦 (Background Probe / Pure-Client Desktop v0.2.18)
 
 ### 改了什么

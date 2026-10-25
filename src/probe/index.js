@@ -8,7 +8,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync, truncateSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
+import { readRemoteConfig } from '../transport/auth.js';
 
 const IS_WIN = process.platform === 'win32';
 const DEFAULT_PORT = 4300;
@@ -177,8 +178,10 @@ function quotePosix(arg) {
 
 function buildProbeArgs(entry) {
   const args = [entry.cliPath, 'probe'];
+  if (entry.role === 'edge') args.push('--edge');
   if (entry.port) args.push('--port', String(entry.port));
   if (entry.host) args.push('--host', String(entry.host));
+  if (entry.nodeId) args.push('--node', String(entry.nodeId));
   return args;
 }
 
@@ -273,7 +276,9 @@ function writePosixAutostart(entry) {
 }
 
 export function isProbeInstalled() {
-  return existsSync(getProbeEntryPath()) && existsSync(getAutostartPath());
+  if (!existsSync(getProbeEntryPath())) return false;
+  // Linux 上装了 systemd user 单元就不再写 XDG .desktop，两者任一存在即为已安装。
+  return existsSync(getAutostartPath()) || existsSync(getSystemdUnitPath());
 }
 
 export async function checkProbeHealth({ host = '127.0.0.1', port = DEFAULT_PORT, timeoutMs = 1200 } = {}) {
@@ -295,17 +300,22 @@ export async function probeStatus({ port = DEFAULT_PORT, host = '127.0.0.1' } = 
   const pid = readProbePid();
   const effectivePort = entry?.port || state?.port || port;
   const effectiveHost = entry?.host || state?.host || host;
-  const health = await checkProbeHealth({ host: effectiveHost, port: effectivePort });
+  const isEdge = entry?.role === 'edge';
+  // edge 探针不开端口，健康只能看进程存活。
+  const alive = pid ? isProcessAlive(pid) : false;
+  const health = isEdge ? { running: alive, baseUrl: null } : await checkProbeHealth({ host: effectiveHost, port: effectivePort });
 
   return {
     installed: isProbeInstalled(),
+    role: isEdge ? 'edge' : 'hub',
     running: health.running,
-    pid: pid && isProcessAlive(pid) ? pid : null,
-    stalePid: pid && !isProcessAlive(pid) ? pid : null,
-    port: effectivePort,
-    host: effectiveHost,
+    pid: alive ? pid : null,
+    stalePid: pid && !alive ? pid : null,
+    port: isEdge ? null : effectivePort,
+    host: isEdge ? null : effectiveHost,
     baseUrl: health.baseUrl,
-    version: health.version,
+    version: health.version || (alive && state?.version) || null,
+    hubUrl: isEdge ? (state?.hubUrl || null) : null,
     autostartPath: getAutostartPath(),
     launcherPath: existsSync(getProbeLauncherPath()) ? getProbeLauncherPath() : null,
     logPath: getProbeLogPath(),
@@ -332,14 +342,29 @@ export async function installProbe(options = {}) {
 
   const port = options.port ?? parseInt(process.env.NEXUS_PORT || String(DEFAULT_PORT), 10);
   const host = options.host ?? process.env.NEXUS_HOST ?? null;
+  const role = options.role === 'edge' ? 'edge' : 'hub';
+  if (role === 'edge') {
+    const remote = readRemoteConfig();
+    if (!remote?.hubUrl || !remote?.token) {
+      throw new Error(
+        'An edge probe needs a bound Hub first. Run ' +
+        '`nexus connect --hub <url> --token <token> --node <name>` on this machine, then retry.'
+      );
+    }
+  }
+  const nodeId = role === 'edge'
+    ? (options.nodeId || process.env.NEXUS_NODE_ID || readRemoteConfig()?.nodeId || hostname())
+    : null;
 
   const entry = {
     version: PROBE_ENTRY_VERSION,
+    role,
     executable: runtime.executable,
     cliPath,
     cwd: options.cwd || process.cwd(),
-    port,
-    host,
+    port: role === 'edge' ? null : port,
+    host: role === 'edge' ? null : host,
+    nodeId,
     installedAt: Date.now()
   };
 
@@ -365,12 +390,21 @@ export async function startProbe(options = {}) {
     throw new Error('The background probe is not installed yet. Run `nexus probe:install` first.');
   }
 
+  const isEdge = entry.role === 'edge';
   const port = options.port || entry.port || DEFAULT_PORT;
   const host = options.host || entry.host || '127.0.0.1';
 
-  const existing = await checkProbeHealth({ host, port });
-  if (existing.running) {
-    return { started: false, alreadyRunning: true, baseUrl: existing.baseUrl, version: existing.version };
+  // edge 探针不开端口，只能按进程判断是否已在运行。
+  if (isEdge) {
+    const pid = readProbePid();
+    if (pid && isProcessAlive(pid)) {
+      return { started: false, alreadyRunning: true, pid };
+    }
+  } else {
+    const existing = await checkProbeHealth({ host, port });
+    if (existing.running) {
+      return { started: false, alreadyRunning: true, baseUrl: existing.baseUrl, version: existing.version };
+    }
   }
 
   const launcherPath = getProbeLauncherPath();
@@ -379,6 +413,32 @@ export async function startProbe(options = {}) {
   }
 
   rotateLog(getProbeLogPath());
+
+  // Linux 上装了 systemd user 单元就交给 systemd 拉起：直接 spawn 会绕过
+  // Restart=always，并且开机后服务再拉一次就变成两个探针进程。
+  if (!IS_WIN && hasSystemd() && existsSync(getSystemdUnitPath())) {
+    try {
+      execFileSync('systemctl', ['--user', 'start', 'agent-nexus-probe.service'], { stdio: 'ignore', timeout: 15000 });
+    } catch {}
+    const deadline = Date.now() + (options.timeoutMs || 15000);
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+      const pid = readProbePid();
+      if (pid && isProcessAlive(pid)) {
+        if (isEdge) return { started: true, pid };
+        const health = await checkProbeHealth({ host, port, timeoutMs: 800 });
+        if (health.running) return { started: true, baseUrl: health.baseUrl, version: health.version, pid };
+        continue;
+      }
+      if (!isEdge) {
+        const health = await checkProbeHealth({ host, port, timeoutMs: 800 });
+        if (health.running) return { started: true, baseUrl: health.baseUrl, version: health.version, pid: null };
+      }
+    }
+    throw new Error(
+      `systemd did not bring the probe up within the timeout. Check \`systemctl --user status agent-nexus-probe\` and ${getProbeLogPath()}.`
+    );
+  }
 
   const child = IS_WIN
     ? spawn(process.env.ComSpec || 'cmd.exe', ['/c', launcherPath], {
@@ -397,6 +457,11 @@ export async function startProbe(options = {}) {
   const deadline = Date.now() + (options.timeoutMs || 15000);
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 250));
+    if (isEdge) {
+      const pid = readProbePid();
+      if (pid && isProcessAlive(pid)) return { started: true, pid };
+      continue;
+    }
     const health = await checkProbeHealth({ host, port, timeoutMs: 800 });
     if (health.running) {
       return { started: true, baseUrl: health.baseUrl, version: health.version, pid: child.pid };
@@ -404,7 +469,7 @@ export async function startProbe(options = {}) {
   }
 
   throw new Error(
-    `The probe did not become healthy on port ${port} within the timeout. ` +
+    `The probe did not become healthy${isEdge ? '' : ` on port ${port}`} within the timeout. ` +
     `Check the log at ${getProbeLogPath()}.`
   );
 }
@@ -412,6 +477,7 @@ export async function startProbe(options = {}) {
 export async function stopProbe(options = {}) {
   const pid = readProbePid();
   const entry = readProbeEntry();
+  const isEdge = entry?.role === 'edge';
   const port = options.port || entry?.port || DEFAULT_PORT;
   const host = options.host || entry?.host || '127.0.0.1';
 
@@ -439,6 +505,7 @@ export async function stopProbe(options = {}) {
   }
 
   clearProbeState();
+  if (isEdge) return { stopped: true, pid, stillRunning: false };
   const health = await checkProbeHealth({ host, port, timeoutMs: 600 });
   return { stopped: !health.running, pid, stillRunning: health.running };
 }

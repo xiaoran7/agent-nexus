@@ -15,7 +15,9 @@ import {
   writeProbePid,
   writeProbeState,
   readProbeState,
-  clearProbeState
+  clearProbeState,
+  installProbe,
+  probeStatus
 } from '../src/probe/index.js';
 
 // 探针安装器会写开机自启项。用例全程重定向到临时目录，
@@ -26,10 +28,12 @@ function withTempProbeDir(t) {
   mkdirSync(startup, { recursive: true });
   const prev = {
     NEXUS_PROBE_DIR: process.env.NEXUS_PROBE_DIR,
-    NEXUS_STARTUP_DIR: process.env.NEXUS_STARTUP_DIR
+    NEXUS_STARTUP_DIR: process.env.NEXUS_STARTUP_DIR,
+    NEXUS_REMOTE_CONFIG_PATH: process.env.NEXUS_REMOTE_CONFIG_PATH
   };
   process.env.NEXUS_PROBE_DIR = dir;
   process.env.NEXUS_STARTUP_DIR = startup;
+  process.env.NEXUS_REMOTE_CONFIG_PATH = join(dir, 'remote.json');
   t.after(() => {
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k];
@@ -80,5 +84,53 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
     writeFileSync(statePath, '{ not json', 'utf8');
     assert.equal(readProbeState(), null);
     assert.equal(readProbePid(), null);
+  });
+
+  await t.test('edge 探针必须先绑定中心 Hub 才能安装', async () => {
+    await assert.rejects(
+      installProbe({ role: 'edge', start: false, nodePath: process.execPath }),
+      /nexus connect/
+    );
+    assert.equal(isProbeInstalled(), false);
+  });
+
+  await t.test('edge 探针安装后记录角色、节点名与 --edge 启动参数', async () => {
+    writeFileSync(
+      join(dir, 'remote.json'),
+      JSON.stringify({ hubUrl: 'http://100.79.74.121:4300', host: '100.79.74.121', port: 4300, token: 'tok', nodeId: 'us-zenix' }),
+      'utf8'
+    );
+
+    const res = await installProbe({ role: 'edge', start: false, nodePath: process.execPath, cwd: dir });
+    assert.equal(res.entry.role, 'edge');
+    assert.equal(res.entry.nodeId, 'us-zenix');
+    assert.equal(res.entry.port, null);
+    assert.equal(res.entry.host, null);
+    assert.equal(isProbeInstalled(), true);
+
+    const launcher = readFileSync(getProbeLauncherPath(), 'utf8');
+    assert.match(launcher, /--edge/);
+    assert.match(launcher, /--node/);
+    assert.match(launcher, /us-zenix/);
+    assert.doesNotMatch(launcher, /--port/, 'edge 探针不应带端口参数');
+  });
+
+  await t.test('edge 探针状态按进程判活，并给出 Hub 地址', async () => {
+    writeProbePid(process.pid);
+    writeProbeState({ pid: process.pid, role: 'edge', nodeId: 'us-zenix', hubUrl: 'http://100.79.74.121:4300' });
+
+    const status = await probeStatus();
+    assert.equal(status.role, 'edge');
+    assert.equal(status.running, true);
+    assert.equal(status.pid, process.pid);
+    assert.equal(status.port, null);
+    assert.equal(status.baseUrl, null);
+    assert.equal(status.hubUrl, 'http://100.79.74.121:4300');
+
+    writeProbeState({ pid: 999999, role: 'edge', nodeId: 'us-zenix' });
+    const dead = await probeStatus();
+    assert.equal(dead.running, false);
+    assert.equal(dead.pid, null);
+    assert.equal(dead.stalePid, 999999);
   });
 });

@@ -95,6 +95,12 @@ function runDaemon({ managed }) {
   if (managed) redirectProbeOutput();
   const opts = managed ? parseDaemonArgs() : {};
 
+  // edge 探针：不监听端口、不建本地库，只把本机会话快照推给中心 Hub。
+  if (opts.edge) {
+    runEdgeProbe(opts);
+    return;
+  }
+
   import('./daemon/index.js')
     .then(({ startDaemon, stopDaemon }) =>
       startDaemon({ ...opts, probe: managed }).then((daemon) => {
@@ -146,8 +152,40 @@ function parseDaemonArgs() {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) opts.port = parseInt(args[++i], 10);
     else if (args[i] === '--host' && args[i + 1]) opts.host = args[++i];
+    else if (args[i] === '--edge') opts.edge = true;
+    else if ((args[i] === '--node' || args[i] === '--node-id') && args[i + 1]) opts.nodeId = args[++i];
   }
   return opts;
+}
+
+function runEdgeProbe(opts) {
+  const bridge = startEdgeBridge({ ...(opts.nodeId ? { nodeId: opts.nodeId } : {}) });
+  console.log(`[Agent-Nexus Probe] Edge mode: watching ${bridge.sessionsDir} as node [${bridge.endpoint.nodeId}] -> ${bridge.endpoint.baseUrl}`);
+  if (!bridge.endpoint.token) {
+    console.error('[Agent-Nexus Probe] No Hub token found. Run `nexus connect --hub <url> --token <tok> --node <name>` first.');
+    process.exit(1);
+  }
+
+  try {
+    writeProbePid(process.pid);
+    writeProbeState({
+      pid: process.pid,
+      role: 'edge',
+      nodeId: bridge.endpoint.nodeId,
+      hubUrl: bridge.endpoint.baseUrl,
+      startedAt: Date.now()
+    });
+  } catch {}
+
+  const shutdown = () => {
+    bridge.stop();
+    try {
+      clearProbeState();
+    } catch {}
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 function probeInstall() {
@@ -156,18 +194,26 @@ function probeInstall() {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) opts.port = parseInt(args[++i], 10);
     else if (args[i] === '--host' && args[i + 1]) opts.host = args[++i];
+    else if (args[i] === '--edge') opts.role = 'edge';
+    else if ((args[i] === '--node' || args[i] === '--node-id') && args[i + 1]) opts.nodeId = args[++i];
     else if (args[i] === '--no-start') opts.start = false;
   }
 
   installProbe(opts)
     .then((res) => {
-      console.log('[Agent-Nexus] Background probe installed.');
+      const edge = res.entry.role === 'edge';
+      console.log(`[Agent-Nexus] Background probe installed (${edge ? 'edge' : 'hub'} role).`);
       console.log(`  • Node runtime: ${res.node}`);
+      if (edge) console.log(`  • Edge node:    ${res.entry.nodeId}`);
       console.log(`  • Launcher:     ${res.launcherPath}`);
       console.log(`  • Auto-start:   ${res.autostartPath}`);
       console.log(`  • Log:          ${getProbeLogPath()}`);
       console.log(`  • Running now:  ${res.started ? 'yes' : 'no (starts on next login, or run `nexus probe:start`)'}`);
-      console.log('\n  The desktop app is a pure client now: open it any time, it attaches to this probe.');
+      if (edge) {
+        console.log('\n  Edge probe pushes this machine\'s sessions to the central Hub; it opens no port.');
+      } else {
+        console.log('\n  The desktop app is a pure client now: open it any time, it attaches to this probe.');
+      }
     })
     .catch((err) => {
       console.error(`\n[Agent-Nexus] Probe install failed:\n${err.message}\n`);
@@ -191,10 +237,11 @@ function probeUninstall() {
 function probeStart() {
   startProbe()
     .then((res) => {
+      const where = res.baseUrl || (res.pid ? `pid ${res.pid}` : '');
       if (res.alreadyRunning) {
-        console.log(`[Agent-Nexus] Probe already running at ${res.baseUrl}${res.version ? ` (v${res.version})` : ''}.`);
+        console.log(`[Agent-Nexus] Probe already running${where ? ` at ${where}` : ''}${res.version ? ` (v${res.version})` : ''}.`);
       } else {
-        console.log(`[Agent-Nexus] Probe started at ${res.baseUrl}${res.version ? ` (v${res.version})` : ''}.`);
+        console.log(`[Agent-Nexus] Probe started${where ? ` at ${where}` : ''}${res.version ? ` (v${res.version})` : ''}.`);
       }
     })
     .catch((err) => {
@@ -216,10 +263,13 @@ function probeStop() {
 
 async function probeReport() {
   const status = await probeStatus();
+  const edge = status.role === 'edge';
   console.log('\n[Agent-Nexus] Background probe status:');
+  console.log(`  Role:       ${status.role}`);
   console.log(`  Installed:  ${status.installed ? 'yes' : 'no'}`);
   console.log(`  Running:    ${status.running ? 'yes' : 'no'}`);
-  console.log(`  Endpoint:   ${status.baseUrl}`);
+  console.log(`  Endpoint:   ${edge ? (status.hubUrl ? `edge -> ${status.hubUrl}` : 'edge -> (no Hub bound)') : status.baseUrl}`);
+  if (edge) console.log(`  Edge node:  ${status.state?.nodeId ?? status.entry?.nodeId ?? '(unknown)'}`);
   console.log(`  PID:        ${status.pid ?? (status.stalePid ? `${status.stalePid} (stale)` : '(none)')}`);
   console.log(`  Version:    ${status.version ?? '(unknown)'}`);
   console.log(`  Auto-start: ${status.autostartPath}`);
@@ -420,12 +470,14 @@ function printHelp() {
   console.log(`
 Agent-Nexus CLI:
   nexus start                    前台启动中心 Hub daemon 与实时单面板
-  nexus probe                    以后台探针模式运行 daemon（无窗口、写日志与 pid 文件）
-  nexus probe:install [--port N] [--host H] [--no-start]
+  nexus probe [--edge --node <id>]
+                                 以后台探针模式运行（无窗口、写日志与 pid 文件）；
+                                 --edge 为边缘探针：不开端口、不建库，只推会话快照给中心 Hub
+  nexus probe:install [--port N] [--host H] [--edge --node <id>] [--no-start]
                                  安装开机自启的后台探针（Windows 用 VBS+cmd，Linux 用 systemd user）
   nexus probe:uninstall          移除探针、开机自启项并停止进程
   nexus probe:start | probe:stop 手动启停已安装的探针
-  nexus probe:status             查看探针安装/运行状态、端口、PID 与日志位置
+  nexus probe:status             查看探针角色、运行状态、端点、PID 与日志位置
   nexus connect --hub <url> --token <tok> [--node <name>]
                                  将远端工作区（如 us-zenix）绑定至中心 Hub 面板（免部署第二面板）
   nexus disconnect               解除远端 Hub 绑定，恢复本机默认回环
