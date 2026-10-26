@@ -1,6 +1,17 @@
 import { WebSocketServer } from 'ws';
 import { extractQueryToken, verifySecret } from './auth.js';
 
+// 一次推送只算一轮：cockpit 内部已经包含 dashboard 与 collab，
+// 过去这里先 getDashboardSnapshot 再 getUnifiedCockpit，把同一批 agent 查询、
+// 生命周期判定和拓扑计算全做两遍，然后把几乎相同的数据在同一个帧里发两遍。
+// 现在只算一轮，并把帧内重复的 dashboard/collab 剥掉：前端渲染路由图时会用
+// 同帧的 snapshot 补回 dashboard（见 app.js 的 init:state 分支），
+// 90 会话规模下单个帧因此少发约三分之一。
+function buildStatePayload(coordinator, projectId) {
+  const { dashboard, collab, ...cockpit } = coordinator.getUnifiedCockpit(projectId);
+  return { cockpit, snapshot: dashboard };
+}
+
 export function createWsServer(httpServer, eventBus, tokenStore, coordinator = null) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -48,8 +59,7 @@ export function createWsServer(httpServer, eventBus, tokenStore, coordinator = n
     if (coordinator) {
       try {
         const targetPid = initialProjectId || 'all';
-        const snapshot = coordinator.getDashboardSnapshot(targetPid);
-        const cockpit = coordinator.getUnifiedCockpit(targetPid);
+        const { cockpit, snapshot } = buildStatePayload(coordinator, targetPid);
         ws.send(JSON.stringify({
           type: 'init:state',
           data: {
@@ -73,8 +83,7 @@ export function createWsServer(httpServer, eventBus, tokenStore, coordinator = n
         } else if (msg.type === 'sync:request') {
           if (coordinator) {
             const pid = msg.project_id || 'all';
-            const snapshot = coordinator.getDashboardSnapshot(pid);
-            const cockpit = coordinator.getUnifiedCockpit(pid);
+            const { cockpit, snapshot } = buildStatePayload(coordinator, pid);
             ws.send(JSON.stringify({
               type: 'sync:response',
               data: { project_id: pid, snapshot, cockpit, timestamp: Date.now() }

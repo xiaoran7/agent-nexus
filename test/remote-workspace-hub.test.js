@@ -302,7 +302,25 @@ test('端到端 HTTP 汇聚：/api/agents/sync-remote、remote.json 零环境变
     })
   });
   const syncJson2 = await syncRes2.json();
-  assert.ok(syncJson2.departed.includes('claude-zenix-sess-alpha'), '已退出的远端会话应被识别为 departed');
+  // 边缘桥每 15 秒推一帧，单帧缺席必须给宽限：一次抖动就清掉远端文件锁会打断编辑。
+  // 真死由「宽限期过后仍缺席」认定。
+  assert.equal(syncJson2.departed.includes('claude-zenix-sess-alpha'), false, '单帧缺席不得立即收割远端会话');
+  assert.equal((await (await fetch(`${hubUrl}/api/dashboard?project_id=all`, { headers })).json()).activeClaims.length, 1,
+    '宽限期内远端会话的锁必须保留');
+
+  // 3.1 宽限期过后（模拟连续多帧缺席）仍不在快照里 = 真死，照常收割并释放锁。
+  daemon.coordinator.db.prepare('UPDATE agents SET liveness_verified_at = ? WHERE id = ?').run(Date.now() - 60000, 'claude-zenix-sess-alpha');
+  const syncRes3 = await fetch(`${hubUrl}/api/agents/sync-remote`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      host_id: 'us-zenix',
+      full_snapshot: true,
+      sessions: [{ pid: 88102, sessionId: 'zenix-sess-beta', name: '美西沙箱联调 B', cwd: '/root/Claudespace/Project/gate', status: 'busy', alive: true, verified: true }]
+    })
+  });
+  const syncJson3 = await syncRes3.json();
+  assert.ok(syncJson3.departed.includes('claude-zenix-sess-alpha'), '宽限期过后仍缺席的远端会话应被识别为 departed');
 
   const dashRes2 = await fetch(`${hubUrl}/api/dashboard?project_id=all`, { headers });
   const dash2 = await dashRes2.json();

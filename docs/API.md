@@ -4,7 +4,9 @@
 
 ## 认证
 
-`/api/*` 与 WebSocket 都需要令牌，只放行 `/health` 与面板 HTML 本身。
+`/api/*` 与 WebSocket 都需要令牌，只放行 `/health`、`/api/status` 与面板 HTML 本身。
+
+`/api/status` 是唯一公开的读接口，只返回计数、不含任何会话明细——桌面端托盘每 3 秒轮询它。看板与驾驶舱里有全部会话名、工作目录与文件锁，必须带令牌。
 
 令牌在 daemon 启动时签发、只打印一次、不落盘，重启即轮换。启动日志里那枚是 **operator 令牌**（read + write + mint），用它换绑定具体 agent 的令牌：
 
@@ -287,9 +289,23 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
         "description": "Granted lease for intent: ...",
         "created_at": 1774217000000
       }
+    ],
+    "waitQueue": [
+      {
+        "intent_id": "intent_9f2c1a0b",
+        "agent_id": "codex-sess_02",
+        "agent_name": "重排交互决策",
+        "summary": "重构 InteractionResolver 的候选决策逻辑",
+        "blocked_reason": "src/InteractionResolver.kt is locked by codex-sess_01",
+        "blocked_by_agent_id": "codex-sess_01"
+      }
     ]
   }
   ```
+
+- **`waitQueue`**：当前排队等锁的意图，按入队顺序。驾驶舱的「N 处冲突等待」与决策流水都读这一项。
+- **`GET /api/cockpit`**（同样可选 `?project_id=`）返回驾驶舱聚合：`metrics` / `summary` / `activeWorkers` / `topologySnapshot` / `lockContention` / `dashboard` / `collab`。其中 `lockContention` 把 `dashboard.activeClaims` 拆成两类：`activeClaims` 是文件/模块/符号锁，`resourceLocks` 是 `claim_type = 'resource'` 的命名锁（`tests`、`dev-server` 等），`waitQueue` 同上。一次 cockpit 请求只刷新一轮会话与租约，内层 dashboard/collab 复用同一轮结果。
+- **`GET /api/status`**：公开端点，只返回在席计数（`active_agents_count` / `working` / `waiting` / `idle` / `active_leases` / `waiting_intents`），供桌面托盘每 3 秒轮询。口径与 `getDashboardSnapshot` 一致，但不序列化任何会话明细。
 
 ---
 
@@ -297,6 +313,7 @@ CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成
 
 连接地址：`ws://127.0.0.1:4300`
 
+- `init:state`（连接建立即下发）与 `sync:response`（回应客户端 `sync:request`）：`data.snapshot` 是看板快照（与 `GET /api/dashboard` 同构），`data.cockpit` 是驾驶舱聚合。推送帧里 `cockpit` **不含** `dashboard` / `collab`——同帧的 `snapshot` 就是那份 dashboard，重复发等于把同一批会话在线上发两遍。需要完整结构时走 `GET /api/cockpit`。
 - `timeline`：时间线新增事件（Intent 声明、放行、冲突阻断、释放租约等）。
 - `agent:woken`：资源被释放后的主动唤醒信号（携带目标 `agent_id`、`intent_id` 与 `verified: true`）。`verified` 表示该等待者的 claim 在唤醒瞬间已复核无冲突，收到即可刷新工作区开工，不必再问一次。
 - `state:changed`：共享状态键值发生变动。

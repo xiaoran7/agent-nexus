@@ -8,7 +8,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://www.npmjs.com/package/@xiaoran7/agent-nexus)
 [![GitHub Release](https://img.shields.io/github/v/release/xiaoran7/agent-nexus.svg?style=flat-square&color=0284c7)](https://github.com/xiaoran7/agent-nexus/releases)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D24-10b981.svg?style=flat-square)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-285%20passed-10b981.svg?style=flat-square)](https://github.com/xiaoran7/agent-nexus)
+[![Tests](https://img.shields.io/badge/tests-324%20passed-10b981.svg?style=flat-square)](https://github.com/xiaoran7/agent-nexus)
 [![License: MIT](https://img.shields.io/github/license/xiaoran7/agent-nexus.svg?style=flat-square&color=64748b)](LICENSE)
 
 Agent-Nexus 专为解决多 Agent 并发写代码时的**文件互相覆盖、测试端口争抢、Git Worktree 跨工作树合并冲突**而设计。通过轻量全局 Hook 门禁、三级细粒度资源锁（File / Module / Symbol）与等待唤醒机制，实现**目标项目 0 改动、0 文件、0 污染**的静默防撞保护，并内置具备启发式错误归因与熔断冷却的弹性 AI 网关。
@@ -72,7 +72,7 @@ nexus probe:install
 # 日常运维
 nexus probe:status      # 安装状态、运行状态、端点、PID、版本与日志位置
 nexus probe:start       # 探针没跑时手动拉起
-nexus probe:stop        # 停掉探针（开机自启项保留）
+nexus probe:stop        # 停掉探针（开机自启项保留）；PID 文件失真时按端口反查
 nexus probe:uninstall   # 移除探针、自启项与启动器
 ```
 
@@ -144,7 +144,7 @@ NEXUS_ADMIN_TOKEN=<启动时打印的令牌> node src/cli.js token <agent-id>
 
 agent 令牌只能读自己的收件箱（读别人的 403），也不能签发令牌。身份以令牌为准，不采信请求体里的 `from`——那是调用方可控的字段，自称 `claude` 的陌生进程和真 Claude Code 无法区分。面板打开 `http://127.0.0.1:4300/?token=<你的令牌>`，令牌会存进 sessionStorage；WebSocket 令牌只能走查询参数，浏览器发不了自定义头。
 
-测试用 `node --test` 跑 `test/**/*.test.js`，共 306 个用例：`comprehensive.test.js` 覆盖协调判冲、路径分段边界、等待队列的可用性复核与宽窄重排、共享状态与 CAS、消息总线、MCP 工具分发、核心状态机闭环与模块锁门禁拦截，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、认证与令牌隔离、跨源策略、Hook 载荷解析、安装器和启动失败处理，`project.test.js` 覆盖多层目录的项目边界探测、Git Worktree 共同根识别与路径归一化，`project-scope.test.js` 覆盖多项目资源与状态隔离，`project-lead.test.js` 覆盖 Project Lead 进场避障排期与 MCP 联动，`notification.test.js` 覆盖主动释放通知与 SSE 实时事件通道，`memory.test.js` 覆盖项目长期工程记忆引擎，`broadcast.test.js` 覆盖总指挥广播与信箱直达，`llm-adapter.test.js` 覆盖大模型适配器（Anthropic、OpenAI 与多候选组网），`gateway-router.test.js` 覆盖 Magpie 启发式错误分类、熔断冷却与多策略路由，`resource-lock.test.js` 覆盖 crewmates 命名资源锁申领、排他互斥与跨工作树相对化路径碰撞，`probe.test.js` 覆盖探针路径解析、PID/状态文件与损坏文件容错、edge 角色安装与判活、Windows 自启 VBScript 合法性，`desktop-runner.test.js` 覆盖桌面端纯客户端边界（不含拉起探针的能力）与面板切换状态机（失败阈值、退避、防重复加载、探活失败时的进程兜底）。测试不证明宿主工具已接入。
+测试用 `node --test` 跑 `test/**/*.test.js`，共 324 个用例：`comprehensive.test.js` 覆盖协调判冲、路径分段边界、等待队列的可用性复核与宽窄重排、共享状态与 CAS、消息总线、MCP 工具分发、核心状态机闭环与模块锁门禁拦截，`runner.test.js` 覆盖完整协调链路，`transport.test.js` 起真实 HTTP/WS 栈跑端到端、输入校验、认证与令牌隔离、跨源策略、Hook 载荷解析、安装器和启动失败处理，`project.test.js` 覆盖多层目录的项目边界探测、Git Worktree 共同根识别与路径归一化，`project-scope.test.js` 覆盖多项目资源与状态隔离，`project-lead.test.js` 覆盖 Project Lead 进场避障排期与 MCP 联动，`notification.test.js` 覆盖主动释放通知与 SSE 实时事件通道，`memory.test.js` 覆盖项目长期工程记忆引擎，`broadcast.test.js` 覆盖总指挥广播与信箱直达，`llm-adapter.test.js` 覆盖大模型适配器（Anthropic、OpenAI 与多候选组网），`gateway-router.test.js` 覆盖 Magpie 启发式错误分类、熔断冷却与多策略路由，`resource-lock.test.js` 覆盖 crewmates 命名资源锁申领、排他互斥与跨工作树相对化路径碰撞，`probe.test.js` 覆盖探针路径解析、PID/状态文件与损坏文件容错、edge 角色安装与判活、Windows 自启 VBScript 合法性，`probe-orphan.test.js` 覆盖 PID 文件失真时按端口反查、端口被陌生进程占用、记录 PID 指向无关进程三种情形均不误杀，`probe-perf.test.js` 覆盖探针性能与收割安全（Hook 会话不被全量快照收割、单帧漏检不消耗宽限、远端会话先宽限后收割、SQL 语句缓存与快照查询合并），`desktop-runner.test.js` 覆盖桌面端纯客户端边界（不含拉起探针的能力）与面板切换状态机（失败阈值、退避、防重复加载、探活失败时的进程兜底）。测试不证明宿主工具已接入。
 
 daemon 只监听本机，跨源请求默认不放行（浏览器不理会目标地址是否本机，任何网站都能读写你的协调库）。确需跨源时用 `NEXUS_ALLOWED_ORIGINS` 列出来源，逗号分隔；该变量按请求读取，改完无需重启。令牌与跨源白名单是两道独立的闸：白名单管"哪个网页"，令牌管"哪个进程"。
 

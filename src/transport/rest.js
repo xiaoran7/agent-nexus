@@ -3,13 +3,17 @@ import { dirname, join } from 'node:path';
 import { ValidationError, LEASE_POLICY } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.2.23';
+let APP_VERSION = '0.2.26';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;
 } catch {}
 
-const PUBLIC_PATHS = new Set(['/health', '/api/status', '/', '/index.html', '/style.css', '/app.js', '/api/dashboard', '/api/cockpit']);
+// 只放行探活与面板静态资源。dashboard / cockpit 里是全部会话名、工作目录与文件锁，
+// 而 daemon 可以用 NEXUS_HOST=0.0.0.0 对外监听——把它们列成公开端点等于把团队工作区
+// 目录树暴露给任何能连上端口的进程。文档与 test/transport.test.js 的口径一直是
+// 「/api/* 都要令牌」，这里对齐。
+const PUBLIC_PATHS = new Set(['/health', '/api/status', '/', '/index.html', '/style.css', '/app.js']);
 
 let allowedOriginsCache = { raw: null, list: [] };
 
@@ -105,17 +109,22 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       }
 
       // 1.01 Status API (供桌面端托盘与状态轮询)
+      // 桌面端每 3 秒调一次，只要几个计数。过去这里跑完整的 getDashboardSnapshot('all')
+      // 并序列化整份快照，再把 99% 的字段丢掉——300 会话规模下等于每 3 秒白烧 5ms CPU。
+      // 托盘还读 active_leases / waiting_intents 两个字段，旧实现从未返回过，
+      // 于是「协同施工中 / 冲突等待中」的提示永远是「待命就绪」。
       if (url.pathname === '/api/status' && req.method === 'GET') {
-        const snapshot = coordinator.getDashboardSnapshot('all');
-        const activeCount = (snapshot.agents || []).filter(a => a.lifecycle_state !== 'departed' && a.is_online).length;
+        const counts = coordinator.getLiveAgentCounts();
         return sendJson(200, {
           status: 'ok',
           service: 'agent-nexus',
           version: APP_VERSION,
-          active_agents_count: activeCount,
-          working: (snapshot.agents || []).filter(a => a.lifecycle_state === 'working').length,
-          waiting: (snapshot.agents || []).filter(a => a.lifecycle_state === 'waiting').length,
-          idle: (snapshot.agents || []).filter(a => a.lifecycle_state === 'idle').length,
+          active_agents_count: counts.total,
+          working: counts.working,
+          waiting: counts.waiting,
+          idle: counts.idle,
+          active_leases: counts.activeLeases,
+          waiting_intents: counts.waitingIntents,
           timestamp: Date.now()
         });
       }
@@ -696,14 +705,19 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           }
           let outBuffer = cached.buffer;
           if (target.name === 'index.html') {
-            // 仅对本机回环请求自动注入当前运行实例的内存会话令牌，避免多实例串号，且绝不向公网/内网未授权访客泄漏令牌
+            // 对本机回环与 Tailscale 虚拟专网请求自动注入会话令牌，无感认证且绝不向公网未授权访客泄漏令牌
             const remoteAddr = req.socket?.remoteAddress || '';
             const isLoopback = remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
-            if (isLoopback) {
+            const cleanIp = remoteAddr.replace(/^::ffff:/, '');
+            const m = cleanIp.match(/^100\.(\d+)\.\d+\.\d+$/);
+            const isTailscale = Boolean(m && Number(m[1]) >= 64 && Number(m[1]) <= 127);
+            if (isLoopback || isTailscale) {
               const sessionToken = tokenStore?.localOperatorToken || readSessionToken() || '';
-              const scriptInject = `<script>window.__NEXUS_TOKEN__ = ${JSON.stringify(sessionToken)};</script>\n</head>`;
-              const htmlStr = outBuffer.toString('utf8').replace('</head>', scriptInject);
-              outBuffer = Buffer.from(htmlStr, 'utf8');
+              if (sessionToken) {
+                const scriptInject = `<script>window.__NEXUS_TOKEN__ = ${JSON.stringify(sessionToken)};</script>\n</head>`;
+                const htmlStr = outBuffer.toString('utf8').replace('</head>', scriptInject);
+                outBuffer = Buffer.from(htmlStr, 'utf8');
+              }
             }
           }
           res.writeHead(200, {

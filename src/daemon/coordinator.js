@@ -103,7 +103,6 @@ export function getClaudeSessionRegistry(customDir = null) {
           // 存活判定分两层：PID 探针会被 Windows 复用而误判幽灵在线；
           // 会话命名管道由该会话进程独占创建、进程退出即消失，且名称含随机串不会被复用，
           // 因此管道存在才是权威存活信号。
-          const pidAlive = isPidAlive(data.pid);
           let pipeAlive = false;
           if (data.messagingSocketPath) {
             try {
@@ -113,9 +112,13 @@ export function getClaudeSessionRegistry(customDir = null) {
             }
           }
           // 注册表声明了管道时以管道为准：PID 被系统复用给无关进程时管道早已消失，
-          // 此时 pidAlive 仍为 true，不能据此认定会话还活着（这正是幽灵在线的根因）。
+          // 此时 pidAlive 仍会报 true，不能据此认定会话还活着（这正是幽灵在线的根因）。
           // 没有管道字段的旧注册表退回 PID 探针。
           const hasPipe = Boolean(data.messagingSocketPath);
+          // 管道存在即已证明存活，这时再发 kill(pid, 0) 是每 3 秒一次的多余系统调用；
+          // 因此仅在管道不可用时才探测 PID，未探测时 pidAlive 为 null。
+          const pidAlive = hasPipe ? null : isPidAlive(data.pid);
+          const alive = hasPipe ? pipeAlive : pidAlive;
           sessions.push({
             pid: data.pid,
             sessionId: data.sessionId,
@@ -127,7 +130,7 @@ export function getClaudeSessionRegistry(customDir = null) {
             procStart: data.procStart || null,
             pidAlive,
             pipeAlive,
-            alive: hasPipe ? pipeAlive : pidAlive,
+            alive,
             verified: hasPipe && pipeAlive
           });
         }
@@ -179,6 +182,13 @@ export function isPidAlive(pid) {
 const CLAIM_TYPES = new Set(['file', 'module', 'symbol', 'resource']);
 
 const CLAIM_TARGET_RE = /^[^\s/\\][^\s]*$/;
+
+// 会话从注册表快照里消失后继续保留在席的宽限期。
+// Windows 命名管道的 existsSync 是瞬时读：实测每条管道每秒约 3.5% 的采样会漏检，
+// 单次失败曾直接回收租约并清空存活戳，面板随之每十几秒闪一次「重连在线」。
+// 本地每 3 秒刷新、远端桥 15 秒一帧，45 秒可容忍十几帧连续漏检；
+// 真正的死亡由「消失后 PID 探针同样失败」认定，不受宽限期影响。
+const SESSION_DISAPPEAR_GRACE_MS = 45000;
 
 function isPathAbsolute(p) {
   if (!p || typeof p !== 'string') return false;
@@ -384,6 +394,34 @@ export class CoordinatorEngine {
     return toComparablePath(filePath, baseDir, projectRoot);
   }
 
+  // node:sqlite 的 prepare 是 JIT 编译，热路径上每条 SQL 每次调用都重新编译
+  // 在 300 会话的库上占单次快照 ~10% 的自采样时间。这里按 SQL 文本缓存语句对象：
+  // 语句文本全是模块内常量，缓存键空间有界；测试可能关闭 db，故按 db 实例隔离。
+  _stmt(sql) {
+    if (this._stmtDb !== this.db) {
+      this._stmtDb = this.db;
+      this._stmtCache = new Map();
+    }
+    let stmt = this._stmtCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this._stmtCache.set(sql, stmt);
+    }
+    return stmt;
+  }
+
+  _run(sql, params = []) {
+    return this._stmt(sql).run(...params);
+  }
+
+  _get(sql, params = []) {
+    return this._stmt(sql).get(...params);
+  }
+
+  _all(sql, params = []) {
+    return this._stmt(sql).all(...params);
+  }
+
   pathsOverlap(a, b) {
     if (!a || !b) return false;
     if (a === b) return true;
@@ -484,7 +522,7 @@ export class CoordinatorEngine {
     const targetDir = customDir !== null && customDir !== undefined ? customDir : this.claudeSessionsDir;
     if (!targetDir) return { scanned: 0, added: [], updated: [] };
     const sessions = getClaudeSessionRegistry(targetDir);
-    return this._ingestSessionEntries(sessions, this.localNodeId, now, { isRemote: false, fullSnapshot: false });
+    return this._ingestSessionEntries(sessions, this.localNodeId, now, { fullSnapshot: true });
   }
 
   /**
@@ -512,36 +550,29 @@ export class CoordinatorEngine {
       }));
 
     return this._ingestSessionEntries(normalizedSessions, cleanHost, now, {
-      isRemote: !isSameNode(cleanHost, this.localNodeId),
       fullSnapshot: Boolean(fullSnapshot)
     });
   }
 
-  _ingestSessionEntries(sessions, hostId, now, { isRemote = false, fullSnapshot = false } = {}) {
+  _ingestSessionEntries(sessions, hostId, now, { fullSnapshot = false } = {}) {
     const cleanHost = normalizeNodeId(hostId || this.localNodeId);
+    const isRemote = !isSameNode(cleanHost, this.localNodeId);
     const added = [];
     const updated = [];
     const departed = [];
     const aliveAgentIds = new Set();
+    const seenAgentIds = new Set();
 
     for (const sess of sessions) {
       if (!sess.alive) {
-        // 远端明确报告某会话已死亡：立即回收租约并标记离席
-        const deadRow = this.db.prepare(`
-          SELECT * FROM agents
-          WHERE host_id = ? AND (session_id = ? OR id = ?)
-        `).get(cleanHost, sess.sessionId, `claude-${sess.sessionId}`);
-        if (deadRow && deadRow.status !== 'departed') {
-          this.releaseAgentLeases({
-            agentId: deadRow.id,
-            projectId: deadRow.project_id,
-            reason: 'process_exit',
-            scope: 'all'
-          });
-          this.db.prepare(`UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE id = ?`).run(deadRow.id);
-          this.eventBus?.emit?.('agent:status', { agent_id: deadRow.id, host_id: cleanHost, status: 'departed' });
-          departed.push(deadRow.id);
-        }
+        // 会话在，但本次存活探测没通过。单次漏检不能当死亡：管道/注册表读取是瞬时的，
+        // 一帧抖动就回收租约会打断正在编辑的会话。这里只跳过，但要记下「本帧见过」，
+        // 让下方收割把「漏检」和「从快照里彻底消失」区分开。
+        const seen = this._get(`
+          SELECT id FROM agents
+          WHERE host_id = ? AND (session_id = ? OR id = ? OR id = ?)
+        `, [cleanHost, sess.sessionId, sess.sessionId, `claude-${sess.sessionId}`]);
+        if (seen) seenAgentIds.add(seen.id);
         continue;
       }
 
@@ -565,6 +596,7 @@ export class CoordinatorEngine {
 
       if (agent) {
         aliveAgentIds.add(agent.id);
+        seenAgentIds.add(agent.id);
         const shouldUpdateName = cleanName && (isMechanicalAgentName(agent.name) || !agent.name);
         const targetName = shouldUpdateName ? cleanName : agent.name;
         // 远端上报或已验证存活时，将心跳刷新至 now（避免远端 idle 会话的静态文件 updatedAt 停留在过去导致误判超时）
@@ -630,6 +662,7 @@ export class CoordinatorEngine {
           ? `claude-${cleanHost}-${sess.sessionId}`
           : defaultId;
         aliveAgentIds.add(agentId);
+        seenAgentIds.add(agentId);
         const finalName = cleanName || 'Claude 助手';
         const initialStatus = sess.status === 'busy' ? 'running' : 'idle';
 
@@ -679,24 +712,33 @@ export class CoordinatorEngine {
       }
     }
 
-    // 若本次为某远端节点的全量注册表快照，则将该节点上已不在注册表中的旧 Claude 会话精准收割并释放持有的锁
-    if (isRemote && fullSnapshot) {
-      const existingRemoteClaude = this.db.prepare(`
-        SELECT id, project_id FROM agents
+    // 收割已离席的会话。只处理「注册表追踪过的会话」——即至少被一次管道/PID 验证确认过
+    // （liveness_verified_at 非空）。经全局 Hook 注册的终端会话从不出现在 ~/.claude/sessions 里，
+    // 它的缺席不能作为死亡证据；那类会话交给 reapStaleIntentsAndAgents 按心跳超时收割。
+    // 其余会话以「连续消失」为准：本地 3 秒刷新、远端桥 15 秒一帧，
+    // 45 秒宽限可容忍十几帧漏检；本帧还在、只是没验活的会话同样算「见过」，不消耗宽限。
+    if (fullSnapshot) {
+      const existingRows = this.db.prepare(`
+        SELECT id, project_id, pid, liveness_verified_at FROM agents
         WHERE host_id = ? AND provider = 'claude' AND status != 'departed'
       `).all(cleanHost);
-      for (const row of existingRemoteClaude) {
-        if (!aliveAgentIds.has(row.id)) {
-          this.releaseAgentLeases({
-            agentId: row.id,
-            projectId: row.project_id,
-            reason: 'process_exit',
-            scope: 'all'
-          });
-          this.db.prepare(`UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE id = ?`).run(row.id);
-          this.eventBus?.emit?.('agent:status', { agent_id: row.id, host_id: cleanHost, status: 'departed' });
-          departed.push(row.id);
-        }
+      for (const row of existingRows) {
+        if (aliveAgentIds.has(row.id)) continue;
+        if (row.liveness_verified_at == null) continue;
+        const lastSeen = seenAgentIds.has(row.id) ? now : row.liveness_verified_at;
+        if (now - lastSeen < SESSION_DISAPPEAR_GRACE_MS) continue;
+        const canProbePid = isSameNode(cleanHost, this.localNodeId) && row.pid > 0;
+        if (canProbePid && isPidAlive(row.pid)) continue;
+
+        this.releaseAgentLeases({
+          agentId: row.id,
+          projectId: row.project_id,
+          reason: 'process_exit',
+          scope: 'all'
+        });
+        this.db.prepare(`UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE id = ?`).run(row.id);
+        this.eventBus?.emit?.('agent:status', { agent_id: row.id, host_id: cleanHost, status: 'departed' });
+        departed.push(row.id);
       }
     }
 
@@ -1236,7 +1278,11 @@ export class CoordinatorEngine {
       this.logActivity(agentId, 'lease:released', lease.id, `Auto-released lease upon ${reason} for intent ${lease.intent_id}`, finalProjectId);
     }
 
-    this._syncAgentRunningStatus(agentId, finalProjectId, now);
+    // 进程已退出时由调用方负责落 departed：此处若再按「无租约 → idle」回写，
+    // 会把离席行改回在线档并刷新心跳。
+    if (reason !== 'process_exit') {
+      this._syncAgentRunningStatus(agentId, finalProjectId, now);
+    }
 
     this.eventBus.emit('resource:freed', {
       project_id: finalProjectId,
@@ -1309,6 +1355,11 @@ export class CoordinatorEngine {
 
   // 内部辅助方法：依据剩余活跃租约准确同步 Agent 运行状态
   _syncAgentRunningStatus(agentId, projectId, now) {
+    // 已离席的行不在「租约 → 状态」的管辖范围：回收死亡进程的租约时若把它刷成 idle，
+    // 不仅状态自相矛盾，updateAgentStatus 还会把 last_heartbeat 推到现在，
+    // 面板上永远看不出这条会话是什么时候掉的线。
+    const current = this.db.prepare('SELECT status FROM agents WHERE id = ?').get(agentId);
+    if (!current || current.status === 'departed') return;
     const active = this.db.prepare(`
       SELECT count(*) as count FROM leases WHERE agent_id = ? AND project_id = ? AND expires_at > ?
     `).get(agentId, projectId, now);
@@ -1428,12 +1479,14 @@ export class CoordinatorEngine {
     if (expired.length === 0) return;
 
     const affectedProjects = new Set();
-    const affectedAgents = new Set();
+    // 用 Map 而不是 Set：Set 存对象永远去不了重，同一个 agent 持有多份过期租约时
+    // 会重复查库并重复 emit agent:status。键为 agentId|projectId。
+    const affectedAgents = new Map();
 
     for (const l of expired) {
       const pid = l.project_id || 'default';
       affectedProjects.add(pid);
-      affectedAgents.add({ agentId: l.agent_id, projectId: pid });
+      affectedAgents.set(`${l.agent_id}|${pid}`, { agentId: l.agent_id, projectId: pid });
 
       // 提取释放的 claims
       const releasedClaims = this.db.prepare(`
@@ -1455,7 +1508,7 @@ export class CoordinatorEngine {
     }
 
     // 同步涉及到的 Agent 状态
-    for (const { agentId, projectId } of affectedAgents) {
+    for (const { agentId, projectId } of affectedAgents.values()) {
       this._syncAgentRunningStatus(agentId, projectId, now);
     }
 
@@ -1511,8 +1564,10 @@ export class CoordinatorEngine {
           scope: 'all'
         });
 
-        // 标记 agent 状态为 departed（必须在 releaseAgentLeases 之后，避免被 _syncAgentRunningStatus 覆盖为 idle）
-        this.updateAgentStatus(holder.id, 'departed');
+        // 标记 agent 状态为 departed（必须在 releaseAgentLeases 之后，避免被 _syncAgentRunningStatus 覆盖为 idle）。
+        // 这里不能走 updateAgentStatus：它顺手把 last_heartbeat 刷成 now，
+        // 离席行的「最后在线时间」会被永久推到现在，面板上看不出何时掉的线。
+        this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(holder.id);
 
         this.logActivity(
           holder.id,
@@ -1934,75 +1989,106 @@ export class CoordinatorEngine {
     this.expireLeases();
   }
 
+  /**
+   * 轻量在席计数：桌面托盘每 3 秒轮询一次 /api/status，只要几个数字。
+   * 走窄列查询 + 与快照完全相同的生命周期判定，避免为几个计数序列化整份看板。
+   */
+  getLiveAgentCounts(now = Date.now()) {
+    // blocked_reason 在 intents 表上，agents 表没有这一列；快照里是子查询别名，
+    // 这里必须同样取子查询，否则生命周期判定会少一个 waiting 依据。
+    const rows = this._all(`
+      SELECT a.status, a.host_id, a.pid, a.last_heartbeat, a.liveness_verified_at, a.last_tool,
+             (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) AS active_leases_count,
+             (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted','running','waiting') ORDER BY i.created_at DESC LIMIT 1) AS current_intent_status,
+             (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) AS blocked_reason
+      FROM agents a
+      WHERE a.status != 'departed'
+    `, [now]);
+
+    const counts = { total: 0, working: 0, waiting: 0, idle: 0 };
+    for (const row of rows) {
+      const { lifecycleState, isOnline } = computeAgentLifecycleState(row, now, this.localNodeId);
+      if (!isOnline) continue;
+      counts.total++;
+      if (lifecycleState === 'working') counts.working++;
+      else if (lifecycleState === 'waiting') counts.waiting++;
+      else counts.idle++;
+    }
+    counts.activeLeases = this._get('SELECT count(*) AS n FROM leases WHERE expires_at > ?', [now]).n;
+    counts.waitingIntents = this._get("SELECT count(*) AS n FROM intents WHERE status = 'waiting'").n;
+    return counts;
+  }
+
   getDashboardSnapshot(projectId = null, options = {}) {
     const now = Date.now();
     if (!options.skipRefresh) this._refreshTick(now);
     this.housekeeping(now);
 
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
+    // 默认只序列化在席会话。已离席的历史行占库存绝大多数（实测 301 行里 292 行），
+    // 先查出来再逐行算生命周期、再过滤掉，纯属把 CPU 花在要被丢弃的行上。
+    // 判据可以安全下推为 status 判定：会话复活发生在同一轮刷新的 syncClaudeSessions 里，
+    // 查询跑之前库里的 status 已经改回在线档位。
+    const includeDeparted = options.includeDeparted === true;
+    const liveFilter = includeDeparted ? '' : "WHERE a.status != 'departed'";
+
+    const agentsSql = `
+      SELECT a.*,
+        (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
+        (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent,
+        (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
+        (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
+        (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
+      FROM agents a
+      ${liveFilter}`;
 
     let rawAgents;
     let rawActiveClaims;
     let rawTimeline;
 
     if (finalProjectId) {
-      rawAgents = this.db.prepare(`
-        SELECT a.*,
-          (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
-          (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent,
-          (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
-          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
-          (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
-        FROM agents a
-        WHERE a.project_id = ?
-      `).all(now, finalProjectId);
+      rawAgents = this._all(
+        `${agentsSql} ${liveFilter ? 'AND' : 'WHERE'} a.project_id = ?`,
+        [now, finalProjectId]
+      );
 
-      rawActiveClaims = this.db.prepare(`
+      rawActiveClaims = this._all(`
         SELECT c.*, a.name as agent_name, l.expires_at
         FROM claims c
         JOIN leases l ON c.intent_id = l.intent_id
         JOIN agents a ON c.agent_id = a.id
         WHERE l.expires_at > ? AND c.project_id = ?
-      `).all(now, finalProjectId);
+      `, [now, finalProjectId]);
 
-      rawTimeline = this.db.prepare(`
+      rawTimeline = this._all(`
         SELECT al.*, a.name as agent_name, a.provider
         FROM activity_log al
         LEFT JOIN agents a ON al.agent_id = a.id
         WHERE al.project_id = ?
         ORDER BY al.id DESC LIMIT 50
-      `).all(finalProjectId);
+      `, [finalProjectId]);
     } else {
-      rawAgents = this.db.prepare(`
-        SELECT a.*,
-          (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
-          (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent,
-          (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
-          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
-          (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
-        FROM agents a
-      `).all(now);
+      rawAgents = this._all(agentsSql, [now]);
 
-      rawActiveClaims = this.db.prepare(`
+      rawActiveClaims = this._all(`
         SELECT c.*, a.name as agent_name, l.expires_at
         FROM claims c
         JOIN leases l ON c.intent_id = l.intent_id
         JOIN agents a ON c.agent_id = a.id
         WHERE l.expires_at > ?
-      `).all(now);
+      `, [now]);
 
-      rawTimeline = this.db.prepare(`
+      rawTimeline = this._all(`
         SELECT al.*, a.name as agent_name, a.provider
         FROM activity_log al
         LEFT JOIN agents a ON al.agent_id = a.id
         ORDER BY al.id DESC LIMIT 50
-      `).all();
+      `);
     }
 
-    // 默认不返回已离席会话：历史库里它们占绝大多数（实测 194 行里 184 行 departed），
+    // 默认不返回已离席会话：历史库里它们占绝大多数（实测 301 行里 292 行 departed），
     // 全量序列化会把每次快照膨胀到 100KB 以上，而界面本来就会把它们过滤掉。
     // 需要完整历史时显式传 includeDeparted: true。
-    const includeDeparted = options.includeDeparted === true;
     const agents = rawAgents.map((a) => {
       const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now, this.localNodeId);
       const cleanHost = normalizeNodeId(a.host_id || this.localNodeId);
@@ -2036,11 +2122,35 @@ export class CoordinatorEngine {
       target: cleanUtf8String(t.target, '')
     }));
 
+    // 等待队列：驾驶舱的「N 处冲突等待」与决策流水都读这里。
+    // 过去函数从不返回该字段，调用方 `dashboard.waitQueue || []` 永远拿到空数组。
+    const waitQueueSql = `
+      SELECT w.intent_id, w.agent_id, w.created_at, i.summary, i.blocked_reason,
+             i.blocked_by_agent_id, a.name AS agent_name
+      FROM wait_queue w
+      JOIN intents i ON w.intent_id = i.id
+      JOIN agents a ON w.agent_id = a.id
+      ${finalProjectId ? 'WHERE w.project_id = ?' : ''}
+      ORDER BY w.id ASC
+    `;
+    const rawWaitQueue = this._all(waitQueueSql, finalProjectId ? [finalProjectId] : []);
+    const waitQueue = rawWaitQueue.map((w) => {
+      const safeName = sanitizeAgentName(w.agent_name, w.agent_id, null, null, w.summary);
+      return {
+        ...w,
+        agent_name: safeName,
+        summary: cleanUtf8String(w.summary, ''),
+        blocked_reason: cleanUtf8String(w.blocked_reason, null),
+        target: cleanUtf8String(w.summary, '')
+      };
+    });
+
     return {
       localNodeId: this.localNodeId,
       agents,
       activeClaims,
-      timeline
+      timeline,
+      waitQueue
     };
   }
 
@@ -2051,21 +2161,32 @@ export class CoordinatorEngine {
 
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
 
-    let agentsQuery = `
-      SELECT a.*,
-        (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
-        (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_summary,
-        (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
-        (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
-        (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
-      FROM agents a
-    `;
-    const params = [now];
-    if (finalProjectId) {
-      agentsQuery += ' WHERE a.project_id = ?';
-      params.push(finalProjectId);
+    // 组合视图（cockpit）已经把在席 agent 连同生命周期算过一遍，这里直接复用，
+    // 免得同一次请求里把 5 个相关子查询和生命周期判定跑两遍。
+    // 复用行时只统计这批在席会话；离席数由一次 COUNT 补齐。
+    const reuseAgents = Array.isArray(options.precomputedAgents) ? options.precomputedAgents : null;
+
+    let rawAgents;
+    if (reuseAgents) {
+      rawAgents = reuseAgents;
+    } else {
+      let agentsQuery = `
+        SELECT a.*,
+          (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count,
+          (SELECT i.summary FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_summary,
+          (SELECT i.status FROM intents i WHERE i.agent_id = a.id AND i.status IN ('granted', 'running', 'waiting') ORDER BY i.created_at DESC LIMIT 1) as current_intent_status,
+          (SELECT i.blocked_reason FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_reason,
+          (SELECT i.blocked_by_agent_id FROM intents i WHERE i.agent_id = a.id AND i.status = 'waiting' ORDER BY i.created_at DESC LIMIT 1) as blocked_by_agent_id
+        FROM agents a
+        WHERE a.status != 'departed'
+      `;
+      const params = [now];
+      if (finalProjectId) {
+        agentsQuery += ' AND a.project_id = ?';
+        params.push(finalProjectId);
+      }
+      rawAgents = this._all(agentsQuery, params);
     }
-    const rawAgents = this.db.prepare(agentsQuery).all(...params);
 
     let claimsQuery = `
       SELECT c.*, l.expires_at, l.id as lease_id, i.status as intent_status, i.summary as intent_summary, a.name as agent_name
@@ -2080,7 +2201,7 @@ export class CoordinatorEngine {
       claimsQuery += ' AND c.project_id = ?';
       claimParams.push(finalProjectId);
     }
-    const rawClaims = this.db.prepare(claimsQuery).all(...claimParams);
+    const rawClaims = this._all(claimsQuery, claimParams);
 
     const nodes = [];
     const edges = [];
@@ -2095,6 +2216,9 @@ export class CoordinatorEngine {
       const { lifecycleState, isOnline } = computeAgentLifecycleState(a, now, this.localNodeId);
       const cleanHost = normalizeNodeId(a.host_id || this.localNodeId);
       const isRemote = !isSameNode(cleanHost, this.localNodeId);
+      // 复用 cockpit 已清理过的行时，raw 行里带的是 dashboard 字段名
+      // （current_intent / sanitize 后的 name），两者都可能是被净洗过的展示值。
+      const rawIntentSummary = a.current_intent_summary !== undefined ? a.current_intent_summary : a.current_intent;
 
       if (lifecycleState === 'working') {
         workingCount++;
@@ -2111,8 +2235,8 @@ export class CoordinatorEngine {
         continue;
       }
 
-      const safeName = sanitizeAgentName(a.name, a.id, a.provider, a.session_id, a.current_intent_summary);
-      const safeIntent = cleanUtf8String(a.current_intent_summary, a.current_intent || (lifecycleState === 'idle' ? '待命中' : ''));
+      const safeName = sanitizeAgentName(a.name, a.id, a.provider, a.session_id, rawIntentSummary);
+      const safeIntent = cleanUtf8String(rawIntentSummary, a.current_intent || (lifecycleState === 'idle' ? '待命中' : ''));
       const safeTool = cleanUtf8String(a.last_tool, null);
       const safeAction = cleanUtf8String(a.last_action, safeTool);
       const safeTarget = cleanUtf8String(a.last_target, null);
@@ -2193,11 +2317,23 @@ export class CoordinatorEngine {
     const validNodeIds = new Set(nodes.map(n => n.id));
     const cleanEdges = edges.filter(e => validNodeIds.has(e.source) && validNodeIds.has(e.target));
 
+    // 复用 cockpit 传入的在席会话时，这批行已经不含 departed，
+    // total_sessions 仍要如实反映整库规模，用一次 COUNT 补齐。
+    let totalSessions = rawAgents.length;
+    if (reuseAgents) {
+      const sql = finalProjectId
+        ? 'SELECT count(*) AS n FROM agents WHERE project_id = ?'
+        : 'SELECT count(*) AS n FROM agents';
+      totalSessions = this._get(sql, finalProjectId ? [finalProjectId] : []).n;
+      // 复用行已过滤掉离席与离线会话，离席数由总数反推，否则这里是恒为 0 的假报。
+      departedCount = Math.max(0, totalSessions - (workingCount + waitingCount + idleCount));
+    }
+
     return {
       project_id: finalProjectId || 'all',
       timestamp: now,
       stats: {
-        total_sessions: rawAgents.length,
+        total_sessions: totalSessions,
         working_sessions: workingCount,
         waiting_sessions: waitingCount,
         idle_sessions: idleCount,
@@ -2215,11 +2351,19 @@ export class CoordinatorEngine {
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
     // 组合快照只刷新一次，内层两次调用共享同一轮结果。
     this._refreshTick(Date.now());
-    const dashboard = this.getDashboardSnapshot(finalProjectId, { skipRefresh: true });
-    const collab = this.getCollaborationGraph(finalProjectId, { skipRefresh: true });
+    // 拓扑图在下面同时作为 topologySnapshot 与 topology 返回，算一次即可——
+    // 两次调用在 1500 节点规模下要白算一遍 DAG 层级与模块归类。
     const topology = this.topologyService
       ? this.topologyService.getTopologyGraph(finalProjectId || 'default', { limit: 30 })
       : { nodes: [], edges: [], totalNodes: 0, modules: [] };
+
+    const dashboard = this.getDashboardSnapshot(finalProjectId, { skipRefresh: true });
+    // 图谱节点与 dashboard.agents 是同一批在席会话，把已算好的生命周期结果传下去，
+    // 避免同一请求里跑第二遍 5 个子查询 + 生命周期判定。
+    const collab = this.getCollaborationGraph(finalProjectId, {
+      skipRefresh: true,
+      precomputedAgents: dashboard.agents
+    });
 
     const onlineAgents = (dashboard.agents || []).filter(a => a.is_online);
     const workingSessions = onlineAgents.filter(a => a.lifecycle_state === 'working');
@@ -2229,23 +2373,23 @@ export class CoordinatorEngine {
     // 活跃施工与排队中工作者
     const activeWorkers = (collab.nodes || []).filter(n => n.lifecycle_state === 'working' || n.lifecycle_state === 'waiting');
 
-    // 冲突与排他资源锁
-    const activeClaims = dashboard.activeClaims || [];
-    const resourceLocks = collab.exclusiveLocks || [];
+    // 冲突与排他资源锁：命名锁就是 claim_type='resource' 的声明，过去这里读
+    // collab.exclusiveLocks（从未存在过），导致「排他命令与环境锁」永远为空。
+    // 拆分后 dashboard 仍返回全量 claim，驾驶舱按类型分列，计数不重不漏。
+    const allClaims = dashboard.activeClaims || [];
+    const resourceLocks = allClaims.filter(c => c.claim_type === 'resource');
+    const activeClaims = allClaims.filter(c => c.claim_type !== 'resource');
+    // 等待队列过去从未被 dashboard 返回（dashboard.waitQueue 恒为 undefined），
+    // 界面上的「N 处冲突等待」因此永远是 0。现在由快照如实带出。
     const waitQueue = dashboard.waitQueue || [];
-
-    // 对话与广播
-    const dialogues = dashboard.recentDialogues || [];
-    const broadcasts = dashboard.recentBroadcasts || [];
 
     const metrics = {
       workingAgents: workingSessions.length,
       waitingAgents: waitingSessions.length,
       idleAgents: idleSessions.length,
       totalOnline: onlineAgents.length,
-      activeLocks: activeClaims.length + resourceLocks.length,
-      topologyNodes: topology.totalNodes || topology.nodes?.length || 0,
-      dialogueCount: dialogues.length + broadcasts.length
+      activeLocks: allClaims.length,
+      topologyNodes: topology.totalNodes || topology.nodes?.length || 0
     };
 
     return {
@@ -2259,19 +2403,16 @@ export class CoordinatorEngine {
         resourceLocks,
         waitQueue
       },
-      dialogues,
-      broadcasts,
       summary: {
         totalOnline: onlineAgents.length,
         workingCount: workingSessions.length,
         waitingCount: waitingSessions.length,
         idleCount: idleSessions.length,
-        activeLocksCount: activeClaims.length + resourceLocks.length,
+        activeLocksCount: allClaims.length,
         topologyNodesCount: topology.totalNodes || topology.nodes?.length || 0
       },
       dashboard,
-      collab,
-      topology
+      collab
     };
   }
 }

@@ -4,6 +4,164 @@
 
 ---
 
+## 2026-10-27 修复端口反查在 lsof 输出下失效 (Port Lookup Parse Fix v0.2.28)
+
+`probe:stop` 的端口兜底在 macOS / BSD 上等于没有：`lsof -t` 的裸 PID 一个都解析不出来。
+
+### 改了什么
+
+- **`findListeningPids` 按命令分别解析 (`src/probe/index.js`)**：
+  - 原实现让 `lsof -t` 与 `ss` 共用一条 `/(?:pid=|\s)(\d+)(?:,|\s|$)/g`。这条正则靠**前导空白**锚定，而 `lsof -t` 每行就是一个裸 PID（`46780\n`），行首没有空白 —— 单个监听者时反查结果为空，多个监听者时永远丢掉第一个；
+  - 拆成 `parseLsofPids`（`/^\s*(\d+)\s*$/gm`）与 `parseSsPids`（`/pid=(\d+)/g`）两个解析器，各自匹配自己的输出格式，并导出以便直接测；
+  - 影响面：Linux 上 `lsof` 通常没装、会回落到 `ss` 因而看不出来；**macOS 没有 `ss`，走的正是 `lsof` 这条路径**，端口兜底从未生效过。
+
+### 验证
+
+- **新增 `test/probe-orphan.test.js` 1 项**：lsof 单行/多行/空输出与 ss 单行/多行的解析断言；
+- **全量测试**：**325 项**通过（原 324 项）；
+- **未部署**：本机与美西机探针均未重启，本次改动在下次 `probe:start` 后生效。
+
+---
+
+## 2026-10-26 全面排查修复 UI 溢出、800x560 桌面伴侣布局与全矢量化图标 (UI Layout & Zero-Emoji Compliance v0.2.27)
+
+全面审查前端在不同视口（特别是桌面端默认 800x560 伴侣窗口）下的布局与文本截断表现，彻底解决仲裁中枢端点胶囊溢出、三栏走廊拥挤与 Emoji 渲染跨平台字形差异。
+
+### 改了什么
+
+- **中枢卡片双行光学对齐与防溢出保护 (`src/ui/index.html`, `src/ui/style.css`)**：
+  - 原中枢卡片宽限仅 290px，且将主标题 `Nexus Arbiter Core` 与长 IP 端口胶囊 (`100.72.34.104:4300`) 挤在同一水平行，导致右边界被强制撑破；
+  - 重构 `.hub-info` 为双行布局：首行独占标题，次行 `.hub-sub-row` 容纳胶囊与副标题；
+  - 胶囊增加 `max-width: 140px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; flex-shrink: 0;` 与原生 `title` 气泡提示；
+  - 卡片宽度弹性拓宽至 `max-width: min(340px, 100%)`，并全量设置 `box-sizing: border-box; min-width: 0;`。
+- **800x560 桌面伴侣态响应式适配 (`src/ui/style.css`)**：
+  - 新增 `@media (max-width: 900px)` 响应断点：隐去路由主标题次级英文 `(Session Routing & Resource Map)`，杜绝顶栏挤压换行；
+  - 三栏间距改用 `clamp(14px, 2.2vw, 32px)` 动态呼吸走廊，小窗口下收紧为 `clamp(10px, 1.8vw, 20px)`；
+  - 会话卡片 `.route-card-identity`、在席卡片 `.agent-name-group` 开启 `flex-wrap: wrap`，为机器标识、项目标签提供多项自适应排布；
+  - 目标卡片 `.target-card-meta` 与持有者标签 `.holder-name`、`.holder-mono` 增加截断截短保护 (`max-width: 130px`)。
+- **全站零 Emoji 规范化与矢量图标替代 (`src/ui/app.js`)**：
+  - 消除 Windows 11 与 Linux/macOS 下字形与色彩不一的 `🌐` Unicode Emoji；
+  - 统一采用极简 inline SVG 经纬球矢量图标，融入深色高对比度主题。
+- **双层令牌持久化与 401 拦截弹窗 (`src/ui/app.js`, `src/ui/style.css`)**：
+  - URL `?token=...` 同时回写 `sessionStorage` 与 `localStorage`，防止刷新后凭据丢失；
+  - 遇到 401 状态码时自动唤起高斯模糊认证弹窗，支持直接贴入 Operator Token 并实时重连。
+
+### 验证
+
+- **全量测试通过**：`npm test` 324/324 项测试通过；
+- **东京 Hub 热更新**：UI 产物已同步部署至东京 Hub `/opt/agent-nexus/src/ui/`，并重启服务平稳载入。
+
+---
+
+## 2026-10-26 修复会话收割误杀与探针误杀 (Session Reap & Probe Kill Safety v0.2.26)
+
+代码审查的 26 项发现里，先修最严重的四项：前三项都会让正在施工的会话掉锁，第四项会杀掉用户的无关进程。
+
+### 改了什么
+
+- **全量快照不再收割 Hook 会话 (`src/daemon/coordinator.js`)**：
+  - 收割条件原本是「在全量快照里缺席」，但 `~/.claude/sessions` 是**桌面端**维护的注册表，经全局 Hook 注册的终端会话从不写进去。它们每一次 tick 都「缺席」，于是刚拿到的租约在首个 3 秒刷新里就被清掉；
+  - 现在只有 `liveness_verified_at IS NOT NULL` 的行才走快照收割——即至少被一次管道/PID 验证确认过。Hook 会话改由 `reapStaleIntentsAndAgents` 按心跳超时收割。
+- **`seenAgentIds` 不再形同虚设 (`src/daemon/coordinator.js`)**：
+  - `seenAgentIds` 原本只在「存活」分支写入，与 `aliveAgentIds` 完全等价；而宽限逻辑是「本帧见过则不消耗宽限」。结果是单帧探测失败（Windows 管道 `existsSync` 实测约 3.5%/秒漏检）仍会立刻耗尽 45 秒宽限；
+  - `!sess.alive` 分支现在也记下匹配到的 agent id，漏检帧算「见过」，宽限从最后一次真正验活起算。
+- **远端会话同样享有 45 秒宽限 (`src/daemon/coordinator.js`)**：
+  - 收割路径原本用 `isRemote && fullSnapshot` 限定为远端专属、且无宽限，边缘桥 15 秒才推一帧，一次网络抖动或单帧漏检就清掉远端文件锁；
+  - 去掉 `isRemote` 限定，所有节点统一走 `SESSION_DISAPPEAR_GRACE_MS`。真死由「宽限期内每一帧都缺席」认定，本地会话仍额外要求 PID 探针同时失败。
+- **按记录 PID 杀进程前必须自证 (`src/probe/index.js`)**：
+  - PID 文件是不可信输入：探针被强杀或从旧版本升级后，文件会指向早已消失的 PID，Windows 又把这个号复用给无关进程。过去只有端口反查结果要过 `isNexusProbeCommand`，记录 PID 直接进待杀列表，会对着用户的编辑器发 `SIGTERM`；
+  - `isNexusProbeCommand` 改为三态：`true` 确认是探针、`false` 确认不是、`null` 读不到命令行。记录 PID 只要不是 `false` 就放行（edge 探针没有端口兜底，一律拒绝就再也停不掉），端口反查结果仍必须为 `true`；
+  - 新增 `readProcessCmdline`：POSIX 优先读 `/proc/<pid>/cmdline`，读不到退回 `ps -p <pid> -o args=`——macOS 没有 procfs，旧实现会让 edge 探针永远停不掉。
+
+### 验证
+
+- **全量测试 324 项通过**（原 320 项，新增 4 项回归）：
+  - `test/probe-perf.test.js` 3 项：Hook 会话不被全量快照收割、单帧漏检不消耗宽限、远端会话单帧缺席保留锁而宽限期后照常收割；
+  - `test/probe-orphan.test.js` 1 项：PID 文件指向无关进程时不得按文件误杀；
+  - `test/remote-workspace-hub.test.js` 的端到端用例改为「先宽限、后收割」两步断言，不再断言单帧立即离席。
+- **未部署**：本机探针仍运行 v0.2.25，需重启后才加载本次修复。
+
+---
+
+## 2026-10-26 修复探针启停：PID 文件失真时按端口兜底 (Probe Lifecycle Recovery v0.2.25)
+
+### 改了什么
+
+- **PID 文件失真不再让 `probe:stop` 空转 (`src/probe/index.js`)**：
+  - 探针只在「顺利启动」时写 PID 文件；被强杀、崩溃或从旧版本升级时，文件会指向早已消失的 PID。真机上就出现过：`probe.pid` 指向 33108，实际监听 4300 的是另一个孤儿进程，`probe:stop` 只认文件 → 什么都没停，还打印「still shutting down」并以退出码 0 收场；
+  - 新增 `findListeningPids(port)` 兜底：Windows 走 `netstat -ano -p TCP`，POSIX 依次尝试 `lsof` / `ss`。PID 文件里的进程已不在、而端口仍被占用时，按端口反查真实监听进程；
+  - **只杀自证过的进程**：`isNexusProbeCommand(pid)` 读取命令行，必须匹配「`cli.js` + 完整 `probe` 子命令」才动手。端口被别的服务占用时绝不误杀，结果如实报告为「未停止」并给出排查命令。
+- **命令行自证的正则修正 (`src/probe/index.js`)**：
+  - 真机的命令行每个参数都带引号（`"…\cli.js" "probe" "--port" "4300"`），早期正则假设 `probe` 前是裸空格，**一个都识别不出来**；而当时的测试用无引号形态，把这个问题掩盖了；
+  - 改为 `cli\.js(?=["'\s])[\s\S]*?(?<![\w.:-])probe(?=["'\s]|$)`：既认引号形态，也不会把 `probe:install` / `probe:status` 误判成探针进程。
+- **`probe:stop` 如实报告结果 (`src/cli.js`)**：
+  - 过去无论成功与否都打印「still shutting down」且退出码 0，把失败伪装成「正在关闭」；
+  - 现在成功报 stopped（按端口兜底时注明），失败打印到 stderr 并置退出码 1。
+- **`probe:status` 报真实 PID (`src/probe/index.js`, `src/cli.js`)**：
+  - 端口在监听、但 PID 文件里的进程已经不在时，按端口反查真实进程并标注「按端口 N 反查」，不再把死 PID 标成 `stale` 让人以为探针没起来。
+- **进程退出兜底清理状态 (`src/cli.js`)**：
+  - 新增 `process.on('exit')` 钩子，只清自己写的那份状态（`state.pid === process.pid`），避免旧进程的退出钩子误删新探针的文件。
+
+### 验证
+
+- **真机复现并修复**：先把 `probe.pid` / `probe.json` 改写成不存在的 999999，探针实际在 46780 监听 4300。修复前 `probe:stop` 停不掉、`probe:status` 报 `999999 (stale)`；修复后 status 报 **`46780 (按端口 4300 反查)`**，stop 成功结束该进程并释放端口，随后 `probe:start` 正常拉起（PID 19144）。
+- **正常路径不受影响**：PID 文件正确时再次 `probe:stop` → 正常停止、端口释放、状态文件干净清除；再 `probe:start` 正常。
+- **全量测试**：**320 项**通过。新增 `test/probe-orphan.test.js` 3 项：PID 失真时按端口反查仍能停掉；status 报出端口上的真实 PID；端口被陌生进程占用时不得误杀。
+
+---
+
+## 2026-10-26 探针性能全面优化与代码审查 (Probe Performance & Review v0.2.24)
+
+探针本体是 daemon（`nexus probe` → `runDaemon({managed:true})` → `CoordinatorEngine`），`src/probe/index.js` 只是安装器与生命周期管理。本轮审查覆盖 daemon 的快照链路、租约清理、会话在席判定与传输层。
+
+### 改了什么
+
+- **修复 `expireLeases` 去重失效 (`src/daemon/coordinator.js`)**：
+  - `affectedAgents` 原本是 `Set<对象>`，每次 `add` 都是新对象字面量，集合永远去不了重。同一个 Agent 持有多份过期租约时，会重复查库、重复 emit `agent:status`；
+  - 改为以 `agentId|projectId` 为键的 `Map`，每个 Agent 每轮只同步一次状态。
+- **管道已证明存活时不再发 PID 探针 (`src/daemon/coordinator.js`)**：
+  - `getClaudeSessionRegistry` 每 3 秒遍历一遍 `~/.claude/sessions/*.json`。声明了 `messagingSocketPath` 的条目，管道存在本身就是权威存活信号，此时再发一次 `process.kill(pid, 0)` 是纯多余的系统调用；
+  - 只有管道不可用（或旧注册表没有管道字段）时才退回 PID 探测，未探测时 `pidAlive` 为 `null`（与 `verified` 区分“没探”和“探了不在”）。
+- **SQL 语句缓存 (`src/daemon/coordinator.js`)**：
+  - `node:sqlite` 的 `prepare` 是 JIT 编译。过去 88 处 `this.db.prepare(...)` 在每次调用时都重新编译，在 300 会话库上占单次快照约 **10%** 的自采样时间；
+  - 新增 `_stmt/_run/_get/_all`，按 SQL 文本缓存语句对象；缓存按 db 实例隔离，测试关闭数据库后自动失效。
+- **在席过滤下推到 SQL (`getDashboardSnapshot`)**：
+  - 历史离席行是库存主体（实测 301 行里 292 行）。过去先全查出来、逐行算生命周期、再把这些行丢掉；
+  - 改为 `WHERE a.status != 'departed'`。会话复活只发生在 `syncClaudeSessions` 里，而同一次刷新中它已经把状态改回在线档位，因此 `status` 判定安全。
+- **驾驶舱不再重复算两遍 (`getUnifiedCockpit`)**：
+  - 拓扑只算一次（同时用作 `topologySnapshot`），不再在 payload 里返回两份（过去 `topology` 与 `topologySnapshot` 各占一份，1500 节点规模下白序列化一遍）；
+  - dashboard 与 collab 共用同一批 agent 行（`precomputedAgents`），不再各自跑一遍 5 个相关子查询与生命周期判定；collab 的 `total_sessions` 改由一次 COUNT 补齐，`departed_sessions` 由总数反推（复用行时过去恒为 0 的假报）。
+- **驾驶舱两处长期空数据修复 (`src/daemon/coordinator.js`, `src/ui/app.js`)**：
+  - `getDashboardSnapshot` 从不返回 `waitQueue`，驾驶舱的「N 处冲突等待」与决策流水因此永远是 0。现在如实返回等待队列（含 `blocked_reason` 与 `blocked_by_agent_id`）；
+  - `resourceLocks` 读的是从未存在过的 `collab.exclusiveLocks`，「排他命令与环境锁」永远为空。现在把 `activeClaims` 按 `claim_type` 拆成文件锁与命名资源锁两类，计数不重不漏。
+- **`/api/status` 改为轻量计数 (`src/daemon/coordinator.js`, `src/transport/rest.js`)**：
+  - 桌面托盘每 3 秒轮询一次，过去这里跑完整 `getDashboardSnapshot('all')` 并序列化整份快照，再把 99% 的字段丢掉；
+  - 新增 `getLiveAgentCounts()`：窄列查询 + 与快照完全相同的生命周期判定，只返回计数。托盘读的 `active_leases` / `waiting_intents` 过去从未被返回过，所以「协同施工中 / 冲突等待中」的提示永远停在「待命就绪」——现在有真实数据。
+- **WebSocket 推送帧去重 (`src/transport/ws.js`, `src/ui/app.js`)**：
+  - `init:state` 与 `sync:response` 过去先 `getDashboardSnapshot` 再 `getUnifiedCockpit`（后者内部又算一遍 dashboard + collab + 拓扑），然后把几乎相同的数据在同一帧里发两遍；
+  - 现在只算一轮，帧内 `data.snapshot` 是唯一一份 dashboard，`data.cockpit` 不再内嵌 `dashboard`/`collab`。90 会话实测单帧 **160KB → 70KB**，前端渲染时用同帧 snapshot 补回。
+- **收紧公开端点 (`src/transport/rest.js`)**：
+  - `/api/dashboard` 与 `/api/cockpit` 原本在 `PUBLIC_PATHS` 里，匿名可读；这两份响应包含全部会话名、工作目录与文件锁，而 daemon 可以用 `NEXUS_HOST=0.0.0.0` 对外监听；
+  - 移出白名单，对齐 `docs/API.md` 与既有测试一直声称的「`/api/*` 都要令牌」。`/health`、`/api/status`（只含计数）与面板静态资源仍公开。
+- **修复会话「重连在线」抖动与租约误回收 (`src/daemon/coordinator.js`)**：
+  - 实测本机真实库：`activity_log` 最近 600 条里 **475 条是「Claude 会话重连在线」**，同一会话每 15–30 秒一次，伴随 `Auto-released lease upon process_exit`（42 次/40 分钟）——正在编辑的会话会被莫名其妙地清锁；
+  - 根因是 `getClaudeSessionRegistry` 的单次 `existsSync(命名管道)` 被当成权威死判决：实测每条管道每秒约 **3.5%** 的采样会瞬时漏检（30 秒内 265 次采样漏 3–15 次），3 秒刷新周期撞上漏检、下一周期又恢复，于是「离席→复活」反复上演；
+  - `_ingestSessionEntries` 原本对本地会话同样在探测失败的那一帧立即回收租约、清空 `liveness_verified_at`。现在探测失败只跳过该帧，收割统一交给「从注册表消失」路径；
+  - 新增 `SESSION_DISAPPEAR_GRACE_MS = 45000` 宽限期：本地会话从快照消失后，**且** PID 探针也失败，才判离席并回收租约。真死进程仍是一条不落（PID 探针即时生效），断掉管道但进程还在的会话也不会被误杀。远端桥的存活判定在远端完成、不会跨机抖动，缺席即离席，不加宽限。
+  - `reapDeadAgentLeases` 不再走 `updateAgentStatus('departed')`：后者会把 `last_heartbeat` 刷成当前时刻，离席行永远显示不出「何时掉的线」。
+  - `releaseAgentLeases` 在 `reason='process_exit'` 时不再回写「无租约 → idle」：过去这会把刚标好的 departed 又改回在线，并顺手刷新心跳。
+
+### 验证
+
+- **基准（合成库 300 会话 / 5 项目 / 3000 活动流水 / 200 拓扑节点）**：`getUnifiedCockpit(all)` 9–11ms → **4.7–5.3ms**，`getDashboardSnapshot` 2.1ms → **1.6–1.9ms**，`getCollaborationGraph` 2.1ms → **1.0–1.4ms**，`_refreshTick` 2.5ms → **2.2–2.5ms**（5 轮取中位）；
+- **基准（本机真实库副本，301 agents / 292 departed / 5338 intents）**：`getDashboardSnapshot` 0.82ms，`getUnifiedCockpit` 3.9ms，`getCollaborationGraph` 0.30ms；
+- **端到端（真实 HTTP + WS，90 在席会话）**：`/api/status` 182B，`/api/cockpit` 110KB / 7.9ms（无重复 topology、无 departed 行），WS `init:state` **70KB**、`sync:request` 往返 6.1ms；匿名访问 `/api/dashboard` 与 `/api/cockpit` 均返回 401；
+- **浏览器实测**（Playwright，独立演示 daemon + 隔离会话目录）：面板正确显示 4 个在席 / 1 处排队 / 2 项锁，历史离席行未渲染；驾驶舱「1 处冲突等待」与「排他命令与环境锁」均有真实数据，修复前两者恒为空；
+- **抖动修复前后（新探针 + 独立库，接本机真实 `~/.claude/sessions`）**：修复前同规模窗口每 10 分钟约 200+ 条 `agent:registered`、每分钟 1–5 次 `lease:released (process_exit)`；修复后 **70 秒内只有 6 条首次接入，0 条重连在线、0 次租约回收**，6 个会话的 `liveness_verified_at` 稳定在 1 秒内；
+- **全量测试**：**317 项**通过（新增 `test/probe-perf.test.js` 11 项：过期租约去重、在席过滤 SQL 下推、驾驶舱等待队列与锁分类、collab 复用时统计口径、轻量计数与快照口径一致、管道漏检宽限期、PID 回收不改写心跳、公开端点边界）。
+
+---
+
 ## 2026-10-26 修复面板闪断：主线程被快照刷新占满 (Panel Disconnect Fix v0.2.23)
 
 ### 改了什么

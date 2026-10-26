@@ -1068,9 +1068,11 @@ body.resizing-row {
 .agent-name-group {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  row-gap: 4px;
   min-width: 0;
   flex: 1;
+  flex-wrap: wrap;
 }
 
 .agent-status-badge {
@@ -1493,6 +1495,13 @@ body.resizing-row {
   white-space: nowrap;
 }
 
+.panel-title-en {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  letter-spacing: normal;
+}
+
 .routing-actions-wrap {
   display: flex;
   align-items: center;
@@ -1629,13 +1638,14 @@ body.resizing-row {
 /* 3 栏网格布局 (大幅拓宽中枢与目标走廊间距，留出优雅的贝塞尔曲线展开区) */
 .routing-lanes {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) minmax(250px, 0.95fr) minmax(270px, 1.25fr);
-  gap: 36px;
-  padding: 12px 18px;
+  grid-template-columns: minmax(190px, 1fr) minmax(260px, 1fr) minmax(230px, 1.2fr);
+  gap: clamp(14px, 2.2vw, 32px);
+  padding: 10px 14px;
   height: 100%;
   position: relative;
   z-index: 3;
   overflow: hidden;
+  min-width: 0;
 }
 
 .routing-lane {
@@ -1675,17 +1685,6 @@ body.resizing-row {
   background: var(--tab-active-bg);
   border: 1px solid var(--border-accent);
   padding: 1px 7px;
-  border-radius: var(--radius-pill);
-}
-
-.hub-status-pill {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--status-running);
-  background: var(--status-running-bg);
-  border: 1px solid var(--status-running-border);
-  padding: 2px 7px;
   border-radius: var(--radius-pill);
 }
 
@@ -1733,17 +1732,19 @@ body.resizing-row {
 
 .route-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 6px;
+  min-width: 0;
 }
 
 .route-card-identity {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   flex: 1;
+  flex-wrap: wrap;
 }
 
 .route-agent-name {
@@ -1754,6 +1755,8 @@ body.resizing-row {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 135px;
+  min-width: 0;
 }
 
 .route-provider-badge {
@@ -1765,6 +1768,7 @@ body.resizing-row {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .route-host-badge {
@@ -1776,9 +1780,11 @@ body.resizing-row {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
-  max-width: 110px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 [data-theme="dark"] .route-host-badge {
@@ -1796,9 +1802,11 @@ body.resizing-row {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   white-space: nowrap;
-  max-width: 120px;
+  max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .session-status-tag {
@@ -1871,6 +1879,13 @@ body.resizing-row {
   font-size: 10.5px;
   padding-top: 5px;
   border-top: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.route-action-tag {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .route-action-tag code {
@@ -1881,6 +1896,12 @@ body.resizing-row {
   border: 1px solid var(--border-accent);
   padding: 1px 5px;
   border-radius: 3px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .route-leases-tag {
@@ -1909,18 +1930,19 @@ body.resizing-row {
 
 .nexus-hub-card {
   width: 100%;
-  max-width: 290px;
+  max-width: min(340px, 100%);
   margin: 0 auto;
   background: var(--hub-card-bg);
   border: 1px solid var(--hub-card-border);
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: 13px 15px;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
   box-shadow: var(--hub-card-shadow);
   position: relative;
   transition: all 0.25s var(--ease-smooth);
+  box-sizing: border-box;
 }
 
 .nexus-hub-card:hover {
@@ -1932,6 +1954,7 @@ body.resizing-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .hub-avatar {
@@ -1951,7 +1974,7 @@ body.resizing-row {
 .hub-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   flex: 1;
 }
@@ -1961,19 +1984,29 @@ body.resizing-row {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  min-width: 0;
 }
 
 .hub-name {
   font-size: 13px;
   font-weight: 800;
   color: var(--text-title);
-  letter-spacing: 0.2px;
+  letter-spacing: 0.1px;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hub-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .hub-status-pill {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   color: var(--status-running);
   background: var(--status-running-bg);
@@ -1981,23 +2014,37 @@ body.resizing-row {
   padding: 1.5px 6px;
   border-radius: var(--radius-pill);
   white-space: nowrap;
+  max-width: 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  display: inline-block;
+  line-height: 1.4;
 }
 
 .hub-sub {
   font-size: 10px;
   color: var(--text-muted);
   line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
 }
 
 .hub-status-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 7px 9px;
   background: var(--hub-meter-bg);
   border: 1px solid var(--hub-meter-border);
   border-radius: var(--radius-sm);
   transition: all 0.2s var(--ease-smooth);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .hub-status-indicator {
@@ -2007,6 +2054,18 @@ body.resizing-row {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-title);
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#hub-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .hub-status-indicator .pulse-dot-sm {
@@ -2015,11 +2074,13 @@ body.resizing-row {
   border-radius: 50%;
   background: var(--status-running);
   box-shadow: 0 0 8px var(--status-running);
+  flex-shrink: 0;
 }
 
 .hub-status-indicator .pulse-dot-sm.dot-waiting {
   background: var(--status-waiting);
   box-shadow: 0 0 8px var(--status-waiting);
+  flex-shrink: 0;
 }
 
 .hub-card-footer {
@@ -2029,14 +2090,20 @@ body.resizing-row {
   gap: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border-subtle);
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .hub-mode-badge,
 .hub-hook-badge {
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 600;
-  padding: 2px 7px;
+  padding: 1.5px 6px;
   border-radius: var(--radius-pill);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .hub-mode-badge {
@@ -2204,12 +2271,17 @@ body.resizing-row {
   gap: 6px;
   font-size: 10px;
   color: var(--text-muted);
+  min-width: 0;
 }
 
 .holder-mono {
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--text-title);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .holder-name {
@@ -2217,6 +2289,10 @@ body.resizing-row {
   font-weight: 700;
   color: var(--text-title);
   letter-spacing: -0.1px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .decision-agent {
@@ -2604,6 +2680,18 @@ body.resizing-row {
   }
 }
 
+/* 中等窗口与桌面伴侣态 (<= 900px): 消除英文副标题拥挤，微调走廊间距 */
+@media (max-width: 900px) {
+  .panel-title-en {
+    display: none;
+  }
+
+  .routing-lanes {
+    gap: clamp(10px, 1.8vw, 20px);
+    padding: 8px 10px;
+  }
+}
+
 /* 平板与紧凑窗口 (<= 768px): 顶栏元素自适应折叠与紧凑胶囊 */
 @media (max-width: 768px) {
   .topbar {
@@ -2751,4 +2839,134 @@ body.resizing-row {
   .lead-ticker-btn {
     max-width: 120px;
   }
+}
+
+/* =============================================================================
+   Token Authentication Modal (认证提示与令牌配置弹窗)
+   ============================================================================= */
+.nexus-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: modalFadeIn 0.15s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.nexus-modal-card {
+  background: var(--card-bg-elevated);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-md);
+  box-shadow: 0 20px 48px -8px rgba(0, 0, 0, 0.65);
+  width: 100%;
+  max-width: 440px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text-main);
+}
+
+.nexus-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nexus-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-title);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nexus-modal-close {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.nexus-modal-close:hover {
+  background: var(--tab-hover-bg);
+  color: var(--text-title);
+}
+
+.nexus-modal-desc {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.nexus-modal-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.nexus-modal-input {
+  flex: 1;
+  background: var(--card-nested);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--text-title);
+  font-family: var(--font-mono);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.nexus-modal-input:focus {
+  border-color: var(--border-focus);
+}
+
+.nexus-modal-btn.primary {
+  background: var(--sky-primary);
+  color: #0b0f19;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.nexus-modal-btn.primary:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.nexus-modal-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.nexus-modal-hint code {
+  background: var(--card-nested);
+  border: 1px solid var(--border-subtle);
+  padding: 1.5px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  color: var(--sky-primary);
 }

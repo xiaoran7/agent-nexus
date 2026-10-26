@@ -374,18 +374,32 @@ export async function probeStatus({ port = DEFAULT_PORT, host = '127.0.0.1' } = 
   // hub 探针：HTTP 探活偶发超时（daemon 忙）不代表进程没了。进程活着且
   // 端口仍在监听就按在线报，避免状态面板显示"未运行"而实际服务正常。
   const portListening = isEdge ? false : await isPortListening(effectivePort);
-  const running = health.running || (alive && portListening);
+  // 端口在监听、但 PID 文件里的进程已经不在：说明这份文件是上次强杀留下的残影。
+  // 这时按端口反查真实监听进程，让 probe:status 报出真正在跑的那个 PID，
+  // 而不是把一个死 PID 标成 "stale" 让人以为探针没起来。
+  let effectivePid = pid;
+  let pidSource = pid ? 'state' : null;
+  if (!isEdge && !alive && portListening) {
+    const live = findListeningPids(effectivePort).filter((p) => isNexusProbeCommand(p) === true);
+    if (live.length > 0) {
+      effectivePid = live[0];
+      pidSource = 'port';
+    }
+  }
+  const effectiveAlive = effectivePid ? (pidSource === 'port' ? true : alive) : false;
+  const running = health.running || (effectiveAlive && portListening);
 
   return {
     installed: isProbeInstalled(),
     role: isEdge ? 'edge' : 'hub',
     running,
-    pid: alive ? pid : null,
+    pid: effectiveAlive ? effectivePid : null,
+    pidSource,
     stalePid: pid && !alive ? pid : null,
     port: isEdge ? null : effectivePort,
     host: isEdge ? null : effectiveHost,
     baseUrl: health.baseUrl,
-    version: health.version || (alive && state?.version) || null,
+    version: health.version || (effectiveAlive && state?.version) || null,
     hubUrl: isEdge ? (state?.hubUrl || null) : null,
     autostartPath: effectiveAutostartPath(),
     launcherPath: existsSync(getProbeLauncherPath()) ? getProbeLauncherPath() : null,
@@ -545,14 +559,124 @@ export async function startProbe(options = {}) {
   );
 }
 
+// 按端口反查监听进程。PID 文件只在探针「顺利启动」时写入，进程被强杀或从
+// 旧版本升级时文件会指向早已消失的 PID —— 此时 probe:stop 只认文件就会静默失手。
+// 这里只做反查，是否可杀由调用方用命令行核对，避免误杀占用同端口的其他服务。
+export function parseLsofPids(out) {
+  return [...out.matchAll(/^\s*(\d+)\s*$/gm)].map((m) => Number(m[1]));
+}
+
+export function parseSsPids(out) {
+  return [...out.matchAll(/pid=(\d+)/g)].map((m) => Number(m[1]));
+}
+
+function findListeningPids(port) {
+  const pids = new Set();
+  try {
+    if (IS_WIN) {
+      const out = execFileSync('netstat', ['-ano', '-p', 'TCP'], {
+        encoding: 'utf8', windowsHide: true, timeout: 5000
+      });
+      for (const line of out.split(/\r?\n/)) {
+        // 形如 `  TCP    0.0.0.0:4300    0.0.0.0:0    LISTENING    15928`
+        const m = line.match(/^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/i);
+        if (m && Number(m[1]) === Number(port)) pids.add(Number(m[2]));
+      }
+    } else {
+      // `lsof -t` 只吐裸 PID（每行一个），`ss` 吐 `users:(("node",pid=123,fd=22))`，
+      // 两种格式不能共用一条正则：`(?:pid=|\s)(\d+)` 靠前导空白锚定，而 lsof 的
+      // 首行 PID 前面什么都没有，正则匹配从第二个字符起才成立 —— 单个 PID 时直接
+      // 一个都取不到，多个时永远丢掉第一个。macOS 没有 ss，走的就是这条路径。
+      const commands = [
+        ['lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], parseLsofPids],
+        ['ss', ['-lptn', `sport = :${port}`], parseSsPids]
+      ];
+      for (const [cmd, args, extract] of commands) {
+        try {
+          const out = execFileSync(cmd, args, { encoding: 'utf8', timeout: 5000 });
+          for (const n of extract(out)) {
+            if (n > 0) pids.add(n);
+          }
+          if (pids.size > 0) break;
+        } catch {}
+      }
+    }
+  } catch {}
+  return [...pids];
+}
+
+// 命令行的自证：只结束我们自己拉起的探针，绝不对端口上的陌生进程动手。
+// 注意实际命令行里每个参数都是带引号的（`"...\\cli.js" "probe" "--port" "4300"`），
+// 匹配时不能假设 `probe` 前面是空格而未加引号，否则真机上一个都认不出来。
+// `probe` 必须是完整子命令：后面只能是引号/空白/结尾，`probe:install` 之类不算。
+const PROBE_CMDLINE_RE = /cli\.js(?=["'\s])[\s\S]*?(?<![\w.:-])probe(?=["'\s]|$)/i;
+
+// 返回 true=确认是我们的探针，false=确认不是，null=读不到命令行（平台不支持/无权限）。
+// 三态是必要的：macOS 没有 /proc，把「读不到」当成「不是」会让 edge 探针永远停不掉。
+function isNexusProbeCommand(pid) {
+  const cmdline = readProcessCmdline(pid);
+  if (cmdline === null) return null;
+  return PROBE_CMDLINE_RE.test(cmdline);
+}
+
+function readProcessCmdline(pid) {
+  try {
+    if (IS_WIN) {
+      const out = execFileSync('powershell', [
+        '-NoProfile', '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
+      ], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+      return out.trim() ? out : null;
+    }
+    try {
+      return readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+    } catch {}
+    // macOS 与无 procfs 的环境退回 ps；两个参数之间补空格，保持与真机命令行同构。
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf8', timeout: 5000 });
+    return out.trim() ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function killTree(pid) {
+  try {
+    if (IS_WIN) {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 8000 });
+    } else {
+      process.kill(pid, 'SIGTERM');
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function stopProbe(options = {}) {
-  const pid = readProbePid();
   const entry = readProbeEntry();
   const isEdge = entry?.role === 'edge';
   const port = options.port || entry?.port || DEFAULT_PORT;
   const host = options.host || entry?.host || '127.0.0.1';
+  const recordedPid = readProbePid();
 
-  if (pid && isProcessAlive(pid)) {
+  const targets = new Set();
+  // PID 文件是「不可信输入」：被强杀/升级后它会指向早已消失的 PID，
+  // 而 Windows 会把这个号复用给无关进程。这里同样要命令行自证，否则
+  // probe:stop 会对着用户编辑器发 SIGTERM。
+  // 读不到命令行（null）时仍认这份记录：edge 探针没有端口兜底，若因平台限制
+  // 一律拒绝，探针就再也停不掉了；而「明确不是探针」（false）必须拒绝。
+  if (recordedPid && isProcessAlive(recordedPid) && isNexusProbeCommand(recordedPid) !== false) {
+    targets.add(recordedPid);
+  }
+  // PID 文件失真时按端口兜底：这是旧版本强杀升级后 probe:stop 静默失手的根因。
+  if (!isEdge) {
+    for (const pid of findListeningPids(port)) {
+      if (isNexusProbeCommand(pid) === true) targets.add(pid);
+    }
+  }
+
+  let stoppedAny = false;
+  for (const pid of targets) {
     try {
       process.kill(pid, 'SIGTERM');
     } catch (err) {
@@ -562,11 +686,8 @@ export async function stopProbe(options = {}) {
     while (Date.now() < deadline && isProcessAlive(pid)) {
       await new Promise((r) => setTimeout(r, 150));
     }
-    if (isProcessAlive(pid) && IS_WIN) {
-      try {
-        execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 5000 });
-      } catch {}
-    }
+    if (isProcessAlive(pid)) killTree(pid);
+    if (!isProcessAlive(pid)) stoppedAny = true;
   }
 
   if (!IS_WIN && systemdUnitReachable() && existsSync(getSystemdUnitPath())) {
@@ -576,9 +697,21 @@ export async function stopProbe(options = {}) {
   }
 
   clearProbeState();
-  if (isEdge) return { stopped: true, pid, stillRunning: false };
+  if (isEdge) return { stopped: ![...targets].some(isProcessAlive), pid: recordedPid, stillRunning: [...targets].some(isProcessAlive) };
+
+  // 以「端口真的没人应答」为准，而不是「我们的 kill 调用返回了」。
   const health = await checkProbeHealth({ host, port, timeoutMs: 600 });
-  return { stopped: !health.running, pid, stillRunning: health.running };
+  const portListening = await isPortListening(port);
+  const stillRunning = health.running || portListening;
+  return {
+    stopped: !stillRunning,
+    pid: recordedPid,
+    port: isEdge ? null : port,
+    stalePid: recordedPid && !targets.has(recordedPid) ? recordedPid : null,
+    killed: [...targets],
+    recoveredByPort: stoppedAny && recordedPid && !targets.has(recordedPid),
+    stillRunning
+  };
 }
 
 export async function uninstallProbe(options = {}) {

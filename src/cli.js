@@ -14,6 +14,7 @@ import {
   probeStatus,
   writeProbePid,
   writeProbeState,
+  readProbeState,
   clearProbeState,
   getProbeLogPath
 } from './probe/index.js';
@@ -130,6 +131,16 @@ function runDaemon({ managed }) {
 
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
+        // 兜底：任何走到退出（含未捕获异常触发的 process.exit）的路径都清掉 PID 文件。
+        // 否则被强杀/崩溃后残留的 PID 会一路带到下次升级，probe:stop 只认文件时就会空转。
+        process.on('exit', () => {
+          if (!managed) return;
+          try {
+            const state = readProbeState();
+            // 只清自己写的那份：防止后来者（新探针）的 PID 被旧进程的退出钩子误删。
+            if (!state || state.pid === process.pid) clearProbeState();
+          } catch {}
+        });
       })
     )
     .catch((err) => {
@@ -253,7 +264,16 @@ function probeStart() {
 function probeStop() {
   stopProbe()
     .then((res) => {
-      console.log(res.stopped ? '[Agent-Nexus] Probe stopped.' : '[Agent-Nexus] Probe is still shutting down.');
+      if (res.stopped) {
+        const recovered = res.recoveredByPort ? ` (PID 文件失真，已按端口 ${res.port ?? 4300} 反查定位并结束)` : '';
+        console.log(`[Agent-Nexus] Probe stopped${recovered}.`);
+      } else {
+        console.error(
+          `[Agent-Nexus] Probe is still running on port 4300. ` +
+          `Something else may be holding the port; check with \`netstat -ano | findstr :4300\`.`
+        );
+        process.exitCode = 1;
+      }
     })
     .catch((err) => {
       console.error(`\n[Agent-Nexus] Probe stop failed:\n${err.message}\n`);
@@ -270,7 +290,9 @@ async function probeReport() {
   console.log(`  Running:    ${status.running ? 'yes' : 'no'}`);
   console.log(`  Endpoint:   ${edge ? (status.hubUrl ? `edge -> ${status.hubUrl}` : 'edge -> (no Hub bound)') : status.baseUrl}`);
   if (edge) console.log(`  Edge node:  ${status.state?.nodeId ?? status.entry?.nodeId ?? '(unknown)'}`);
-  console.log(`  PID:        ${status.pid ?? (status.stalePid ? `${status.stalePid} (stale)` : '(none)')}`);
+  const pidLabel = status.pid ?? (status.stalePid ? `${status.stalePid} (stale)` : '(none)');
+  const pidSuffix = status.pidSource === 'port' ? ` (按端口 ${status.port} 反查)` : '';
+  console.log(`  PID:        ${pidLabel}${pidSuffix}`);
   console.log(`  Version:    ${status.version ?? '(unknown)'}`);
   console.log(`  Auto-start: ${status.autostartPath}`);
   console.log(`  Log:        ${status.logPath}\n`);

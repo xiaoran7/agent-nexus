@@ -160,3 +160,41 @@ for (const claim of normalizedClaims) {
 会话注册表 `~/.claude/sessions/<pid>.json` 里的 `messagingSocketPath` 指向会话进程独占创建的命名管道。管道名含随机串、进程退出即消失，因此**管道存在是权威存活信号**，而 `process.kill(pid, 0)` 在 Windows 上会被 PID 复用欺骗（旧 PID 被分配给 `svchost.exe` 之类的常驻进程）。
 
 同步时验证通过的会话写入 `agents.liveness_verified_at`，2 分钟内免于心急跳门禁——长回合（>10 分钟不调用工具）和等待用户输入的会话因此不会被误判离席。没有管道字段的旧注册表退回 PID 探针，并保留 10 分钟心跳门禁作为 PID 复用保护。
+
+注册表里已声明管道的条目不再额外发 `process.kill(pid, 0)`：管道存在本身就是存活证明，而这段代码每 3 秒跑一遍。只有没有管道字段的旧注册表才付这次系统调用。
+
+**单次探测失败不等于死亡。** Windows 上 `existsSync(管道)` 是瞬时读：实测每条管道每秒约 3.5% 的采样会漏检（30 秒内 265 次漏 3–15 次）。因此：
+
+- 探测失败的那一帧只跳过该会话，不回收租约、不清 `liveness_verified_at`；该会话仍算「本帧见过」，不消耗宽限期；
+- 收割统一走「会话从注册表快照里消失」这条路径，并带 `SESSION_DISAPPEAR_GRACE_MS`（45 秒）宽限：本地 3 秒刷新、远端桥 15 秒一帧，45 秒可容忍十几帧连续漏检；
+- 本地会话还要求 PID 探针同时失败才判离席——断掉管道但进程仍在的会话不会被误杀，真死进程则由 PID 探针即时回收；
+- 远端会话同样走这条宽限：边缘桥每 15 秒才推一帧，一次网络抖动或单帧漏检不该清掉远端文件锁。真死由「宽限期内每一帧都缺席」认定。
+
+**全量快照的缺席只对「注册表追踪过的会话」有效。** 收割条件是 `liveness_verified_at IS NOT NULL`——即该会话至少被一次管道/PID 验证确认过。经全局 Hook 注册的终端会话从不写 `~/.claude/sessions`（那是桌面端维护的注册表），它的缺席不能作为死亡证据，否则刚拿到的租约会在首个 3 秒 tick 里被清掉。这类会话仍由 `reapStaleIntentsAndAgents` 按心跳超时收割。
+
+离席时只改 `status`，不回写 `last_heartbeat`（否则面板永远显示不出「何时掉的线」）；`releaseAgentLeases` 在 `reason='process_exit'` 时也不做「无租约 → idle」的状态回写，避免把刚落的 departed 又改回在线。
+
+### 快照刷新与查询成本
+
+面板每 4 秒推一次 `sync:request`，daemon 另有 3 秒定时器，两条链路都会触发同一轮会话同步与租约回收。为避免重复劳动：
+
+- `_refreshTick(now)` 是唯一刷新入口（`syncClaudeSessions + reapStaleIntentsAndAgents + reapDeadAgentLeases + expireLeases`）；顶层入口调用它，嵌套调用传 `skipRefresh: true`，一次 cockpit 请求只刷新一轮。
+- `getUnifiedCockpit` 先算一次拓扑，同时用作 `topologySnapshot`；dashboard 与 collab 复用同一批 agent 行（`precomputedAgents`），不再各自跑一遍 5 个相关子查询与生命周期判定。
+- 在席过滤下推到 SQL（`status != 'departed'`）：历史离席行是库存主体（实测 301 行里 292 行），先取出来再逐行判定、再丢掉，等于把 CPU 花在必然被丢弃的行上。会话复活只发生在 `syncClaudeSessions` 里，而同一次刷新里它已经把状态改回在线档位，因此 `status` 判定是安全的。
+- SQL 语句按文本缓存（`_stmt/_run/_get/_all`）：`node:sqlite` 的 `prepare` 是 JIT 编译，热路径上每条 SQL 每次调用都重新编译，在 300 会话库上占单次快照约 10% 的自采样时间。
+- `/api/status` 走一次窄列查询，只算计数；不序列化任何会话明细。桌面托盘每 3 秒轮询它。
+- WebSocket 推送帧只带一份 dashboard（`data.snapshot`），`data.cockpit` 不再重复内嵌 `dashboard`/`collab`。
+
+### 探针进程的定位与启停
+
+探针的状态落在 `~/.agent-nexus/probe.json` 与 `probe.pid`，但**这两个文件不可当作事实来源**：它们只在探针「顺利启动」时写入，进程被强杀、崩溃或从旧版本升级时不会更新，会指向早已消失的 PID（真机上出现过文件写 33108、实际监听 4300 的是另一个孤儿进程）。
+
+因此启停与状态查询都以「端口上到底是谁」为准：
+
+- `probe:stop` 先按记录 PID 尝试，若该进程已不在而端口仍被占用，用 `findListeningPids(port)` 反查真实监听进程（Windows `netstat -ano -p TCP`，POSIX 依次试 `lsof` / `ss`）。
+- **记录 PID 同样要自证**：PID 文件是不可信输入，Windows 会把旧号复用给无关进程，所以 `recordedPid` 也必须通过命令行核对才进入待杀列表——只有端口反查结果需要核对是旧版的行为，会把用户的编辑器 SIGTERM 掉。
+- 反查结果必须通过 `isNexusProbeCommand(pid)` 自证才会被结束：命令行要匹配「`cli.js` + 完整 `probe` 子命令」。注意真机命令行每个参数都带引号（`"…\cli.js" "probe" "--port" "4300"`），匹配器不能假设 `probe` 前是裸空格，也不能把 `probe:install` 这类子命令算进来。
+- 该检查是三态：`true` 确认是探针、`false` 确认不是、`null` 读不到命令行。`null` 只对记录 PID 放行（edge 探针没有端口兜底，一律拒绝就再也停不掉），端口反查结果则必须为 `true`。POSIX 优先读 `/proc/<pid>/cmdline`，读不到时退回 `ps -p <pid> -o args=`（macOS 没有 procfs）。
+- 端口被陌生进程占用时绝不误杀，`probe:stop` 如实返回「未停止」并以非零退出码结束，而不是把失败说成「正在关闭」。
+- `probe:status` 在 PID 文件失真但端口在监听时，报出反查到的真实 PID 并标注来源（`pidSource: 'port'`）。
+- 探针进程注册了 `process.on('exit')` 兜底清理，且只清 `state.pid === process.pid` 的那一份，避免旧进程退出时误删新探针的状态文件。

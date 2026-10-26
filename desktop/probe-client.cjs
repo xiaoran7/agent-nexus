@@ -6,6 +6,7 @@
 // =============================================================================
 
 const http = require('node:http');
+const https = require('node:https');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -16,15 +17,48 @@ class ProbeClient {
     this.host = host;
   }
 
+  remoteConfig() {
+    const remotePath = path.join(os.homedir(), '.agent-nexus', 'remote.json');
+    try {
+      if (fs.existsSync(remotePath)) return JSON.parse(fs.readFileSync(remotePath, 'utf8'));
+    } catch {}
+    return null;
+  }
+
   get baseUrl() {
+    if (process.env.NEXUS_HUB_URL) return process.env.NEXUS_HUB_URL.replace(/\/+$/, '');
+    // 仅在默认未指定远端端点 (127.0.0.1:4300) 时，自动解析 edge 模式下的 remote.json / probe.json
+    if ((this.host === '127.0.0.1' || this.host === 'localhost') && this.port === 4300) {
+      const remote = this.remoteConfig();
+      if (remote?.hubUrl) return remote.hubUrl.replace(/\/+$/, '');
+      const status = this.probeStatus();
+      if (status?.hubUrl) return status.hubUrl.replace(/\/+$/, '');
+    }
     return `http://${this.host}:${this.port}`;
+  }
+
+  isLocalHub() {
+    try {
+      const u = new URL(this.baseUrl);
+      return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '::1';
+    } catch {
+      return true;
+    }
   }
 
   checkAlive() {
     return new Promise((resolve) => {
       // 900ms 太紧：daemon 忙时 /health 实测会抖到 600ms 以上，会把健康探针
       // 误判成离线，桌面端随之在面板与离线页之间来回切。
-      const req = http.get(`${this.baseUrl}/health`, { timeout: 2500 }, (res) => {
+      const urlStr = `${this.baseUrl}/health`;
+      let u;
+      try {
+        u = new URL(urlStr);
+      } catch {
+        return resolve({ alive: false });
+      }
+      const client = u.protocol === 'https:' ? https : http;
+      const req = client.get(urlStr, { timeout: 3500 }, (res) => {
         let body = '';
         res.on('data', (c) => (body += c));
         res.on('end', () => {
@@ -45,10 +79,10 @@ class ProbeClient {
     });
   }
 
-  // HTTP 探活失败时的兜底：进程还在、端口还在监听，就不算离线。
-  // daemon 主线程被 SQLite 扫描占住时会短暂不响应 /health，但服务本身没挂，
-  // 这时翻离线页纯属误伤。
+  // HTTP 探活失败时的兜底：仅对本机 Hub 有效（进程还在、端口还在监听，就不算离线）。
+  // 远端 Hub 架构下，本机 edge 探针进程在跑不代表远端 Hub 可达，不能用本地进程欺骗桌面端。
   isProcessUp() {
+    if (!this.isLocalHub()) return false;
     const state = this.probeStatus();
     const pid = state && Number.isInteger(state.pid) ? state.pid : null;
     if (!pid) return false;
@@ -67,10 +101,16 @@ class ProbeClient {
     return health;
   }
 
-  // 探针把当前 operator 令牌写入 session.token；桌面端只读不写，重启即随探针轮换。
+  // 令牌解析优先级：环境变量 > remote.json > probe.json > 本机 session.token
   getToken() {
     const fromEnv = process.env.NEXUS_TOKEN || process.env.NEXUS_ADMIN_TOKEN;
     if (fromEnv) return fromEnv.trim();
+
+    const remote = this.remoteConfig();
+    if (remote?.token && typeof remote.token === 'string') return remote.token.trim();
+
+    const status = this.probeStatus();
+    if (status?.token && typeof status.token === 'string') return status.token.trim();
 
     const tokenPath = path.join(os.homedir(), '.agent-nexus', 'session.token');
     try {

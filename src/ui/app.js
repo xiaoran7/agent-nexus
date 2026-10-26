@@ -5,7 +5,8 @@
 function getNexusToken() {
   const fromQuery = new URLSearchParams(location.search).get('token');
   if (fromQuery) {
-    sessionStorage.setItem('nexusToken', fromQuery);
+    try { sessionStorage.setItem('nexusToken', fromQuery); } catch {}
+    try { localStorage.setItem('nexusToken', fromQuery); } catch {}
     return fromQuery;
   }
   const stored = sessionStorage.getItem('nexusToken');
@@ -13,9 +14,79 @@ function getNexusToken() {
     return stored;
   }
   if (typeof window !== 'undefined' && window.__NEXUS_TOKEN__) {
+    try { sessionStorage.setItem('nexusToken', window.__NEXUS_TOKEN__); } catch {}
+    try { localStorage.setItem('nexusToken', window.__NEXUS_TOKEN__); } catch {}
     return window.__NEXUS_TOKEN__;
   }
+  try {
+    const local = localStorage.getItem('nexusToken');
+    if (local) return local;
+  } catch {}
   return '';
+}
+
+function showTokenPrompt(reason = 'missing') {
+  let modal = document.getElementById('nexus-token-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'nexus-token-modal';
+    modal.className = 'nexus-modal-overlay';
+    modal.innerHTML = `
+      <div class="nexus-modal-card">
+        <div class="nexus-modal-header">
+          <span class="nexus-modal-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span>Nexus 访问认证</span>
+          </span>
+          <button class="nexus-modal-close" id="nexus-token-close-btn" title="关闭">&times;</button>
+        </div>
+        <p class="nexus-modal-desc">
+          ${reason === 'invalid' ? '当前令牌 (Token) 校验失败 (401 Unauthorized)，请重新输入：' : '未检测到有效访问令牌。请输入 Nexus Hub Operator Token：'}
+        </p>
+        <div class="nexus-modal-input-row">
+          <input type="password" id="nexus-token-input" class="nexus-modal-input" placeholder="输入 Token（或在 URL 中添加 ?token=...）" autocomplete="off" />
+          <button id="nexus-token-save-btn" class="nexus-modal-btn primary">保存并连接</button>
+        </div>
+        <div class="nexus-modal-hint">提示：Token 位于 Hub 宿主机 <code>~/.agent-nexus/session.token</code> 或 <code>hub.json</code></div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const input = modal.querySelector('#nexus-token-input');
+    const saveBtn = modal.querySelector('#nexus-token-save-btn');
+    const closeBtn = modal.querySelector('#nexus-token-close-btn');
+
+    const handleSave = () => {
+      const val = input.value.trim();
+      if (!val) return;
+      try { sessionStorage.setItem('nexusToken', val); } catch {}
+      try { localStorage.setItem('nexusToken', val); } catch {}
+      modal.remove();
+      initApp();
+    };
+
+    saveBtn.addEventListener('click', handleSave);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleSave();
+    });
+    closeBtn.addEventListener('click', () => {
+      modal.remove();
+    });
+  } else {
+    const desc = modal.querySelector('.nexus-modal-desc');
+    if (desc) {
+      desc.textContent = reason === 'invalid'
+        ? '当前令牌 (Token) 校验失败 (401 Unauthorized)，请重新输入：'
+        : '未检测到有效访问令牌。请输入 Nexus Hub Operator Token：';
+    }
+  }
+  const input = modal.querySelector('#nexus-token-input');
+  if (input) {
+    setTimeout(() => input.focus(), 100);
+  }
 }
 
 let currentProjectId = 'default';
@@ -468,6 +539,11 @@ if (dom.projectSelector) {
 async function loadProjects() {
   try {
     const res = await fetch('/api/projects', { headers: authHeaders() });
+    if (res.status === 401) {
+      updateConnectionIndicators(false, '令牌无效 (401)');
+      showTokenPrompt('invalid');
+      return;
+    }
     if (!res.ok) return;
     const list = await res.json();
     if (!list || list.length === 0 || !dom.projectSelector) return;
@@ -557,7 +633,8 @@ async function fetchDashboard() {
   try {
     const res = await fetch(`/api/dashboard?project_id=${encodeURIComponent(currentProjectId)}`, { headers: authHeaders() });
     if (res.status === 401) {
-      if (dom.daemonStatus) dom.daemonStatus.textContent = 'NEEDS TOKEN';
+      updateConnectionIndicators(false, '令牌无效 (401)');
+      showTokenPrompt('invalid');
       return;
     }
     if (!res.ok) return;
@@ -725,7 +802,7 @@ function renderActiveAgents(agents, activeClaims) {
           <div class="agent-name-group">
             <span class="agent-status-badge badge-${a.uiState}">${a.badgeText}</span>
             <span class="agent-title" title="${nameSafe}">${nameSafe}</span>
-            ${showHost ? `<span class="agent-host-badge" title="远端工作区节点: ${hostSafe}">🌐 ${hostSafe}</span>` : ''}
+            ${showHost ? `<span class="agent-host-badge" title="远端工作区节点: ${hostSafe}"><svg class="inline-badge-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;opacity:0.85"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>${hostSafe}</span>` : ''}
             ${showProj ? `<span class="agent-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
           </div>
           <span class="agent-runtime-tag">${providerSafe}</span>
@@ -800,7 +877,7 @@ function renderActiveLocks(claims, agents) {
       <div class="lock-card-item">
         <div class="lock-target-info">
           <span class="lock-target-name" title="${fullTarget}">${shortTarget}</span>
-          <span class="lock-holder-desc"><strong class="holder-name" title="完整会话标识: ${escapeHtml(c.agent_id)}">${holderName}</strong>${holderHost ? ` <span class="agent-host-badge">🌐 ${holderHost}</span>` : ''} · 剩余 ${remainingSec}s</span>
+          <span class="lock-holder-desc"><strong class="holder-name" title="完整会话标识: ${escapeHtml(c.agent_id)}">${holderName}</strong>${holderHost ? ` <span class="agent-host-badge"><svg class="inline-badge-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;opacity:0.85"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"></path></svg>${holderHost}</span>` : ''} · 剩余 ${remainingSec}s</span>
         </div>
         <div class="lock-actions">
           ${leaseId ? `<button class="btn-release-sm" onclick="releaseLock('${leaseId}', '${escapeHtml(c.agent_id)}')">释放</button>` : ''}
@@ -1159,7 +1236,7 @@ function renderRoutingDiagram(cockpitData) {
               <div class="route-card-identity">
                 <span class="route-agent-name" title="完整会话标识: ${idSafe}">${nameSafe}</span>
                 <span class="route-provider-badge">${providerSafe}</span>
-                ${showHost ? `<span class="route-host-badge" title="远端工作区节点: ${hostSafe}">🌐 ${hostSafe}</span>` : ''}
+                ${showHost ? `<span class="route-host-badge" title="远端工作区节点: ${hostSafe}"><svg class="inline-badge-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;opacity:0.85"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"></path></svg>${hostSafe}</span>` : ''}
                 ${showProj ? `<span class="route-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
               </div>
               ${statusBadge}
@@ -1908,12 +1985,20 @@ const debouncedFetchDashboard = debounce(fetchDashboard, 500);
 const debouncedFetchDialogues = debounce(fetchDialogues, 500);
 const debouncedFetchMilestones = debounce(fetchMilestones, 500);
 
-function updateConnectionIndicators(connected) {
+function updateConnectionIndicators(connected, customStatus = null) {
   if (dom.liveDot) {
     dom.liveDot.classList.toggle('disconnected', !connected);
   }
   if (dom.daemonStatus) {
-    dom.daemonStatus.textContent = connected ? '守护就绪' : '脱机重连中';
+    if (customStatus) {
+      dom.daemonStatus.textContent = customStatus;
+      dom.daemonStatus.style.cursor = 'pointer';
+      dom.daemonStatus.onclick = () => showTokenPrompt();
+    } else {
+      dom.daemonStatus.textContent = connected ? '守护就绪' : '脱机重连中';
+      dom.daemonStatus.style.cursor = connected ? 'default' : 'pointer';
+      dom.daemonStatus.onclick = connected ? null : () => showTokenPrompt();
+    }
   }
 }
 
@@ -1937,11 +2022,16 @@ function connectWebSocket() {
   try {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = getNexusToken();
+    if (!token) {
+      updateConnectionIndicators(false, '需要令牌 (点击配置)');
+      showTokenPrompt('missing');
+      return;
+    }
     const params = new URLSearchParams();
-    if (token) params.set('token', token);
+    params.set('token', token);
     if (currentProjectId) params.set('project', currentProjectId);
     const qs = params.toString();
-    const wsUrl = qs ? `${protocol}//${location.host}/?${qs}` : `${protocol}//${location.host}`;
+    const wsUrl = `${protocol}//${location.host}/?${qs}`;
 
     const ws = new WebSocket(wsUrl);
     activeWs = ws;
@@ -1981,7 +2071,12 @@ function connectWebSocket() {
           }
           debouncedLoadProjects();
           if (payload.data?.cockpit && dom.viewRouting?.classList.contains('active')) {
-            renderRoutingDiagram(payload.data.cockpit);
+            // 推送帧里 cockpit 不带 dashboard/collab（同帧的 snapshot 就是那份 dashboard，
+            // 重复发一遍只是浪费带宽），渲染时补回去。
+            renderRoutingDiagram({
+              ...payload.data.cockpit,
+              dashboard: payload.data.snapshot || payload.data.cockpit.dashboard
+            });
           } else if (dom.viewRouting?.classList.contains('active')) {
             debouncedFetchRoutingTopology();
           }
@@ -2028,6 +2123,12 @@ function connectWebSocket() {
         clearInterval(wsPingTimer);
         wsPingTimer = null;
       }
+      const token = getNexusToken();
+      if (!token) {
+        updateConnectionIndicators(false, '需要令牌 (点击配置)');
+        showTokenPrompt('missing');
+        return;
+      }
       updateConnectionIndicators(false);
       startFallbackPolling();
       setTimeout(connectWebSocket, 3000);
@@ -2060,6 +2161,7 @@ async function initApp() {
     const pill = document.querySelector('.hub-status-pill');
     if (pill && location?.host) {
       pill.textContent = location.host;
+      pill.title = `Nexus Hub 端点: ${location.host}`;
     }
   } catch {}
   await loadProjects();
