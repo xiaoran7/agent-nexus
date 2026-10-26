@@ -1,6 +1,6 @@
 {
   "name": "@xiaoran7/agent-nexus",
-  "version": "0.2.20",
+  "version": "0.2.22",
   "description": "Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, Codex, Cursor). Prevents file edit collisions and Git worktree conflicts.",
   "main": "src/daemon/index.js",
   "type": "module",

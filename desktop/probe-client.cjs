@@ -22,7 +22,9 @@ class ProbeClient {
 
   checkAlive() {
     return new Promise((resolve) => {
-      const req = http.get(`${this.baseUrl}/health`, { timeout: 900 }, (res) => {
+      // 900ms 太紧：daemon 忙时 /health 实测会抖到 600ms 以上，会把健康探针
+      // 误判成离线，桌面端随之在面板与离线页之间来回切。
+      const req = http.get(`${this.baseUrl}/health`, { timeout: 2500 }, (res) => {
         let body = '';
         res.on('data', (c) => (body += c));
         res.on('end', () => {
@@ -41,6 +43,28 @@ class ProbeClient {
         resolve({ alive: false });
       });
     });
+  }
+
+  // HTTP 探活失败时的兜底：进程还在、端口还在监听，就不算离线。
+  // daemon 主线程被 SQLite 扫描占住时会短暂不响应 /health，但服务本身没挂，
+  // 这时翻离线页纯属误伤。
+  isProcessUp() {
+    const state = this.probeStatus();
+    const pid = state && Number.isInteger(state.pid) ? state.pid : null;
+    if (!pid) return false;
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if (err.code !== 'EPERM') return false;
+    }
+    return true;
+  }
+
+  async isAlive() {
+    const health = await this.checkAlive();
+    if (health.alive) return health;
+    if (this.isProcessUp()) return { alive: true, version: null, status: 'degraded' };
+    return health;
   }
 
   // 探针把当前 operator 令牌写入 session.token；桌面端只读不写，重启即随探针轮换。

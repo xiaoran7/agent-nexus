@@ -4,7 +4,41 @@
 
 ---
 
-## 2026-10-26 修复 Linux CI 项目展示名大小写降级 (Display Name Case Fix)
+## 2026-10-26 桌面端窗口归位与探活兜底 (Window Placement & Health Fallback v0.2.22)
+
+### 改了什么
+
+- **窗口启动归位 (`desktop/main.cjs`)**：
+  - 现象：升级后桌面端"启动了却看不见窗口"。真机抓到的窗口坐标是 `(2221, -51)`——落在已断开的外接屏区域里，Electron 记住了上次位置，`show()` 之后用户屏幕上什么都看不到；
+  - 新增 `ensureWindowOnScreen(win)`：启动时用 `screen.getAllDisplays()` 逐个比对 `workArea`，窗口矩形与所有显示器都不相交就按主屏 `workArea` 居中并夹到可用尺寸，之后才 `showPanel()`。
+- **导航诊断落盘 (`desktop/main.cjs`)**：`showPanel` / `showOffline` / `did-fail-load` / `did-finish-load` / `render-process-gone` 统一追加写入 `<userData>/nav.log`，闪屏类问题不必再靠猜。
+- **导航竞态收口 (`desktop/main.cjs`)**：新增 `panelNavigating` 标记，`loadURL` 在途期间 `showPanel` 直接返回；`did-fail-load`（主框架）与 `did-finish-load` 负责清除，避免轮询与退避定时器叠加重定向。
+
+### 验证
+
+- **真机验证**：重新打包 `Agent-Nexus-v0.2.22-win32-x64` 并启动，窗口落在 `(560, 236)`、`800×560`，完整处于主屏工作区内；`nav.log` 在 2 分 30 秒内只有一对 `showPanel` → `did-finish-load`，无任何 `did-fail-load` 与二次导航；
+- **全量测试**：**304 项**通过。
+
+---
+
+## 2026-10-26 探活超时放宽与进程兜底 (Health Timeout & PID Fallback v0.2.21)
+
+### 改了什么
+
+- **探活超时按实测抖动放宽 (`desktop/probe-client.cjs`, `src/probe/index.js`)**：
+  - `checkAlive` 900ms → **2500ms**，CLI 侧 `checkProbeHealth` 1200ms → **3000ms**。实测 daemon 主线程被 SQLite 扫描或会话发现占住时，`/health` 延迟会从 1ms 抖到 600ms 以上，原阈值会把健康探针误判成离线；
+  - 桌面端正是这条误判路径触发了残余闪屏：`nav.log` 里抓到一次 `showOffline` → 2 秒后 `showPanel` 且**没有** `did-fail-load`，证明是轮询翻页而非加载失败。
+- **进程存活兜底 (`desktop/probe-client.cjs`, `src/probe/index.js`)**：
+  - `ProbeClient.isAlive()`：HTTP 探活失败时读 `~/.agent-nexus/probe.json` 的 PID 并 `kill(pid, 0)`，进程还在就按 `{ alive: true, status: 'degraded' }` 上报，不翻离线页；
+  - `probeStatus` 新增 `isPortListening()`：进程存活且端口仍在监听即判在线，`nexus probe:status` 不再出现"服务正常却显示 Running: no"。
+
+### 验证
+
+- **单元测试**：`test/desktop-runner.test.js` 增至 **14 项**，新增 `isAlive` 降级兜底断言；
+- **真机验证**：修复后连续运行 5 分钟，`nav.log` 只保留启动时的初始导航，renderer 进程 PID 未变。
+
+---
+
 
 ### 改了什么
 

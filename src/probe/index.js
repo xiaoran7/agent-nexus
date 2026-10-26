@@ -314,7 +314,10 @@ function effectiveAutostartPath() {
   return getAutostartPath();
 }
 
-export async function checkProbeHealth({ host = '127.0.0.1', port = DEFAULT_PORT, timeoutMs = 1200 } = {}) {
+// 探活超时不能卡太紧：daemon 主线程被 SQLite 扫描或会话发现占住时，
+// /health 实测会抖到 600ms 以上，1200ms 阈值会把健康的探针误判成离线
+// （桌面端随之在面板与离线页之间来回切）。
+export async function checkProbeHealth({ host = '127.0.0.1', port = DEFAULT_PORT, timeoutMs = 3000 } = {}) {
   const probeHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
   const baseUrl = `http://${probeHost}:${port}`;
   try {
@@ -327,6 +330,23 @@ export async function checkProbeHealth({ host = '127.0.0.1', port = DEFAULT_PORT
   }
 }
 
+// 端口是否仍在监听：HTTP 探活失败时的兜底判据。
+async function isPortListening(port) {
+  const net = await import('node:net');
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    const done = (ok) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(1000);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+
 export async function probeStatus({ port = DEFAULT_PORT, host = '127.0.0.1' } = {}) {
   const entry = readProbeEntry();
   const state = readProbeState();
@@ -337,11 +357,15 @@ export async function probeStatus({ port = DEFAULT_PORT, host = '127.0.0.1' } = 
   // edge 探针不开端口，健康只能看进程存活。
   const alive = pid ? isProcessAlive(pid) : false;
   const health = isEdge ? { running: alive, baseUrl: null } : await checkProbeHealth({ host: effectiveHost, port: effectivePort });
+  // hub 探针：HTTP 探活偶发超时（daemon 忙）不代表进程没了。进程活着且
+  // 端口仍在监听就按在线报，避免状态面板显示"未运行"而实际服务正常。
+  const portListening = isEdge ? false : await isPortListening(effectivePort);
+  const running = health.running || (alive && portListening);
 
   return {
     installed: isProbeInstalled(),
     role: isEdge ? 'edge' : 'hub',
-    running: health.running,
+    running,
     pid: alive ? pid : null,
     stalePid: pid && !alive ? pid : null,
     port: isEdge ? null : effectivePort,

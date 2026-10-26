@@ -70,6 +70,19 @@ test('ProbeClient: 只连探针，不托管探针', async (t) => {
     assert.equal(typeof client.shutdown, 'undefined');
     assert.equal(typeof client.resolveNodeRuntime, 'undefined');
   });
+
+  await t.test('isAlive: HTTP 探活失败但进程还在时不算离线', async () => {
+    const client = new ProbeClient(testPort);
+    // testPort 上没有服务，HTTP 一定失败；isProcessUp 读 ~/.agent-nexus/probe.json。
+    // 这里只断言兜底路径不会把「进程活着」判成死——具体取决于本机是否装了探针。
+    const result = await client.isAlive();
+    if (client.isProcessUp()) {
+      assert.equal(result.alive, true);
+      assert.equal(result.status, 'degraded');
+    } else {
+      assert.equal(result.alive, false);
+    }
+  });
 });
 
 // 闪屏回归：面板状态机必须做到「单次抖动不翻页、失败后指数退避、已在面板上不重复加载」。

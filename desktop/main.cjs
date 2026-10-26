@@ -25,6 +25,7 @@ let tray = null;
 let statusInterval = null;
 let isQuitting = false;
 let showingOffline = false;
+let panelNavigating = false;
 
 const icons = {
   idle: path.join(__dirname, 'assets', 'tray-idle.png'),
@@ -38,13 +39,32 @@ const OFFLINE_PAGE = path.join(__dirname, 'offline.html');
 function showOffline() {
   if (!mainWindow || showingOffline) return;
   showingOffline = true;
+  logNav('showOffline');
   mainWindow.loadFile(OFFLINE_PAGE);
 }
 
 function showPanel() {
   if (!mainWindow) return;
+  // 已经在加载或已加载面板时不再重复导航：重复 loadURL 会让页面从头加载，
+  // 视觉上就是"闪一下"。只有当前停在离线页或别的地址时才真正跳转。
+  if (panelNavigating) return;
+  if (isShowingPanel()) {
+    showingOffline = false;
+    return;
+  }
   showingOffline = false;
+  panelNavigating = true;
+  logNav('showPanel');
   mainWindow.loadURL(probe.panelUrl());
+}
+
+// 导航诊断：闪屏排查时把每次面板/离线页切换写进日志文件。
+const { appendFileSync } = require('node:fs');
+const NAV_LOG = path.join(app.getPath('userData'), 'nav.log');
+function logNav(reason) {
+  try {
+    appendFileSync(NAV_LOG, `${new Date().toISOString()} ${reason}\n`);
+  } catch {}
 }
 
 // 是否已经在展示面板：用当前 URL 判断，而不是靠一个可能失真的布尔标志。
@@ -70,6 +90,36 @@ function schedulePanelRetry(delayMs) {
   }, delayMs);
 }
 
+// 多显示器下窗口坐标可能落在已断开的屏幕里（Electron 会记住上次位置），
+// 结果窗口启动后完全不可见。启动时若与任何显示器都不相交，就居中到主屏。
+function ensureWindowOnScreen(win) {
+  try {
+    const { screen } = require('electron');
+    const bounds = win.getBounds();
+    const displays = screen.getAllDisplays();
+    const visible = displays.some((d) => {
+      const a = d.workArea;
+      return (
+        bounds.x < a.x + a.width &&
+        bounds.x + bounds.width > a.x &&
+        bounds.y < a.y + a.height &&
+        bounds.y + bounds.height > a.y
+      );
+    });
+    if (visible) return;
+
+    const area = screen.getPrimaryDisplay().workArea;
+    const width = Math.min(bounds.width, area.width);
+    const height = Math.min(bounds.height, area.height);
+    win.setBounds({
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: Math.round(area.y + (area.height - height) / 2),
+      width,
+      height
+    });
+  } catch {}
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -89,6 +139,7 @@ function createMainWindow() {
     }
   });
 
+  ensureWindowOnScreen(mainWindow);
   showPanel();
 
   mainWindow.once('ready-to-show', () => {
@@ -98,6 +149,8 @@ function createMainWindow() {
 
   // 探针没起来时面板会加载失败：落到离线指引页，由状态轮询负责重连。
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, _desc, validatedURL, isMainFrame) => {
+    if (isMainFrame !== false) panelNavigating = false;
+    logNav(`did-fail-load code=${errorCode} main=${isMainFrame} url=${String(validatedURL).slice(0, 60)}`);
     if (!isPanelKillingFailure({ errorCode, validatedURL, isMainFrame })) return;
     showOffline();
     const { retryInMs } = panelState.onPanelLoadFailed();
@@ -105,6 +158,8 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
+    panelNavigating = false;
+    logNav(`did-finish-load url=${mainWindow.webContents.getURL().slice(0, 60)}`);
     // 面板真正加载成功，退避与失败计数归零。
     if (!isShowingPanel()) return;
     panelState.onPanelLoadSucceeded();
@@ -112,6 +167,10 @@ function createMainWindow() {
       clearTimeout(retryTimer);
       retryTimer = null;
     }
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    logNav(`render-process-gone reason=${details.reason} exitCode=${details.exitCode}`);
   });
 
   mainWindow.on('close', (event) => {
@@ -205,7 +264,7 @@ async function startStatusPolling() {
   if (statusInterval) clearInterval(statusInterval);
 
   const tick = async () => {
-    const health = await probe.checkAlive();
+    const health = await probe.isAlive();
     const action = panelState.onHealthResult(health.alive, { isShowingPanel: isShowingPanel() });
 
     if (!health.alive) {
