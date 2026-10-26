@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -153,5 +153,23 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
     const literal = runLine.slice(runLine.indexOf('sh.Run') + 'sh.Run'.length, runLine.lastIndexOf(', 0, False')).trim();
     assert.ok(literal.startsWith('"""') && literal.endsWith('"""'), `命令字符串应以 """ 开头结尾: ${literal}`);
     assert.equal((literal.match(/"/g) || []).length % 2, 0, '引号必须成对');
+  });
+
+  // 回归：探针是常驻后台进程，工作目录不能沿用安装时的 process.cwd()。
+  // 真实事故：在 /tmp/nexus-probe-* 解包目录里安装后，systemd 单元把该目录钉死，
+  // 目录被清掉后每次启动都以 status=200/CHDIR 失败，Restart=always 变成无限重启
+  // （美西机重启计数到 13，探针从未真正跑起来）。
+  await t.test('安装时未显式给 cwd，不把临时工作目录写进自启项', async (t) => {
+    if (process.platform === 'win32') return; // systemd 单元只在 POSIX 生成
+
+    const res = await installProbe({ start: false, nodePath: process.execPath });
+    assert.equal(res.entry.cwd, null, '未指定时不得记录安装进程的 cwd');
+
+    const unit = readFileSync(res.autostartPath, 'utf8');
+    const line = unit.split('\n').find((l) => l.startsWith('WorkingDirectory='));
+    assert.ok(line, 'systemd 单元必须有 WorkingDirectory');
+    const value = line.slice('WorkingDirectory='.length);
+    assert.equal(value, homedir(), '应回落到家目录，而不是安装时的 cwd');
+    assert.notEqual(value, process.cwd(), '绝不能沿用安装进程的当前目录');
   });
 });

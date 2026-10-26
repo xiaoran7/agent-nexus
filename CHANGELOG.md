@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-10-27 修复自启项钉死临时工作目录导致探针无限重启 (Probe Unit CWD Fix v0.2.29)
+
+美西机的 edge 探针实际上**从未成功启动过**：systemd 单元把工作目录钉在一个已被清掉的 `/tmp` 解包目录上。
+
+### 改了什么
+
+- **`installProbe` 不再记录安装进程的 `process.cwd()` (`src/probe/index.js`)**：
+  - `cwd` 原本默认取 `process.cwd()`。在临时目录里安装（解包目录、CI、`/tmp` 沙箱）时，这个路径会被写进 systemd 的 `WorkingDirectory=` 与各平台启动脚本；目录被清掉之后，systemd 每次启动都以 `status=200/CHDIR` 失败，`Restart=always` 于是变成无限重启；
+  - 现在只有调用方显式传 `cwd` 才记录，缺省为 `null`；
+- **三个平台的启动脚本统一回落到家目录**：systemd 单元 `WorkingDirectory=${cwd || homedir()}`、POSIX launcher `cd "$HOME" || cd /`、Windows VBScript `sh.CurrentDirectory` 同口径。家目录是唯一「一定存在且不会消失」的锚点。
+- **影响面**：美西机 journal 显示重启计数已到 13，最后一次启动仍在 `Changing to the requested working directory failed`，探针进程从未真正运行。
+
+### 验证
+
+- **新增 `test/probe.test.js` 1 项**：未显式给 `cwd` 时，`entry.cwd` 为 `null`、单元里 `WorkingDirectory` 等于家目录、且不等于 `process.cwd()`；
+- **全量测试**：**326 项**通过（原 325 项）；
+- **未重新安装**：美西机探针需重新执行 `probe:install` 才会重写单元，本次仅入库修复。
+
+---
+
 ## 2026-10-27 修复端口反查在 lsof 输出下失效 (Port Lookup Parse Fix v0.2.28)
 
 `probe:stop` 的端口兜底在 macOS / BSD 上等于没有：`lsof -t` 的裸 PID 一个都解析不出来。
