@@ -133,4 +133,25 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
     assert.equal(dead.pid, null);
     assert.equal(dead.stalePid, 999999);
   });
+
+  // 回归：Windows 自启项必须是一条合法的 VBScript。
+  // 早期版本写成 `sh.Run "node.exe" "cli.js", 0`，VBScript 没有转义引号，
+  // 整行解析成「语句未结束」，探针根本不会启动，且失败是静默的。
+  await t.test('Windows 自启项是合法 VBScript（引号不裸露）', async () => {
+    if (process.platform !== 'win32') return;
+
+    const res = await installProbe({ start: false, nodePath: process.execPath, cwd: dir });
+    const vbs = readFileSync(res.autostartPath, 'utf8');
+
+    assert.match(vbs, /Set sh = CreateObject\("WScript\.Shell"\)/);
+    assert.match(vbs, /, 0, False/, '窗口模式必须是 0（隐藏）、不等待');
+    assert.doesNotMatch(vbs, /probe\.cmd/, '不应再经由 cmd.exe，避免启动时闪控制台');
+
+    // Run 的参数必须整体是一个用 "" 包裹、内部引号成对转义的字符串字面量。
+    const runLine = vbs.split(/\r?\n/).find((l) => l.trimStart().startsWith('sh.Run'));
+    assert.ok(runLine, '自启项里必须有 sh.Run 调用');
+    const literal = runLine.slice(runLine.indexOf('sh.Run') + 'sh.Run'.length, runLine.lastIndexOf(', 0, False')).trim();
+    assert.ok(literal.startsWith('"""') && literal.endsWith('"""'), `命令字符串应以 """ 开头结尾: ${literal}`);
+    assert.equal((literal.match(/"/g) || []).length % 2, 0, '引号必须成对');
+  });
 });

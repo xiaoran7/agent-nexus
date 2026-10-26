@@ -1923,12 +1923,20 @@ export class CoordinatorEngine {
     }
   }
 
-  getDashboardSnapshot(projectId = null, options = {}) {
-    const now = Date.now();
+  // 快照刷新的唯一入口：dashboard 与 collab 过去各自跑一遍
+  // syncClaudeSessions + reap* + expireLeases，getUnifiedCockpit 又把两者串起来
+  // （前端每 4 秒还要一次），同一轮重活被重复执行 3 次以上。
+  // 现在由调用方声明是否需要刷新：顶层入口刷新，嵌套调用传 skipRefresh。
+  _refreshTick(now) {
     this.syncClaudeSessions(now);
     this.reapStaleIntentsAndAgents(now);
     this.reapDeadAgentLeases();
     this.expireLeases();
+  }
+
+  getDashboardSnapshot(projectId = null, options = {}) {
+    const now = Date.now();
+    if (!options.skipRefresh) this._refreshTick(now);
     this.housekeeping(now);
 
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
@@ -2037,12 +2045,9 @@ export class CoordinatorEngine {
   }
 
   // 7. 实时多 Session 协同图谱 (Live Collaboration Graph)
-  getCollaborationGraph(projectId = null) {
+  getCollaborationGraph(projectId = null, options = {}) {
     const now = Date.now();
-    this.syncClaudeSessions(now);
-    this.reapStaleIntentsAndAgents(now);
-    this.reapDeadAgentLeases();
-    this.expireLeases();
+    if (!options.skipRefresh) this._refreshTick(now);
 
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
 
@@ -2208,8 +2213,10 @@ export class CoordinatorEngine {
   // 8. 综合全览驾驶舱聚合快照 (Unified Cockpit Aggregate)
   getUnifiedCockpit(projectId = null) {
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
-    const dashboard = this.getDashboardSnapshot(finalProjectId);
-    const collab = this.getCollaborationGraph(finalProjectId);
+    // 组合快照只刷新一次，内层两次调用共享同一轮结果。
+    this._refreshTick(Date.now());
+    const dashboard = this.getDashboardSnapshot(finalProjectId, { skipRefresh: true });
+    const collab = this.getCollaborationGraph(finalProjectId, { skipRefresh: true });
     const topology = this.topologyService
       ? this.topologyService.getTopologyGraph(finalProjectId || 'default', { limit: 30 })
       : { nodes: [], edges: [], totalNodes: 0, modules: [] };

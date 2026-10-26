@@ -4,7 +4,29 @@
 
 ---
 
-## 2026-10-26 桌面端窗口归位与探活兜底 (Window Placement & Health Fallback v0.2.22)
+## 2026-10-26 修复面板闪断：主线程被快照刷新占满 (Panel Disconnect Fix v0.2.23)
+
+### 改了什么
+
+- **缓存本机节点标识 (`src/domain/project.js`)**：
+  - 闪断根因不是探活阈值，而是 daemon 主线程被吃满。CPU profile（`--inspect` + `Profiler` 采样 8 秒）显示 `os.hostname()` 占 **90% 以上**的自采样；
+  - `getLocalNodeId()` 每次调用都走一次 `hostname()`（Windows 上要过名称解析，实测 ~0.09ms），而它位于快照序列化的每个 agent 循环里——单库 293 行 agent，一次快照调用上千次；
+  - 改为按 `NEXUS_NODE_ID` 缓存：值不变就复用，测试可用 `resetLocalNodeIdCache()` 重置。单次 `getUnifiedCockpit` 由 **486–654ms 降到 7–9ms**（约 90 倍）。
+- **一次快照只刷新一轮 (`src/daemon/coordinator.js`)**：
+  - `getDashboardSnapshot` 与 `getCollaborationGraph` 过去各自执行 `syncClaudeSessions + reapStaleIntentsAndAgents + reapDeadAgentLeases + expireLeases`，`getUnifiedCockpit` 又把两者串起来跑一遍；前端每 4 秒一次 `sync:request`、daemon 每 3 秒一次定时器，同一轮重活被重复执行 3 次以上；
+  - 抽出 `_refreshTick(now)` 作为唯一刷新入口，两个快照函数支持 `skipRefresh`；`getUnifiedCockpit` 只在顶层刷新一次，内层两次调用复用同一轮结果。顶层单独调用语义不变。
+- **探针真·无窗口 (`src/probe/index.js`)**：
+  - 自启项不再经由 `probe.cmd`：`cmd.exe` 即使被 `wscript` 以窗口模式 0 拉起，部分 Windows 版本仍会闪一下控制台；改为 VBS 直接执行 node；
+  - 修复 VBScript 语法错误：VBScript 没有转义引号，`sh.Run "a" "b", 0, False` 会被解析成「语句未结束」并**静默失败**，探针根本起不来。现在把整条命令行拼成一个 `""` 包裹、内部引号成对转义的字符串字面量再交给 `Run`。
+
+### 验证
+
+- **真机验证**：修复前 `/health` 实测 2.8–7.6 秒（含一次 8 秒超时），探针常驻 **108% CPU**（占满一核）；修复后 `/health` 稳定 **1.5–3ms**，CPU **9.4%**；`MainWindowHandle = 0`，窗口枚举确认无任何探针/控制台可见窗口；
+- **自启**：用 `cscript //nologo` 校验 VBS 无语法错误，再经 `wscript` 实际拉起探针成功（PID 44816）；
+- **全量测试**：**306 项**通过，新增「Windows 自启项是合法 VBScript」与「getUnifiedCockpit 只刷新一次」两组回归。
+
+---
+
 
 ### 改了什么
 

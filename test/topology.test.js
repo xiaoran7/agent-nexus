@@ -208,6 +208,33 @@ test('TopologyService: 演进拓扑节点记录与因果图生成', async (t) =>
     assert.equal(cockpit.lockContention.activeClaims.length, 1);
   });
 
+  // 回归：一次 cockpit 快照只允许刷新一轮会话/租约。
+  // 过去 dashboard 与 collab 各自跑一遍，cockpit 又把两者串起来，加上前端
+  // 每 4 秒一次的 sync:request，主线程被同步任务吃满，/health 抖到数秒。
+  await t.test('getUnifiedCockpit 只刷新一次，嵌套快照复用同一轮结果', () => {
+    let syncCalls = 0;
+    const originalSync = coordinator.syncClaudeSessions.bind(coordinator);
+    coordinator.syncClaudeSessions = (...args) => {
+      syncCalls++;
+      return originalSync(...args);
+    };
+    try {
+      coordinator.getUnifiedCockpit('proj-cockpit');
+      assert.equal(syncCalls, 1, `cockpit 应只触发一次 sync，实际 ${syncCalls} 次`);
+
+      // 顶层快照仍然各自刷新一次，语义不变。
+      syncCalls = 0;
+      coordinator.getDashboardSnapshot('proj-cockpit');
+      assert.equal(syncCalls, 1);
+
+      syncCalls = 0;
+      coordinator.getCollaborationGraph('proj-cockpit');
+      assert.equal(syncCalls, 1);
+    } finally {
+      coordinator.syncClaudeSessions = originalSync;
+    }
+  });
+
   await t.test('四级状态机语义校准: 写入/修改工具触发 working，waiting 专指排队阻塞', () => {
     coordinator.registerAgent({
       id: 'worker-read',

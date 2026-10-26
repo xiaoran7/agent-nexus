@@ -8,10 +8,27 @@ const PROJECT_MARKERS = ['.nexus', '.git', 'package.json', 'CLAUDE.md'];
 /**
  * 获取当前节点的标准身份标识 (Node / Host ID)
  * 优先读取 NEXUS_NODE_ID 环境变量，否则使用操作系统主机名
+ *
+ * 结果必须缓存：os.hostname() 在 Windows 上要走一次名称解析（实测 ~0.09ms），
+ * 而本函数位于快照序列化的每个 agent 循环里（单库 293 行 → 每次快照上千次调用），
+ * 不缓存会把主线程吃满，/health 从 1ms 抖到数秒，面板随之闪断重连。
  */
+let cachedNodeId = null;
+let cachedNodeIdEnv = undefined;
+
 export function getLocalNodeId() {
-  const raw = process.env.NEXUS_NODE_ID || hostname() || 'local';
-  return normalizeNodeId(raw);
+  const envNode = process.env.NEXUS_NODE_ID;
+  if (cachedNodeId !== null && cachedNodeIdEnv === envNode) return cachedNodeId;
+  const raw = envNode || hostname() || 'local';
+  cachedNodeId = normalizeNodeId(raw);
+  cachedNodeIdEnv = envNode;
+  return cachedNodeId;
+}
+
+// 测试需要覆盖 NEXUS_NODE_ID 或模拟主机名时调用；生产路径不应调用。
+export function resetLocalNodeIdCache() {
+  cachedNodeId = null;
+  cachedNodeIdEnv = undefined;
 }
 
 export function normalizeNodeId(raw) {
