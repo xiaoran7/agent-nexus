@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   getAutostartPath,
   getProbeLauncherPath,
+  getProbeVbsLauncherPath,
   getProbeEntryPath,
   isProbeInstalled,
   isProcessAlive,
@@ -55,6 +56,7 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
   await t.test('默认路径指向 NEXUS_PROBE_DIR 与 NEXUS_STARTUP_DIR', () => {
     assert.equal(getProbeEntryPath(), join(dir, 'probe-entry.json'));
     assert.equal(getProbeLauncherPath(), join(dir, process.platform === 'win32' ? 'probe.cmd' : 'probe.sh'));
+    assert.equal(getProbeVbsLauncherPath(), join(dir, 'probe-bg.vbs'));
     assert.ok(getAutostartPath().startsWith(startup));
   });
 
@@ -152,6 +154,23 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
     assert.match(vbs, /, 0, False/, '窗口模式必须是 0（隐藏）、不等待');
     assert.doesNotMatch(vbs, /probe\.cmd/, '不应再经由 cmd.exe，避免启动时闪控制台');
 
+    // 探针目录下的 probe-bg.vbs 同样必须是合法的无窗 VBScript
+    const bgVbsPath = getProbeVbsLauncherPath();
+    assert.ok(existsSync(bgVbsPath), '应同时生成 probe-bg.vbs 用于后台静默启动');
+    const bgVbs = readFileSync(bgVbsPath, 'utf8');
+    assert.match(bgVbs, /Set sh = CreateObject\("WScript\.Shell"\)/);
+    assert.match(bgVbs, /, 0, False/);
+
+    // 回归：这个脚本会被反复拉起，工作目录必须与自启项同口径 ——
+    // 显式给了 cwd 就用它，不能悄悄指向源码路径（v0.2.29 的无限重启事故）。
+    const bgCwd = bgVbs
+      .split(/\r?\n/)
+      .find((l) => l.trimStart().startsWith('sh.CurrentDirectory'))
+      .split('=')[1]
+      .trim()
+      .replace(/^"|"$/g, '');
+    assert.equal(bgCwd, dir, 'probe-bg.vbs 应沿用显式指定的 cwd');
+
     // Run 的参数必须整体是一个用 "" 包裹、内部引号成对转义的字符串字面量。
     const runLine = vbs.split(/\r?\n/).find((l) => l.trimStart().startsWith('sh.Run'));
     assert.ok(runLine, '自启项里必须有 sh.Run 调用');
@@ -164,6 +183,22 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
   // 真实事故：在 /tmp/nexus-probe-* 解包目录里安装后，systemd 单元把该目录钉死，
   // 目录被清掉后每次启动都以 status=200/CHDIR 失败，Restart=always 变成无限重启
   // （美西机重启计数到 13，探针从未真正跑起来）。
+  await t.test('probe-bg.vbs 未指定 cwd 时回落到家目录', async () => {
+    if (process.platform !== 'win32') return; // probe-bg.vbs 只在 Windows 生成
+
+    await installProbe({ start: false, nodePath: process.execPath });
+    const bgVbs = readFileSync(getProbeVbsLauncherPath(), 'utf8');
+    const bgCwd = bgVbs
+      .split(/\r?\n/)
+      .find((l) => l.trimStart().startsWith('sh.CurrentDirectory'))
+      .split('=')[1]
+      .trim()
+      .replace(/^"|"$/g, '');
+
+    assert.equal(bgCwd, homedir(), '未指定 cwd 时应回落到家目录');
+    assert.notEqual(bgCwd, process.cwd(), '绝不能沿用安装进程的当前目录');
+  });
+
   await t.test('安装时未显式给 cwd，不把临时工作目录写进自启项', async (t) => {
     if (process.platform === 'win32') return; // systemd 单元只在 POSIX 生成
 

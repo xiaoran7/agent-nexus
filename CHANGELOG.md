@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-27 修复 Windows 下守护进程启动被 Windows Terminal 拦截弹黑框 (Probe Windows Windowless Daemon v0.2.30)
+
+在 Windows 11 下，当系统默认终端应用设为 Windows Terminal 时，探针以守护进程拉起时会弹出可见黑框并在任务栏创建常驻标签页。
+
+### 改了什么
+
+- **同步生成 `probe-bg.vbs` (`src/probe/index.js`)**：
+  - `writeWindowsLauncher` 在生成 `probe.cmd` 的同时，生成配套的 `probe-bg.vbs`，使用 `WScript.Shell.Run` 配合窗口模式 `0`（`SW_HIDE`）拉起 `node.exe`；
+- **守护进程拉起优先走 `wscript.exe` (`src/probe/index.js`)**：
+  - `startProbeDaemon` 在 Windows 平台下改用 `wscript.exe`（GUI 子系统）执行 `probe-bg.vbs`，不走 `cmd.exe /c probe.cmd`；
+  - 彻底避免 Windows Terminal 拦截控制台创建、不再在前台新建黑框标签页，实现探针自转后台纯静默常驻；
+- **卸载清理补齐**：`uninstallProbe` 移除列表同步纳入 `probe-bg.vbs`。
+
+### 验证
+
+- **单元测试**：`test/probe.test.js` 补齐 `probe-bg.vbs` 存在性与语法断言，全量 327 项通过。
+
+> 提交前自查发现并顺带修正：`probe-bg.vbs` 初版把 `sh.CurrentDirectory` 写成
+> `entry.cwd || dirname(entry.cliPath)`，与 v0.2.29 刚确立的「自启产物一律回落到
+> 家目录」背道而驰 —— 未显式传 `cwd` 时会钉死源码路径，而源码路径在解包/临时目录
+> 场景下会消失，正是 v0.2.29 无限重启事故的成因。现已改为 `entry?.cwd || homedir()`，
+> 并补两条断言（显式 cwd 应沿用、未指定时回落到家目录且不等于安装时的 cwd）。
+
+---
+
 ## 2026-10-27 修复探针用例误停宿主机生产探针 (Probe Test Isolation Fix)
 
 在装有探针的机器上跑一次 `npm test`，宿主机正在运行的探针会被停掉。

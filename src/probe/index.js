@@ -41,6 +41,10 @@ export function getProbeLauncherPath() {
   return join(getProbeDir(), IS_WIN ? 'probe.cmd' : 'probe.sh');
 }
 
+export function getProbeVbsLauncherPath() {
+  return join(getProbeDir(), 'probe-bg.vbs');
+}
+
 export function getAutostartPath() {
   if (process.env.NEXUS_STARTUP_DIR) {
     return join(process.env.NEXUS_STARTUP_DIR, IS_WIN ? 'Agent-Nexus Probe.vbs' : 'agent-nexus-probe.desktop');
@@ -225,6 +229,29 @@ function writeWindowsLauncher(entry) {
     ''
   ].join('\r\n');
   writeFileSync(launcher, content, 'utf8');
+
+  // 同步生成纯后台静默启动的 VBScript：
+  // 在 Windows 11 下，若默认终端被设为 Windows Terminal，任何经由 cmd.exe / node.exe 直接拉起
+  // 的控制台进程都会被 Windows Terminal 拦截并在前台弹出可见标签页/黑框。
+  // 使用 wscript.exe（GUI 子系统）配合窗口模式 0（SW_HIDE）启动，可彻底避免控制台黑框弹出。
+  const vbsLauncher = getProbeVbsLauncherPath();
+  const argv = entry?.executable
+    ? [entry.executable, ...buildProbeArgs(entry)]
+    : null;
+  const runLine = argv
+    ? `sh.Run ${quoteWin(argv.map((a) => `"${String(a).replace(/"/g, '""')}"`).join(' '))}, 0, False`
+    : `sh.Run ${quoteWin(launcher)}, 0, False`;
+  const vbsContent = [
+    "' Agent-Nexus background probe launcher (windowless).",
+    'Set sh = CreateObject("WScript.Shell")',
+    // 与自启项同口径：这个脚本会被反复拉起，工作目录不能指向安装时可能属于
+    // 临时解包目录的源码路径（v0.2.29 事故），缺省回落到家目录。
+    `sh.CurrentDirectory = ${quoteWin(entry?.cwd || homedir())}`,
+    runLine,
+    ''
+  ].join('\r\n');
+  writeFileSync(vbsLauncher, vbsContent, 'utf8');
+
   return launcher;
 }
 
@@ -531,18 +558,33 @@ export async function startProbe(options = {}) {
     );
   }
 
-  const child = IS_WIN
-    ? spawn(process.env.ComSpec || 'cmd.exe', ['/c', launcherPath], {
+  // Windows 下必须通过 wscript 以 SW_HIDE (0) 静默拉起：
+  // 若直接 spawn cmd.exe / node.exe，Windows Terminal 会拦截控制台创建并在前台弹窗/新建标签页。
+  const vbsPath = getProbeVbsLauncherPath();
+  const autostartVbs = getAutostartPath();
+  const targetVbs = IS_WIN
+    ? (existsSync(vbsPath) ? vbsPath : (existsSync(autostartVbs) ? autostartVbs : null))
+    : null;
+
+  const child = IS_WIN && targetVbs
+    ? spawn('wscript.exe', [targetVbs], {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
         cwd: entry.cwd || dirname(entry.cliPath)
       })
-    : spawn('sh', [launcherPath], {
-        detached: true,
-        stdio: 'ignore',
-        cwd: entry.cwd || dirname(entry.cliPath)
-      });
+    : IS_WIN
+      ? spawn(process.env.ComSpec || 'cmd.exe', ['/c', launcherPath], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          cwd: entry.cwd || dirname(entry.cliPath)
+        })
+      : spawn('sh', [launcherPath], {
+          detached: true,
+          stdio: 'ignore',
+          cwd: entry.cwd || dirname(entry.cliPath)
+        });
   child.unref();
 
   const deadline = Date.now() + (options.timeoutMs || 15000);
@@ -724,7 +766,7 @@ export async function uninstallProbe(options = {}) {
   await stopProbe(options);
 
   const removed = [];
-  for (const file of [getAutostartPath(), getProbeLauncherPath(), getProbeEntryPath(), getSystemdUnitPath()]) {
+  for (const file of [getAutostartPath(), getProbeLauncherPath(), getProbeVbsLauncherPath(), getProbeEntryPath(), getSystemdUnitPath()]) {
     try {
       if (existsSync(file)) {
         unlinkSync(file);
