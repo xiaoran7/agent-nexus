@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-10-27 修复探针用例误停宿主机生产探针 (Probe Test Isolation Fix)
+
+在装有探针的机器上跑一次 `npm test`，宿主机正在运行的探针会被停掉。
+
+### 改了什么
+
+- **`test/probe.test.js` 与 `test/probe-orphan.test.js` 补上 `XDG_CONFIG_HOME` 重定向**：
+  - 两个用例的 `withTempProbeDir()` 只隔离了 `NEXUS_PROBE_DIR` 与 `NEXUS_STARTUP_DIR`，但 `getSystemdUnitPath()` 的路径来源是 `XDG_CONFIG_HOME || ~/.config`，从未被重定向；
+  - `stopProbe()` 结尾会无条件执行 `systemctl --user stop agent-nexus-probe.service`（`existsSync(unit) && systemdUnitReachable()` 两个前置条件在生产机上恒成立），于是用例里每一次 `stopProbe` 都真实作用于宿主机单元；
+  - 现在两个 helper 都把 `XDG_CONFIG_HOME` 指向用例自己的临时目录，单元路径与 autostart 路径一起落在沙箱内。
+- **回归用例**：新增「用例把 systemd 单元路径重定向到临时目录」，断言 `XDG_CONFIG_HOME` 已指向 `tmpdir()` 且不等于 `~/.config`。
+
+### 验证
+
+- **真实事故复现**：美西机探针连续运行 20 小时后，本机执行一次 `npm test`，服务在 19:11:24 变为 `inactive (dead)`，日志显示 `Stopping agent-nexus-probe.service... Stopped`，随后已手动 `systemctl --user start` 恢复（`NRestarts=0`，`/` 返回 200，单实例）；
+- **修复后复查**：全量测试 **327 项**通过（原 326 项），测试前后 `systemctl --user is-active` 均为 `active`；
+- **未改运行时代码**，不涉及版本号变更与重新打包。
+
+---
+
 ## 2026-10-27 修复自启项钉死临时工作目录导致探针无限重启 (Probe Unit CWD Fix v0.2.29)
 
 美西机的 edge 探针实际上**从未成功启动过**：systemd 单元把工作目录钉在一个已被清掉的 `/tmp` 解包目录上。

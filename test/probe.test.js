@@ -29,10 +29,15 @@ function withTempProbeDir(t) {
   const prev = {
     NEXUS_PROBE_DIR: process.env.NEXUS_PROBE_DIR,
     NEXUS_STARTUP_DIR: process.env.NEXUS_STARTUP_DIR,
-    NEXUS_REMOTE_CONFIG_PATH: process.env.NEXUS_REMOTE_CONFIG_PATH
+    NEXUS_REMOTE_CONFIG_PATH: process.env.NEXUS_REMOTE_CONFIG_PATH,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME
   };
   process.env.NEXUS_PROBE_DIR = dir;
   process.env.NEXUS_STARTUP_DIR = startup;
+  // systemd 单元路径只认 XDG_CONFIG_HOME。不隔离它，用例里的 stopProbe
+  // 会 `systemctl --user stop agent-nexus-probe.service`，把宿主机上真正
+  // 在跑的探针停掉（实测：跑一次 npm test 就停掉了美西机的生产探针）。
+  process.env.XDG_CONFIG_HOME = dir;
   process.env.NEXUS_REMOTE_CONFIG_PATH = join(dir, 'remote.json');
   t.after(() => {
     for (const [k, v] of Object.entries(prev)) {
@@ -171,5 +176,26 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
     const value = line.slice('WorkingDirectory='.length);
     assert.equal(value, homedir(), '应回落到家目录，而不是安装时的 cwd');
     assert.notEqual(value, process.cwd(), '绝不能沿用安装进程的当前目录');
+  });
+
+  // 回归：用例必须把 systemd 单元路径也重定向掉。getSystemdUnitPath() 只认
+  // XDG_CONFIG_HOME，而 stopProbe 结尾会无条件 `systemctl --user stop
+  // agent-nexus-probe.service`。真实事故：在装有探针的机器上跑 npm test，
+  // 用例里的 stopProbe 把宿主机正在跑的探针停掉了（美西机已连续运行 20 小时，
+  // 跑一次全量测试后变成 inactive）。
+  await t.test('用例把 systemd 单元路径重定向到临时目录', () => {
+    if (process.platform === 'win32') return; // Windows 无 systemd 单元
+
+    const configHome = process.env.XDG_CONFIG_HOME;
+    assert.ok(configHome, 'XDG_CONFIG_HOME 必须被用例重定向');
+    assert.ok(
+      configHome.startsWith(tmpdir()),
+      `XDG_CONFIG_HOME 应指向临时目录: ${configHome}`
+    );
+    assert.notEqual(
+      configHome,
+      join(homedir(), '.config'),
+      '绝不能沿用宿主机的真实配置目录'
+    );
   });
 });

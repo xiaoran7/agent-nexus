@@ -17,10 +17,15 @@ function withTempProbeDir(t) {
   mkdirSync(startup, { recursive: true });
   const prev = {
     NEXUS_PROBE_DIR: process.env.NEXUS_PROBE_DIR,
-    NEXUS_STARTUP_DIR: process.env.NEXUS_STARTUP_DIR
+    NEXUS_STARTUP_DIR: process.env.NEXUS_STARTUP_DIR,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME
   };
   process.env.NEXUS_PROBE_DIR = dir;
   process.env.NEXUS_STARTUP_DIR = startup;
+  // systemd 单元路径只认 XDG_CONFIG_HOME。不隔离它，用例里的 stopProbe
+  // 会 `systemctl --user stop agent-nexus-probe.service`，把宿主机上真正
+  // 在跑的探针停掉（实测：跑一次 npm test 就停掉了美西机的生产探针）。
+  process.env.XDG_CONFIG_HOME = dir;
   t.after(() => {
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k];
