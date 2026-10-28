@@ -5,7 +5,7 @@
 // 桌面端是纯客户端，只连探针、绝不拉起它，两者可分别安装与升级。
 // =============================================================================
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync, truncateSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync, truncateSync, readdirSync, readlinkSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { homedir, hostname } from 'node:os';
@@ -618,6 +618,69 @@ export function parseSsPids(out) {
   return [...out.matchAll(/pid=(\d+)/g)].map((m) => Number(m[1]));
 }
 
+// 纯 /proc 兜底：act_runner 的 CI 容器（catthehacker/ubuntu）里既没有 lsof
+// 也没有 ss，少了这条端口反查永远返回空，stopProbe 只能看着孤儿探针继续跑。
+// /proc/net/tcp 的 st=0A 即 LISTEN，末列 inode 再去 /proc/<pid>/fd 里对符号链接。
+export function parseProcNetTcp(out, port) {
+  const needle = Number(port).toString(16).toUpperCase().padStart(4, '0');
+  const inodes = new Set();
+  for (const line of out.split('\n').slice(1)) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 10) continue;
+    const parts = f[1].split(':');
+    if (parts.length !== 2) continue;
+    if (parts[1].toUpperCase() !== needle) continue;
+    if (f[3].toUpperCase() !== '0A') continue;
+    inodes.add(f[9]);
+  }
+  return [...inodes];
+}
+
+function findPidsViaProc(port) {
+  const inodes = new Set();
+  for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    let content;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const inode of parseProcNetTcp(content, port)) inodes.add(inode);
+  }
+  if (inodes.size === 0) return [];
+
+  const pids = new Set();
+  let entries;
+  try {
+    entries = readdirSync('/proc');
+  } catch {
+    return [];
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    let fds;
+    try {
+      fds = readdirSync(`/proc/${entry}/fd`);
+    } catch {
+      continue;
+    }
+    for (const fd of fds) {
+      let target;
+      try {
+        target = readlinkSync(`/proc/${entry}/fd/${fd}`);
+      } catch {
+        continue;
+      }
+      const m = /^socket:\[(\d+)\]$/.exec(target);
+      if (m && inodes.has(m[1])) {
+        pids.add(Number(entry));
+        break;
+      }
+    }
+  }
+  return [...pids];
+}
+
 function findListeningPids(port) {
   const pids = new Set();
   try {
@@ -647,6 +710,12 @@ function findListeningPids(port) {
           }
           if (pids.size > 0) break;
         } catch {}
+      }
+      // lsof / ss 都不存在时（精简版 CI 容器），退回到只依赖 /proc 的路径。
+      if (pids.size === 0) {
+        for (const n of findPidsViaProc(port)) {
+          if (n > 0) pids.add(n);
+        }
       }
     }
   } catch {}

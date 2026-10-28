@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-10-29 修复 CI 容器内探针端口反查与 systemd 断言失效 (Probe CI Container Port Lookup v0.2.31)
+
+Gitea `act-runner` 跑在 `catthehacker/ubuntu:act-latest` 容器里，镜像既没有 `lsof` 也没有 `ss`，`systemctl --user` 也连不上 bus。结果 `tangwg/agent-nexus` 的 CI 从 run 69 起连续三次失败，而 GitHub Actions（完整 VM）一直全绿——本地看不出问题，只有容器环境才暴露。
+
+### 改了什么
+
+- **补齐纯 `/proc` 端口反查兜底 (`src/probe/index.js`)**：
+  - 新增 `parseProcNetTcp()` 与 `findPidsViaProc()`：解析 `/proc/net/tcp`、`/proc/net/tcp6` 中 `st=0A`（LISTEN）的 inode，再去 `/proc/<pid>/fd` 匹配 `socket:[inode]` 符号链接；
+  - `findListeningPids()` 在 `lsof` / `ss` 双双不可用时自动退化到该路径，不再返回空数组；
+  - 修复的连带后果：`stopProbe()` 端口反查失效会留下孤儿探针，`probe:status` 也会把失真 PID 当成唯一依据。
+- **纠正越界断言 (`test/probe.test.js`)**：
+  - 「安装时未显式给 cwd，不把临时工作目录写进自启项」原先无条件断言产物里有 `WorkingDirectory=`，但无 systemd user bus 时安装器写的是 XDG `.desktop`，该文件本就没有这个概念；
+  - 改为按实际产物分支：`.service` 断言 `WorkingDirectory=` 回落到家目录，`.desktop` 断言 `[Desktop Entry]` 存在。
+
+### 验证
+
+- `catthehacker/ubuntu:act-latest` 容器内 `npm test`：**328 pass / 0 fail**；
+- 美西机宿主机（有真实 systemd user bus，走 `.service` 分支）`npm test`：**328 pass / 0 fail**；
+- 修复前同一容器内复现：`test/probe-orphan.test.js` 两条端口反查用例失败 + systemd 断言失败，与 CI 日志完全一致。
+
+---
+
 ## 2026-10-27 修复 Windows 下守护进程启动被 Windows Terminal 拦截弹黑框 (Probe Windows Windowless Daemon v0.2.30)
 
 在 Windows 11 下，当系统默认终端应用设为 Windows Terminal 时，探针以守护进程拉起时会弹出可见黑框并在任务栏创建常驻标签页。

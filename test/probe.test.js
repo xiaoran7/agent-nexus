@@ -206,6 +206,14 @@ test('探针路径与自启项全部落在受控目录', async (t) => {
     assert.equal(res.entry.cwd, null, '未指定时不得记录安装进程的 cwd');
 
     const unit = readFileSync(res.autostartPath, 'utf8');
+    // 没有可用的 systemd user bus 时（容器化 CI 里的 `systemctl --user` 会报
+    // "Failed to connect to bus: No medium found"），安装器写的是 XDG .desktop，
+    // 它根本没有 WorkingDirectory 这个概念，这条断言只对 systemd 单元成立。
+    if (!res.autostartPath.endsWith('.service')) {
+      assert.match(unit, /^\[Desktop Entry\]$/m, '无 systemd 时应写 XDG .desktop');
+      return;
+    }
+
     const line = unit.split('\n').find((l) => l.startsWith('WorkingDirectory='));
     assert.ok(line, 'systemd 单元必须有 WorkingDirectory');
     const value = line.slice('WorkingDirectory='.length);
