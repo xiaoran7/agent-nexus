@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-11-02 修复跨机接力上下文注入盲区、Git 远端指纹识别与跨系统同文件互斥
+
+围绕 Windows 主力机 Hub 与远端 Linux 工作机（如 `us-zenix`）跨机接力链路，补齐从提交采集、同源工程识别、异构路径锁互斥到大模型上下文窗口注入的完整闭环。
+
+### 改了什么
+
+- **PreToolUse 标准输出上下文注入 (`src/hook/nexus-hook.mjs`)**：
+  - Claude Code 在 `exit(0)` 时默认隐藏 `stderr`，新增向 `stdout` 输出结构化 `hookSpecificOutput.additionalContext` JSON，确保下游会话的大模型直接收到上游主机、阶段目标、改动文件与接力动作；不附带 `permissionDecision` 以保留用户原有权限审批门禁。
+- **Git 提交真实上下文采集与超时无锁工单合成 (`src/hook/nexus-hook.mjs`, `src/daemon/coordinator.js`, `src/transport/rest.js`)**：
+  - Hook 在 `git commit` / `git push` 时自动提取真实 `HEAD` 提交标题与 `git diff-tree --root` 改动文件列表（校验提交时间戳防止空提交误读历史提交）；
+  - `releaseAgentLeases` 取消 `activeLeases.length === 0` 提前退出的限制，即使文件租约已在提交前自然过期，仍可结合 `gitContext` 与近期授权流水合成阶段交接工单。
+- **服务端按 Agent 投递去重与跨机自动演进 (`src/domain/handoff.js`, `src/daemon/coordinator.js`)**：
+  - `getPendingHandoff` 新增 `forHostId` 目标节点过滤与 `metadata.delivered_to_agents` 服务端去重；新一轮自动合成工单自动跨同源工程将旧自动合成工单演进为 `completed`。
+- **跨 OS 异构路径同文件写锁互斥与跨机唤醒 (`src/daemon/coordinator.js`)**：
+  - `findConflict`、`fastCheckAndAutoClaim` 与 `_wakeNextEligibleWaiter` 支持剥离各宿主根路径（如 `D:/...` 与 `/root/...`）按仓库相对路径互斥文件锁与模块锁并跨机唤醒排队会话，同时保持 `tests`、`dev-server`、`build` 等单机运行时资源锁按宿主隔离。
+- **Git Remote 指纹强等价识别与防串味隔离 (`src/storage/database.js`, `src/domain/project.js`, `src/daemon/bridge.js`)**：
+  - `projects` 表平滑新增 `git_remote` 列，幂等归一化 HTTPS / SSH / SCP 远端地址为 `host/owner/repo` 指纹；相同远端跨异名目录强聚合，不同远端跨同名目录严格隔离，无远端目录按父级目录消歧防止通用目录误合并。
+
+### 验证
+
+- 本机全量测试 `npm test`：**343 pass / 0 fail**（含 `test/cluster-handoff.test.js` 新增的 5 项跨机缺陷回归与真实临时 Git 仓库端到端注入验证）。
+
+---
+
 ## 2026-10-29 修复 CI 容器内探针端口反查与 systemd 断言失效 (Probe CI Container Port Lookup v0.2.31)
 
 Gitea `act-runner` 跑在 `catthehacker/ubuntu:act-latest` 容器里，镜像既没有 `lsof` 也没有 `ss`，`systemctl --user` 也连不上 bus。结果 `tangwg/agent-nexus` 的 CI 从 run 69 起连续三次失败，而 GitHub Actions（完整 VM）一直全绿——本地看不出问题，只有容器环境才暴露。

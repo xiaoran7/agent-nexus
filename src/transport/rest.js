@@ -592,6 +592,10 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           sessionId: data.session_id || null,
           hostId: data.host_id || null,
           projectId: data.project_id || 'default',
+          workspaceDir: data.workspace_dir || '',
+          projectRoot: data.project_root || null,
+          gitRemote: data.git_remote || data.gitRemote || null,
+          gitContext: data.git_context || data.gitContext || null,
           reason: data.reason || 'git_action',
           scope: data.scope || 'all'
         });
@@ -622,6 +626,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           projectId: data.project_id || 'default',
           workspaceDir: data.workspace_dir || '',
           projectRoot: data.project_root || null,
+          gitRemote: data.git_remote || data.gitRemote || null,
           pid: data.pid || null,
           livenessVerified: Boolean(data.liveness_verified),
           lastTool: data.tool || data.tool_name || null,
@@ -654,6 +659,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           toolTarget: data.target || data.tool_target || data.file_path,
           workspaceDir: data.workspace_dir || '',
           projectRoot: data.project_root || null,
+          gitRemote: data.git_remote || data.gitRemote || null,
           projectId: data.project_id || 'default',
           pid: data.pid || null,
           livenessVerified: Boolean(data.liveness_verified)

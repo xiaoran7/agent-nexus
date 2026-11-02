@@ -5,6 +5,7 @@
 
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { homedir } from 'node:os';
@@ -57,12 +58,14 @@ function collectLocalClaudePeerSessions() {
         let projectId = null;
         let projectRoot = null;
         let displayName = null;
+        let gitRemote = null;
         if (data.cwd) {
           try {
             const pInfo = resolveProject(data.cwd);
             projectId = pInfo.projectId;
             projectRoot = pInfo.projectRoot;
             displayName = pInfo.displayName;
+            gitRemote = pInfo.gitRemote || null;
           } catch {}
         }
 
@@ -74,6 +77,7 @@ function collectLocalClaudePeerSessions() {
           projectId,
           projectRoot,
           displayName,
+          gitRemote,
           status: data.status || 'idle',
           startedAt: data.startedAt || null,
           updatedAt: data.updatedAt || null,
@@ -298,6 +302,7 @@ function extractBashTarget(payload, workspaceDir) {
 
 // Git 提交与推送生命周期命令特征：用于工作完成后的零感租约自动释放
 const GIT_RELEASE_COMMAND_RE = /(?:^|[;&|]\s*)git\s+(?:commit|push)(?:\s|$)/i;
+const GIT_PUSH_COMMAND_RE = /(?:^|[;&|]\s*)git\s+push(?:\s|$)/i;
 
 function isGitCommitOrPush(payload) {
   const toolName = payload.tool_name;
@@ -307,6 +312,83 @@ function isGitCommitOrPush(payload) {
   if (typeof rawCommand !== 'string' || !rawCommand.trim()) return false;
 
   return GIT_RELEASE_COMMAND_RE.test(rawCommand);
+}
+
+function extractCommitMessageFromCommand(rawCommand) {
+  if (!rawCommand || typeof rawCommand !== 'string') return null;
+  // 1. 匹配 Claude Code 常用的 heredoc 提交格式: git commit -m "$(cat <<'EOF'\n标题\n...)"
+  const heredocMatch = rawCommand.match(/<<['"]?EOF['"]?\s*\r?\n([^\r\n]+)/i);
+  if (heredocMatch && heredocMatch[1].trim()) {
+    return heredocMatch[1].trim();
+  }
+  // 2. 匹配常规 -m "..." / -m '...' / --message="..."
+  const msgMatch = rawCommand.match(/(?:-m|--message)(?:=|\s+)(?:"([^"$`\r\n]+)"|'([^'\r\n]+)'|([^\s;&|"']+))/);
+  const candidate = (msgMatch && (msgMatch[1] || msgMatch[2] || msgMatch[3])) ? (msgMatch[1] || msgMatch[2] || msgMatch[3]).trim() : null;
+  return candidate || null;
+}
+
+function runGitQuick(args, cwd) {
+  try {
+    if (!cwd || !existsSync(cwd)) return '';
+    return execFileSync('git', args, {
+      cwd,
+      timeout: 600,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 提取真实的 Git 提交说明与涉及改动文件列表，供跨机接力工单精准合成
+ */
+function extractGitReleaseContext(payload, workspaceDir, isPost = false) {
+  const rawCommand = (payload.tool_input || payload.input || {}).command || '';
+  const isPush = GIT_PUSH_COMMAND_RE.test(rawCommand);
+  const cmdMsg = extractCommitMessageFromCommand(rawCommand);
+
+  let headSubject = null;
+  let headFiles = [];
+  let stagedFiles = [];
+
+  if (isPost || isPush) {
+    const logOut = runGitQuick(['log', '-1', '--pretty=%ct%n%s'], workspaceDir);
+    if (logOut) {
+      const lines = logOut.split(/\r?\n/);
+      const commitTs = parseInt(lines[0], 10);
+      const subject = (lines[1] || '').trim();
+      const nowSec = Math.floor(Date.now() / 1000);
+      // git push 直接信任 HEAD；git commit 的 PostToolUse 仅在 HEAD 是近期新生成提交时采信，防止空提交失败误读历史旧提交
+      if (subject && (isPush || (Number.isFinite(commitTs) && Math.abs(nowSec - commitTs) <= 120))) {
+        headSubject = subject;
+        const diffOut = runGitQuick(['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', 'HEAD'], workspaceDir);
+        if (diffOut) {
+          headFiles = diffOut.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        }
+      }
+    }
+  }
+
+  if (!isPost && !isPush) {
+    const stagedOut = runGitQuick(['diff', '--cached', '--name-only'], workspaceDir) ||
+                      (/\s-[a-zA-Z]*a/.test(rawCommand) ? runGitQuick(['diff', '--name-only', 'HEAD'], workspaceDir) : '');
+    if (stagedOut) {
+      stagedFiles = stagedOut.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    }
+  }
+
+  const lastCommit = (isPost ? headSubject : cmdMsg) || cmdMsg || headSubject || null;
+  const modifiedFiles = (isPost && headFiles.length > 0)
+    ? headFiles
+    : (stagedFiles.length > 0 ? stagedFiles : headFiles);
+
+  if (!lastCommit && modifiedFiles.length === 0) return null;
+  return {
+    ...(lastCommit ? { lastCommit } : {}),
+    ...(modifiedFiles.length > 0 ? { modifiedFiles } : {})
+  };
 }
 
 function notifyGitRelease(payload) {
@@ -385,7 +467,9 @@ function notifyResourceRelease(payload) {
   });
 }
 
-function printPendingHandoff(h, sessionId = 'global') {
+let stdoutHandoffEmitted = false;
+
+function printPendingHandoff(h, sessionId = 'global', hookEventName = 'PreToolUse') {
   if (!h || !h.id) return;
   const cachePath = join(homedir(), '.agent-nexus', '.notified-handoffs.json');
   try {
@@ -409,10 +493,37 @@ function printPendingHandoff(h, sessionId = 'global') {
   const fromHost = h.source_host_id ? `[${h.source_host_id}] ` : '';
   console.error(`\n[Agent-Nexus] 跨机接力上下文：检测到上游节点 ${fromHost}提交的阶段任务 "${h.objective}"`);
   if (h.modified_files && h.modified_files.length > 0) {
-    console.error(`  - 已改动文件: ${h.modified_files.slice(0, 3).join(', ')}${h.modified_files.length > 3 ? ` 等共 ${h.modified_files.length} 个文件` : ''}`);
+    console.error(`  - 已改动文件: ${h.modified_files.slice(0, 5).join(', ')}${h.modified_files.length > 5 ? ` 等共 ${h.modified_files.length} 个文件` : ''}`);
   }
   if (h.next_action) {
     console.error(`  - 建议接力动作: ${h.next_action}\n`);
+  }
+
+  // Claude Code 在 exit(0) 时会隐藏 stderr，必须通过 stdout 输出结构化 hookSpecificOutput.additionalContext
+  // 才能将跨机接力上下文真正注入大模型的上下文窗口；不传 permissionDecision 以保留用户原有的权限审批门禁。
+  if (!stdoutHandoffEmitted) {
+    stdoutHandoffEmitted = true;
+    const contextLines = [
+      `[Agent-Nexus 跨机接力上下文] 上游节点 ${fromHost}已提交最新阶段工作 (Handoff ID: ${h.id}):`,
+      `- 阶段目标: ${h.objective}`
+    ];
+    if (h.state_summary && h.state_summary !== h.objective) {
+      contextLines.push(`- 完成状态: ${h.state_summary}`);
+    }
+    if (Array.isArray(h.modified_files) && h.modified_files.length > 0) {
+      contextLines.push(`- 已改动文件: ${h.modified_files.slice(0, 10).join(', ')}${h.modified_files.length > 10 ? ` 等共 ${h.modified_files.length} 个文件` : ''}`);
+    }
+    if (h.next_action) {
+      contextLines.push(`- 建议接力动作: ${h.next_action}`);
+    }
+    contextLines.push(`提示: 若该仓库存在远端新提交，建议先检查 git status / git pull 同步上游改动后再开始编辑。`);
+
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: hookEventName || 'PreToolUse',
+        additionalContext: contextLines.join('\n')
+      }
+    }) + '\n');
   }
 }
 
@@ -545,11 +656,15 @@ async function main() {
     }
 
     if (isGitCommitOrPush(payload)) {
+      const gitContext = extractGitReleaseContext(payload, workspaceDir, true);
       const releaseRes = await notifyGitRelease({
         agent_id: identity.agentId,
         host_id: NODE_ID,
         session_id: identity.sessionId,
         project_id: projectInfo.projectId,
+        project_root: projectInfo.projectRoot,
+        git_remote: projectInfo.gitRemote || null,
+        git_context: gitContext,
         workspace_dir: workspaceDir,
         reason: 'git_lifecycle'
       });
@@ -574,12 +689,19 @@ async function main() {
   const rawPeers = IS_REMOTE_HUB ? collectLocalClaudePeerSessions() : null;
   const peerSessions = rawPeers && rawPeers.length > 0 ? rawPeers : undefined;
 
-  // 2. 优先检查生命周期动作：若执行 git commit / git push，说明当前施工单元完结，零感释放持有的所有租约
-  if (isGitCommitOrPush(payload)) {
+  // 2. 优先检查生命周期动作：
+  //    对于 Claude Code（携带 hook_event_name === 'PreToolUse' 且已配置 PostToolUse），留到命令真正成功后的 PostToolUse 再释放锁并提取 HEAD 提交，避免空提交失败提前放锁；
+  //    对于仅有前置钩子的宿主（如 Codex / ZCode），在此处直接提取暂存区上下文并释放租约。
+  if (isGitCommitOrPush(payload) && payload.hook_event_name !== 'PreToolUse') {
+    const gitContext = extractGitReleaseContext(payload, workspaceDir, false);
     const releaseRes = await notifyGitRelease({
       agent_id: identity.agentId,
       host_id: NODE_ID,
+      session_id: identity.sessionId,
       project_id: projectInfo.projectId,
+      project_root: projectInfo.projectRoot,
+      git_remote: projectInfo.gitRemote || null,
+      git_context: gitContext,
       workspace_dir: workspaceDir,
       reason: 'git_lifecycle'
     });
@@ -607,13 +729,14 @@ async function main() {
         target: toolTarget,
         workspace_dir: workspaceDir,
         project_root: projectInfo.projectRoot,
+        git_remote: projectInfo.gitRemote || null,
         project_id: projectInfo.projectId,
         pid: identity.pid,
         liveness_verified: identity.livenessVerified,
         ...(peerSessions ? { peer_sessions: peerSessions } : {})
       });
       if (telRes && telRes.pendingHandoff) {
-        printPendingHandoff(telRes.pendingHandoff, identity.sessionId);
+        printPendingHandoff(telRes.pendingHandoff, identity.sessionId, payload.hook_event_name || 'PreToolUse');
       }
     } catch {}
   }
@@ -633,6 +756,7 @@ async function main() {
       target: toolTarget || targetResource,
       project_id: projectInfo.projectId,
       project_root: projectInfo.projectRoot,
+      git_remote: projectInfo.gitRemote || null,
       workspace_dir: workspaceDir,
       pid: identity.pid,
       liveness_verified: identity.livenessVerified,
@@ -657,7 +781,7 @@ async function main() {
     }
 
     if (resourceRes.pendingHandoff) {
-      printPendingHandoff(resourceRes.pendingHandoff, identity.sessionId);
+      printPendingHandoff(resourceRes.pendingHandoff, identity.sessionId, payload.hook_event_name || 'PreToolUse');
     }
   }
 
@@ -679,6 +803,7 @@ async function main() {
     target: toolTarget || targetFile,
     project_id: projectInfo.projectId,
     project_root: projectInfo.projectRoot,
+    git_remote: projectInfo.gitRemote || null,
     workspace_dir: workspaceDir,
     pid: identity.pid,
     liveness_verified: identity.livenessVerified,
@@ -706,7 +831,7 @@ async function main() {
   }
 
   if (res.pendingHandoff) {
-    printPendingHandoff(res.pendingHandoff, identity.sessionId);
+    printPendingHandoff(res.pendingHandoff, identity.sessionId, payload.hook_event_name || 'PreToolUse');
   }
 
   process.exit(0);

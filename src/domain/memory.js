@@ -1,4 +1,5 @@
 import { requireString, ValidationError } from './errors.js';
+import { resolveEquivalentProjectIds } from './project.js';
 
 export const VALID_CATEGORIES = new Set(['architecture', 'rule', 'gotcha', 'milestone', 'general']);
 
@@ -27,32 +28,10 @@ export class ProjectMemoryService {
 
   /**
    * 解析跨机同源工程 ID 集合：
-   * 使本地与远端同名工程（如 Windows 与 Linux 下的同一个仓库）天然共享长期工程记忆。
+   * 优先通过 Git Remote 指纹强等价匹配，次选带通用目录防碰撞保护的仓库键匹配。
    */
   _resolveEquivalentProjectIds(pid) {
-    if (!pid || pid === 'all' || pid === 'default') return [pid || 'default'];
-    const ids = new Set([pid]);
-    try {
-      const row = this._stmt(`SELECT display_name, root_path FROM projects WHERE id = ?`).get(pid);
-      const rawName = row?.display_name || (row?.root_path ? row.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : null);
-      if (rawName) {
-        const baseName = rawName.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
-        if (baseName && baseName !== 'default project' && !baseName.startsWith('project (')) {
-          const peers = this._stmt(`
-            SELECT id, display_name, root_path FROM projects
-            WHERE id != 'all' AND id != ''
-          `).all();
-          for (const p of peers) {
-            const pRaw = p.display_name || (p.root_path ? p.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : '');
-            const pBase = pRaw.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
-            if (pBase === baseName) {
-              ids.add(p.id);
-            }
-          }
-        }
-      }
-    } catch {}
-    return [...ids];
+    return resolveEquivalentProjectIds(this.db, pid, (sql) => this._stmt(sql));
   }
 
   set(projectId, { category = 'general', key, content, sourceAgentId = null }) {

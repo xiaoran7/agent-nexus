@@ -21,12 +21,14 @@ export function buildLocalSessionPayload(sessionsDir = null) {
     let projectId = null;
     let projectRoot = null;
     let displayName = null;
+    let gitRemote = null;
     if (s.cwd) {
       try {
         const pInfo = resolveProject(s.cwd);
         projectId = pInfo.projectId;
         projectRoot = pInfo.projectRoot;
         displayName = pInfo.displayName;
+        gitRemote = pInfo.gitRemote || null;
       } catch {}
     }
 
@@ -38,6 +40,7 @@ export function buildLocalSessionPayload(sessionsDir = null) {
       projectId,
       projectRoot,
       displayName,
+      gitRemote,
       status: s.status || 'idle',
       startedAt: s.startedAt || null,
       updatedAt: s.updatedAt || null,

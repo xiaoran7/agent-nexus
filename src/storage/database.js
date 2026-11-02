@@ -26,6 +26,7 @@ export function createDatabase(customPath = null) {
       root_path TEXT NOT NULL,
       display_name TEXT,
       host_id TEXT DEFAULT 'local',
+      git_remote TEXT,
       created_at INTEGER NOT NULL,
       last_activity INTEGER NOT NULL
     );
@@ -247,9 +248,14 @@ function migrateOldSchemaIfNeeded(db) {
     }
   }
 
-  // 针对 projects 表的跨节点标识补列
+  // 针对 projects 表的跨节点标识与 Git 远端指纹补列
   try {
     db.exec(`ALTER TABLE projects ADD COLUMN host_id TEXT DEFAULT 'local';`);
+  } catch {
+    // 忽略已存在列
+  }
+  try {
+    db.exec(`ALTER TABLE projects ADD COLUMN git_remote TEXT;`);
   } catch {
     // 忽略已存在列
   }

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { requireString } from './errors.js';
+import { resolveEquivalentProjectIds } from './project.js';
 
 /**
  * 跨机与跨会话工作交接服务 (PowerContext Work Handoff Service)
@@ -28,33 +29,12 @@ export class ProjectHandoffService {
 
   /**
    * 解析跨机同源工程 ID 集合：
-   * 解决本地 Windows (D:\...\Agent-Nexus) 与远端 Linux (/root/.../Agent-Nexus)
-   * 因跨 OS 绝对路径哈希不同导致生成的 projectId 不一致、无法跨机共享同一仓库交接工单的问题。
+   * 优先按 Git Remote 指纹强等价匹配，次选带通用目录防碰撞保护的仓库键匹配。
    */
   _resolveEquivalentProjectIds(pid) {
     if (!pid || pid === 'all' || pid === 'default') return [pid || 'default'];
-    const ids = new Set([pid, 'default']);
-    try {
-      const row = this._stmt(`SELECT display_name, root_path FROM projects WHERE id = ?`).get(pid);
-      const rawName = row?.display_name || (row?.root_path ? row.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : null);
-      if (rawName) {
-        const baseName = rawName.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
-        if (baseName && baseName !== 'default project' && !baseName.startsWith('project (')) {
-          const peers = this._stmt(`
-            SELECT id, display_name, root_path FROM projects
-            WHERE id != 'all' AND id != ''
-          `).all();
-          for (const p of peers) {
-            const pRaw = p.display_name || (p.root_path ? p.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : '');
-            const pBase = pRaw.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
-            if (pBase === baseName) {
-              ids.add(p.id);
-            }
-          }
-        }
-      }
-    } catch {}
-    return [...ids];
+    const eq = resolveEquivalentProjectIds(this.db, pid, (sql) => this._stmt(sql));
+    return [...new Set([...eq, 'default'])];
   }
 
   /**
@@ -101,16 +81,23 @@ export class ProjectHandoffService {
     const metaObj = metadata && typeof metadata === 'object' ? metadata : {};
     const metaJson = JSON.stringify(metaObj);
 
-    // 若为自动合成的新一轮阶段提交，自动将同项目此前未认领的旧自动合成工单演进为 completed，避免过期接力堆积
-    if (metaObj.auto_synthesized) {
-      try {
+    // 若为新一轮阶段提交，自动将同源工程集合内此前未闭环的旧自动合成工单（或已投递给当前 Agent 的工单）演进为 completed，避免过期接力堆积
+    try {
+      const eqIds = resolveEquivalentProjectIds(this.db, finalProjectId, (sql) => this._stmt(sql));
+      const placeholders = eqIds.map(() => '?').join(', ');
+      if (metaObj.auto_synthesized) {
         this._stmt(`
           UPDATE project_handoffs
-          SET status = 'completed', updated_at = ?
-          WHERE project_id = ? AND status = 'pending' AND instr(metadata, '"auto_synthesized":true') > 0
-        `).run(now, finalProjectId);
-      } catch {}
-    }
+          SET status = 'completed',
+              consumed_by_agent_id = COALESCE(consumed_by_agent_id, ?),
+              consumed_at = COALESCE(consumed_at, ?),
+              updated_at = ?
+          WHERE project_id IN (${placeholders})
+            AND status IN ('pending', 'in_progress')
+            AND (instr(metadata, '"auto_synthesized":true') > 0 OR consumed_by_agent_id = ?)
+        `).run(finalAgentId, now, now, ...eqIds, finalAgentId);
+      }
+    } catch {}
 
     this._stmt(`
       INSERT INTO project_handoffs (
@@ -154,6 +141,7 @@ export class ProjectHandoffService {
 
     const excludeAgentId = options.excludeAgentId || options.exclude_agent_id || null;
     const forHostId = options.forHostId || options.for_host_id || options.targetHostId || options.target_host_id || null;
+    const recordDeliveryForAgent = options.recordDeliveryForAgent || null;
 
     const eqIds = this._resolveEquivalentProjectIds(pid);
     const placeholders = eqIds.map(() => '?').join(', ');
@@ -169,13 +157,38 @@ export class ProjectHandoffService {
       params.push(excludeAgentId);
     }
     if (forHostId) {
-      sql += ` AND (target_host_id IS NULL OR target_host_id = ? OR target_host_id = 'all')`;
+      sql += ` AND (target_host_id IS NULL OR LOWER(target_host_id) = LOWER(?) OR target_host_id = 'all')`;
       params.push(forHostId);
     }
 
-    sql += ` ORDER BY created_at DESC LIMIT 1`;
-    const row = this._stmt(sql).get(...params);
-    return row ? this._formatRow(row) : null;
+    sql += ` ORDER BY created_at DESC LIMIT 5`;
+    const rows = this._stmt(sql).all(...params);
+    if (!rows || rows.length === 0) return null;
+
+    for (const row of rows) {
+      const formatted = this._formatRow(row);
+      const deliveredAgents = Array.isArray(formatted.metadata?.delivered_to_agents)
+        ? formatted.metadata.delivered_to_agents
+        : [];
+      // 若指定了 recordDeliveryForAgent 且该 Agent 已经接收过此工单，则服务端直接跳过，避免重复投递
+      if (recordDeliveryForAgent && deliveredAgents.includes(recordDeliveryForAgent)) {
+        continue;
+      }
+      if (recordDeliveryForAgent) {
+        try {
+          const nextMeta = {
+            ...(formatted.metadata || {}),
+            delivered_to_agents: [...new Set([...deliveredAgents, recordDeliveryForAgent])],
+            last_delivered_at: Date.now()
+          };
+          this._stmt(`UPDATE project_handoffs SET metadata = ?, updated_at = ? WHERE id = ?`)
+            .run(JSON.stringify(nextMeta), Date.now(), formatted.id);
+          formatted.metadata = nextMeta;
+        } catch {}
+      }
+      return formatted;
+    }
+    return null;
   }
 
   /**

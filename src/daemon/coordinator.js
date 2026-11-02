@@ -3,7 +3,17 @@ import { normalize, resolve, isAbsolute, join, posix } from 'node:path';
 import { existsSync, realpathSync, readdirSync, readFileSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { ValidationError, requireString } from '../domain/errors.js';
-import { resolveProject, resolveProjectDisplayName, getLocalNodeId, normalizeNodeId, isSameNode } from '../domain/project.js';
+import {
+  resolveProject,
+  resolveProjectDisplayName,
+  getLocalNodeId,
+  normalizeNodeId,
+  isSameNode,
+  normalizeGitRemoteUrl,
+  extractGitRemoteFingerprint,
+  resolveEquivalentProjectIds,
+  toRepoRelativePath
+} from '../domain/project.js';
 
 export { ValidationError };
 
@@ -428,16 +438,55 @@ export class CoordinatorEngine {
     return a.startsWith(b + '/') || b.startsWith(a + '/');
   }
 
-  // 四级冲突判定的唯一实现，加入 projectId 作用域与资源锁互斥，支持 #anchor 大文件细粒度锁
-  findConflict(normalizedClaims, agentId, now, projectId = 'default') {
+  /**
+   * 解析同源跨机工程集合及其各自的项目根路径映射，用于跨 OS 检出同一 Git 仓库时的相对路径对齐与冲突互斥
+   */
+  _resolveEquivalentProjectContext(projectId) {
+    const pid = projectId || 'default';
+    if (pid === 'all' || pid === 'default') {
+      return { eqIds: [pid], rootMap: new Map() };
+    }
+    const eqIds = resolveEquivalentProjectIds(this.db, pid, (sql) => this._stmt(sql));
+    const rootMap = new Map();
+    try {
+      const placeholders = eqIds.map(() => '?').join(', ');
+      const rows = this._all(`SELECT id, root_path FROM projects WHERE id IN (${placeholders})`, eqIds);
+      for (const r of rows) {
+        if (r.root_path) {
+          rootMap.set(r.id, r.root_path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase());
+        }
+      }
+    } catch {}
+    return { eqIds, rootMap };
+  }
+
+  _toRepoRelativeTarget(baseTarget, projectId, rootMap = null, fallbackRoot = null) {
+    if (!baseTarget) return '';
+    const cleanTarget = baseTarget.replace(/\\/g, '/').toLowerCase();
+    const rawRoot = (rootMap && projectId ? rootMap.get(projectId) : null) || fallbackRoot;
+    if (rawRoot) {
+      const cleanRoot = rawRoot.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+      if (cleanRoot && cleanTarget.startsWith(cleanRoot + '/')) {
+        return cleanTarget.slice(cleanRoot.length + 1);
+      }
+    }
+    return cleanTarget;
+  }
+
+  // 四级冲突判定的唯一实现，加入跨机同源工程作用域与资源锁互斥，支持 #anchor 大文件细粒度锁
+  findConflict(normalizedClaims, agentId, now, projectId = 'default', projectRoot = null) {
+    const { eqIds, rootMap } = this._resolveEquivalentProjectContext(projectId);
+    const placeholders = eqIds.map(() => '?').join(', ');
     const activeClaims = this._all(`
-      SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, l.expires_at,
-             a.name as agent_name, a.workspace_dir as holder_workspace
+      SELECT c.project_id, c.claim_type, c.claim_target, c.agent_id, l.intent_id, l.expires_at,
+             a.name as agent_name, a.host_id as holder_host_id, a.workspace_dir as holder_workspace
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
-      WHERE (l.project_id = ? OR l.project_id = 'default' OR ? = 'default') AND l.expires_at > ? AND (c.project_id = ? OR c.project_id = 'default' OR ? = 'default')
-    `, [projectId, projectId, now, projectId, projectId]);
+      WHERE (l.project_id IN (${placeholders}) OR l.project_id = 'default' OR ? = 'default')
+        AND l.expires_at > ?
+        AND (c.project_id IN (${placeholders}) OR c.project_id = 'default' OR ? = 'default')
+    `, [...eqIds, projectId, now, ...eqIds, projectId]);
 
     for (const claim of normalizedClaims) {
       for (const active of activeClaims) {
@@ -445,10 +494,17 @@ export class CoordinatorEngine {
           continue;
         }
 
+        // 命名排他资源锁（如 tests, dev-server, build）属于单机运行环境资源（端口/CPU），仅在相同 projectId 下互斥
+        if ((claim.type === 'resource' || active.claim_type === 'resource') &&
+            active.project_id !== projectId && active.project_id !== 'default' && projectId !== 'default') {
+          continue;
+        }
+
         const remainingSec = Math.max(0, Math.ceil((active.expires_at - now) / 1000));
         const meta = {
           blockedByAgentId: active.agent_id,
           blockedByAgentName: active.agent_name,
+          holderHostId: active.holder_host_id || null,
           holderWorkspace: active.holder_workspace || '',
           claimType: active.claim_type,
           claimTarget: active.claim_target,
@@ -456,21 +512,24 @@ export class CoordinatorEngine {
           remainingSec
         };
 
-        // Rule 1: 文件精确重合或大文件锚点判定 (#anchor)
+        // Rule 1: 文件精确重合或跨机同源仓库相对路径重合，以及大文件锚点判定 (#anchor)
         if (claim.type === 'file' && active.claim_type === 'file') {
           const { baseTarget: baseA, anchor: anchorA } = splitTargetAnchor(claim.target);
           const { baseTarget: baseB, anchor: anchorB } = splitTargetAnchor(active.claim_target);
+          const relA = this._toRepoRelativeTarget(baseA, projectId, rootMap, projectRoot);
+          const relB = this._toRepoRelativeTarget(baseB, active.project_id, rootMap, active.holder_workspace);
 
-          if (baseA === baseB) {
+          if (baseA === baseB || (relA && relB && relA === relB && relA !== baseA.replace(/\\/g, '/').toLowerCase())) {
             // 如果双方都显式指定了不同的 anchor，属于文件不同逻辑区域，允许并发施工
             if (anchorA && anchorB && anchorA !== anchorB) {
               continue;
             }
 
             const isAnchorConflict = Boolean(anchorA && anchorB);
+            const displayTarget = baseA === baseB ? baseA : relA;
             const reason = isAnchorConflict
-              ? `Anchor conflict: Section '#${anchorA}' in '${baseA}' is currently locked by ${active.agent_name}`
-              : `File conflict: '${baseA}' ${!anchorB ? 'whole file is locked by' : "section '#" + anchorB + "' is locked by"} ${active.agent_name}`;
+              ? `Anchor conflict: Section '#${anchorA}' in '${displayTarget}' is currently locked by ${active.agent_name}`
+              : `File conflict: '${displayTarget}' ${!anchorB ? 'whole file is locked by' : "section '#" + anchorB + "' is locked by"} ${active.agent_name}`;
 
             return {
               ...meta,
@@ -483,8 +542,10 @@ export class CoordinatorEngine {
         if (claim.type === 'module' || active.claim_type === 'module') {
           const targetA = claim.type === 'file' ? splitTargetAnchor(claim.target).baseTarget : claim.target;
           const targetB = active.claim_type === 'file' ? splitTargetAnchor(active.claim_target).baseTarget : active.claim_target;
+          const relA = this._toRepoRelativeTarget(targetA, projectId, rootMap, projectRoot);
+          const relB = this._toRepoRelativeTarget(targetB, active.project_id, rootMap, active.holder_workspace);
 
-          if (this.pathsOverlap(targetA, targetB)) {
+          if (this.pathsOverlap(targetA, targetB) || (relA && relB && active.project_id !== projectId && this.pathsOverlap(relA, relB))) {
             return {
               ...meta,
               reason: `Module conflict between '${claim.target}' and '${active.claim_target}' held by ${active.agent_name}`
@@ -696,15 +757,17 @@ export class CoordinatorEngine {
             const rawRoot = projectRoot || sess.cwd;
             const canonicalRoot = toComparablePath(rawRoot);
             const displayName = resolvedDisplay || resolveProjectDisplayName(rawRoot, canonicalRoot, projectId);
-            this.db.prepare(`
-              INSERT INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
-              VALUES (?, ?, ?, ?, ?, ?)
+            const gitRemote = sess.gitRemote ? normalizeGitRemoteUrl(sess.gitRemote) : null;
+            this._stmt(`
+              INSERT INTO projects (id, root_path, display_name, host_id, git_remote, created_at, last_activity)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
                 display_name = CASE WHEN excluded.display_name IS NOT NULL AND excluded.display_name != '' THEN excluded.display_name ELSE projects.display_name END,
                 host_id = COALESCE(excluded.host_id, projects.host_id),
+                git_remote = COALESCE(excluded.git_remote, projects.git_remote),
                 last_activity = excluded.last_activity
-            `).run(projectId, projectRoot, displayName, cleanHost, now, now);
+            `).run(projectId, projectRoot, displayName, cleanHost, gitRemote, now, now);
           } catch {}
         }
 
@@ -881,15 +944,20 @@ export class CoordinatorEngine {
     stmt.run(id, finalProjectId, finalHostId, finalName, finalProvider, finalSessionId, workspaceDir || '', now, now, finalPid, cleanTool, cleanAction, cleanTarget, livenessVerified);
 
     const effectiveProjPath = projectRootParam || workspaceDir;
-    if (effectiveProjPath && finalProjectId && finalProjectId !== 'all') {
+    const rawGitRemote = params.gitRemote || params.git_remote || null;
+    if ((effectiveProjPath || rawGitRemote) && finalProjectId && finalProjectId !== 'all') {
       try {
-        const canonicalRoot = toComparablePath(effectiveProjPath);
+        const canonicalRoot = effectiveProjPath ? toComparablePath(effectiveProjPath) : '';
         // projectRoot 可能已被 canonicalizePath 统一小写，workspaceDir 才是用户侧原始大小写
-        const displayPath = pickDisplayPath([projectRootParam, workspaceDir], canonicalRoot);
+        const displayPath = effectiveProjPath ? pickDisplayPath([projectRootParam, workspaceDir], canonicalRoot) : '';
         const displayName = resolveProjectDisplayName(displayPath, canonicalRoot, finalProjectId);
+        const existingProj = this._get('SELECT git_remote FROM projects WHERE id = ?', [finalProjectId]);
+        const gitRemote = rawGitRemote
+          ? normalizeGitRemoteUrl(rawGitRemote)
+          : (!existingProj?.git_remote && isLocalAgent && effectiveProjPath ? extractGitRemoteFingerprint(effectiveProjPath) : null);
         this._stmt(`
-          INSERT INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO projects (id, root_path, display_name, host_id, git_remote, created_at, last_activity)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             root_path = CASE WHEN projects.root_path IS NULL OR projects.root_path = '' THEN excluded.root_path ELSE projects.root_path END,
             display_name = CASE
@@ -904,8 +972,9 @@ export class CoordinatorEngine {
               ELSE projects.display_name
             END,
             host_id = COALESCE(excluded.host_id, projects.host_id),
+            git_remote = COALESCE(excluded.git_remote, projects.git_remote),
             last_activity = excluded.last_activity
-        `).run(finalProjectId, effectiveProjPath, displayName, finalHostId, now, now);
+        `).run(finalProjectId, effectiveProjPath || '', displayName, finalHostId, gitRemote, now, now);
       } catch {}
     }
 
@@ -947,6 +1016,7 @@ export class CoordinatorEngine {
         sessionId: params.sessionId || params.session_id,
         workspaceDir: params.workspaceDir || params.workspace_dir,
         projectRoot: params.projectRoot || params.project_root || null,
+        gitRemote: params.gitRemote || params.git_remote || null,
         projectId: finalProjectId,
         pid: finalPid,
         lastTool: cleanTool,
@@ -967,6 +1037,15 @@ export class CoordinatorEngine {
             pid = CASE WHEN ? IS NOT NULL THEN ? ELSE pid END
         WHERE id = ?
       `).run(now, cleanHost, livenessStamp, cleanTool, cleanAction, cleanTarget, finalPid, finalPid, agentId);
+      const rawGitRemote = params.gitRemote || params.git_remote || null;
+      if (rawGitRemote && finalProjectId && finalProjectId !== 'default' && finalProjectId !== 'all') {
+        try {
+          const normRemote = normalizeGitRemoteUrl(rawGitRemote);
+          if (normRemote) {
+            this._run('UPDATE projects SET git_remote = COALESCE(git_remote, ?), last_activity = ? WHERE id = ?', [normRemote, now, finalProjectId]);
+          }
+        } catch {}
+      }
     }
 
     if (this.clusterNodeService && cleanHost) {
@@ -996,7 +1075,11 @@ export class CoordinatorEngine {
     let pendingHandoff = null;
     if (this.handoffService) {
       try {
-        pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId || agent?.project_id || 'default', { excludeAgentId: agentId });
+        pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId || agent?.project_id || 'default', {
+          excludeAgentId: agentId,
+          forHostId: cleanHost || agent?.host_id || this.localNodeId,
+          recordDeliveryForAgent: agentId
+        });
       } catch {}
     }
 
@@ -1085,7 +1168,7 @@ export class CoordinatorEngine {
       });
     }
 
-    let conflict = this.findConflict(normalizedClaims, agentId, now, finalProjectId);
+    let conflict = this.findConflict(normalizedClaims, agentId, now, finalProjectId, effectiveProjectRoot);
 
     if (!conflict) {
       this.db.prepare(`
@@ -1232,31 +1315,132 @@ export class CoordinatorEngine {
     };
   }
 
-  // 3.1 批量释放指定 Agent 的全部或指定范围租约 (用于 git commit / git push 后的零感自动释放)
-  releaseAgentLeases({ agentId: rawAgentId, sessionId = null, hostId = null, projectId = 'default', reason = 'git_action', scope = 'all' }) {
+  // 3.1 批量释放指定 Agent 的全部或指定范围租约 (用于 git commit / git push 后的零感自动释放与阶段工单合成)
+  releaseAgentLeases({ agentId: rawAgentId, sessionId = null, hostId = null, projectId = 'default', workspaceDir = '', projectRoot = null, gitRemote = null, gitContext = null, reason = 'git_action', scope = 'all' }) {
     requireAgentId(rawAgentId);
-    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, hostId);
+    const targetHost = hostId ? normalizeNodeId(hostId) : null;
+    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, targetHost || this.localNodeId);
     const now = Date.now();
     const finalProjectId = projectId || 'default';
+    const isGitRelease = reason === 'git_action' || reason === 'git_lifecycle';
 
+    if (isGitRelease && !this.getAgent(agentId) && (targetHost || workspaceDir || projectRoot)) {
+      this.registerAgent({
+        id: agentId,
+        hostId: targetHost || this.localNodeId,
+        sessionId: sessionId || agentId,
+        workspaceDir: workspaceDir || '',
+        projectRoot: projectRoot || null,
+        gitRemote: gitRemote || null,
+        projectId: finalProjectId
+      });
+    } else if (gitRemote && finalProjectId && finalProjectId !== 'default' && finalProjectId !== 'all') {
+      try {
+        const normRemote = normalizeGitRemoteUrl(gitRemote);
+        if (normRemote) {
+          this._run('UPDATE projects SET git_remote = COALESCE(git_remote, ?), last_activity = ? WHERE id = ?', [normRemote, now, finalProjectId]);
+        }
+      } catch {}
+    }
+
+    const synthesizeHandoffIfApplicable = (releasedClaimsList = [], releasedSummaries = []) => {
+      if (!this.handoffService || !isGitRelease) return null;
+      try {
+        const agent = this.getAgent(agentId);
+        const { rootMap } = this._resolveEquivalentProjectContext(finalProjectId);
+        const fallbackRoot = projectRoot || workspaceDir || agent?.workspace_dir || '';
+
+        const gitFiles = Array.isArray(gitContext?.modifiedFiles)
+          ? gitContext.modifiedFiles.map(f => String(f || '').trim()).filter(Boolean)
+          : [];
+        const claimFiles = releasedClaimsList
+          .filter(c => c.type !== 'resource')
+          .map(c => {
+            const raw = c.target || c.claim_target || '';
+            if (!raw) return '';
+            const { baseTarget } = splitTargetAnchor(raw);
+            return toRepoRelativePath(baseTarget, rootMap.get(finalProjectId) || fallbackRoot, fallbackRoot) || baseTarget;
+          })
+          .filter(Boolean);
+
+        let fallbackHistoryFiles = [];
+        if (gitFiles.length === 0 && claimFiles.length === 0) {
+          const recentGrants = this._all(`
+            SELECT target FROM activity_log
+            WHERE agent_id = ? AND (project_id = ? OR project_id = 'default')
+              AND event_type = 'intent:granted' AND created_at > ?
+            ORDER BY created_at DESC LIMIT 5
+          `, [agentId, finalProjectId, now - 7200000]);
+          for (const g of recentGrants) {
+            if (!g.target) continue;
+            for (const part of g.target.split(',').map(s => s.trim()).filter(Boolean)) {
+              if (!['tests', 'dev-server', 'build'].includes(part.toLowerCase())) {
+                const { baseTarget } = splitTargetAnchor(part);
+                fallbackHistoryFiles.push(
+                  toRepoRelativePath(baseTarget, rootMap.get(finalProjectId) || fallbackRoot, fallbackRoot) || baseTarget
+                );
+              }
+            }
+          }
+        }
+
+        const mergedFiles = [...new Set([...gitFiles, ...claimFiles, ...fallbackHistoryFiles])];
+
+        let objective = (gitContext?.lastCommit && String(gitContext.lastCommit).trim()) ||
+                        agent?.current_intent ||
+                        releasedSummaries.find(Boolean) ||
+                        null;
+        if (!objective) {
+          const recentIntent = this._get(`
+            SELECT summary FROM intents
+            WHERE agent_id = ? AND (project_id = ? OR project_id = 'default') AND updated_at > ?
+            ORDER BY updated_at DESC LIMIT 1
+          `, [agentId, finalProjectId, now - 7200000]);
+          if (recentIntent?.summary) {
+            objective = recentIntent.summary;
+          }
+        }
+
+        if (!objective && mergedFiles.length === 0) return null;
+
+        return this.handoffService.autoSynthesizeFromRelease(
+          finalProjectId,
+          {
+            ...(agent || {}),
+            id: agentId,
+            host_id: targetHost || agent?.host_id || this.localNodeId,
+            session_id: sessionId || agent?.session_id || null,
+            provider: agent?.provider || 'claude',
+            current_intent: objective
+          },
+          mergedFiles
+        );
+      } catch {
+        return null;
+      }
+    };
+
+    // 同时扫描尚未被后台定时器清理的已到期租约，确保它们的残留锁一并干净回收，同时保留文件记录用于合成接力工单
     const activeLeases = (projectId && projectId !== 'all')
       ? this.db.prepare(`
           SELECT l.id, l.intent_id, l.project_id
           FROM leases l
-          WHERE l.agent_id = ? AND (l.project_id = ? OR l.project_id = 'default') AND l.expires_at > ?
-        `).all(agentId, finalProjectId, now)
+          WHERE l.agent_id = ? AND (l.project_id = ? OR l.project_id = 'default')
+        `).all(agentId, finalProjectId)
       : this.db.prepare(`
           SELECT l.id, l.intent_id, l.project_id
           FROM leases l
-          WHERE l.agent_id = ? AND l.expires_at > ?
-        `).all(agentId, now);
+          WHERE l.agent_id = ?
+        `).all(agentId);
 
     if (activeLeases.length === 0) {
+      const synthesized = synthesizeHandoffIfApplicable([], []);
       return {
         success: true,
         releasedCount: 0,
         releasedLeases: [],
-        notifiedWaiters: []
+        notifiedWaiters: [],
+        ...(synthesized ? { handoffId: synthesized.id } : {})
       };
     }
 
@@ -1265,6 +1449,7 @@ export class CoordinatorEngine {
 
     const allReleasedClaims = [];
     const releasedLeaseIds = [];
+    const releasedIntentSummaries = [];
 
     for (const lease of activeLeases) {
       const claims = this.db.prepare(`
@@ -1272,6 +1457,7 @@ export class CoordinatorEngine {
       `).all(lease.intent_id).map(c => ({ type: c.claim_type, target: c.claim_target }));
 
       const intentRow = this.db.prepare('SELECT summary FROM intents WHERE id = ?').get(lease.intent_id);
+      if (intentRow?.summary) releasedIntentSummaries.push(intentRow.summary);
 
       allReleasedClaims.push(...claims);
       releasedLeaseIds.push(lease.id);
@@ -1339,19 +1525,15 @@ export class CoordinatorEngine {
       });
     }
 
-    if (this.handoffService && releasedLeaseIds.length > 0 && (reason === 'git_action' || reason === 'git_lifecycle')) {
-      try {
-        const agent = this.getAgent(agentId);
-        this.handoffService.autoSynthesizeFromRelease(finalProjectId, agent, allReleasedClaims);
-      } catch {}
-    }
+    const synthesized = synthesizeHandoffIfApplicable(allReleasedClaims, releasedIntentSummaries);
 
     return {
       success: true,
       releasedCount: releasedLeaseIds.length,
       releasedLeases: releasedLeaseIds,
       releasedClaims: allReleasedClaims,
-      notifiedWaiters
+      notifiedWaiters,
+      ...(synthesized ? { handoffId: synthesized.id } : {})
     };
   }
 
@@ -1411,7 +1593,7 @@ export class CoordinatorEngine {
     }
   }
 
-  // 内部辅助方法：复核并唤醒等待队列中首个满足条件的 Agent
+  // 内部辅助方法：复核并唤醒等待队列中首个满足条件的 Agent（支持跨机同源工程联合唤醒）
   _wakeNextEligibleWaiter(projectId, now, freedInfo = null) {
     const breadthOf = (intentId) => this.db.prepare(`
       SELECT COALESCE(SUM(
@@ -1422,14 +1604,17 @@ export class CoordinatorEngine {
       FROM claims WHERE intent_id = ?
     `).get(intentId);
 
+    const { eqIds } = this._resolveEquivalentProjectContext(projectId);
+    const placeholders = eqIds.map(() => '?').join(', ');
+
     const candidates = this.db.prepare(`
-      SELECT w.intent_id, w.agent_id, i.summary, a.name as agent_name
+      SELECT w.intent_id, w.agent_id, w.project_id, i.summary, a.name as agent_name
       FROM wait_queue w
       JOIN intents i ON w.intent_id = i.id
       JOIN agents a ON w.agent_id = a.id
-      WHERE w.project_id = ?
+      WHERE w.project_id IN (${placeholders})
       ORDER BY w.id ASC
-    `).all(projectId).map((c) => ({ ...c, breadth: breadthOf(c.intent_id) }))
+    `).all(...eqIds).map((c) => ({ ...c, breadth: breadthOf(c.intent_id) }))
       .sort((a, b) => (b.breadth.segments - a.breadth.segments) || (b.breadth.n - a.breadth.n));
 
     let nextWaiter = null;
@@ -1440,7 +1625,7 @@ export class CoordinatorEngine {
         SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
       `).all(cand.intent_id).map((c) => ({ type: c.claim_type, target: c.claim_target }));
 
-      if (claims.length === 0 || this.findConflict(claims, cand.agent_id, now, projectId)) {
+      if (claims.length === 0 || this.findConflict(claims, cand.agent_id, now, cand.project_id || projectId)) {
         skipped++;
         continue;
       }
@@ -1450,6 +1635,7 @@ export class CoordinatorEngine {
     }
 
     if (nextWaiter) {
+      const waiterProjId = nextWaiter.project_id || projectId;
       this.db.prepare(`DELETE FROM wait_queue WHERE intent_id = ?`).run(nextWaiter.intent_id);
 
       this.db.prepare(`
@@ -1458,14 +1644,14 @@ export class CoordinatorEngine {
         WHERE id = ?
       `).run(now, nextWaiter.intent_id);
 
-      this.logActivity(nextWaiter.agent_id, 'agent:woken', nextWaiter.intent_id, `Notified waiter ${nextWaiter.agent_name} to recheck`, projectId);
+      this.logActivity(nextWaiter.agent_id, 'agent:woken', nextWaiter.intent_id, `Notified waiter ${nextWaiter.agent_name} to recheck`, waiterProjId);
 
       const targetDesc = freedInfo?.resources?.map(r => r.target).join(', ') || 'locked resource';
       const freedByName = freedInfo?.releasedByName || freedInfo?.releasedBy || 'previous holder';
       const resumeHint = `Resource '${targetDesc}' held by [${freedByName}] has been released. Your claimed targets (${waiterClaims.map(c => c.target).join(', ')}) are now conflict-free. Refresh workspace and proceed.`;
 
       const wokenPayload = {
-        project_id: projectId,
+        project_id: waiterProjId,
         agent_id: nextWaiter.agent_id,
         agent_name: nextWaiter.agent_name,
         intent_id: nextWaiter.intent_id,
@@ -1491,7 +1677,7 @@ export class CoordinatorEngine {
               name: freedByName || 'Nexus Coordinator',
               provider: 'system',
               sessionId: 'coordinator',
-              projectId
+              projectId: waiterProjId
             });
           }
           this.messageService.send({
@@ -1500,7 +1686,7 @@ export class CoordinatorEngine {
             intentId: nextWaiter.intent_id,
             content: `[Resource Woken] ${resumeHint}`,
             importance: 'urgent',
-            projectId,
+            projectId: waiterProjId,
             dialogueType: 'handoff',
             status: 'unread'
           });
@@ -1702,9 +1888,10 @@ export class CoordinatorEngine {
   }
 
   // 5. 极速权限检查与自动补报 (针对通用 Hook 与资源锁)
-  fastCheckAndAutoClaim({ agentId: rawAgentId, hostId = null, name = null, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null, livenessVerified = false, lastTool = null, lastAction = null, lastTarget = null }) {
+  fastCheckAndAutoClaim({ agentId: rawAgentId, hostId = null, name = null, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, gitRemote = null, pid = null, livenessVerified = false, lastTool = null, lastAction = null, lastTarget = null }) {
     requireAgentId(rawAgentId);
-    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, hostId);
+    const targetHost = normalizeNodeId(hostId || this.localNodeId);
+    const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, targetHost);
     const finalProjectId = projectId || 'default';
     const now = Date.now();
 
@@ -1727,12 +1914,13 @@ export class CoordinatorEngine {
 
     this.registerAgent({
       id: agentId,
-      hostId: hostId || this.localNodeId,
+      hostId: targetHost,
       name: preferredName,
       provider,
       sessionId,
       workspaceDir: workspaceDir || '',
       projectRoot: finalProjectRoot,
+      gitRemote,
       projectId: finalProjectId,
       pid,
       livenessVerified,
@@ -1744,7 +1932,7 @@ export class CoordinatorEngine {
     if (lastTool) {
       this.eventBus.emit('agent:telemetry', {
         agent_id: agentId,
-        host_id: normalizeNodeId(hostId || this.localNodeId),
+        host_id: targetHost,
         project_id: finalProjectId,
         tool: cleanUtf8String(lastTool, null),
         action: cleanUtf8String(effectiveAction, null),
@@ -1755,13 +1943,25 @@ export class CoordinatorEngine {
 
     if (this.clusterNodeService) {
       try {
-        const targetHost = normalizeNodeId(hostId || this.localNodeId);
         this.clusterNodeService.recordHeartbeat(targetHost, {
           role: isSameNode(targetHost, this.localNodeId) ? 'hub' : 'edge',
           displayName: targetHost
         });
       } catch {}
     }
+
+    const fetchPendingHandoff = () => {
+      if (!this.handoffService) return null;
+      try {
+        return this.handoffService.getPendingHandoff(finalProjectId, {
+          excludeAgentId: agentId,
+          forHostId: targetHost,
+          recordDeliveryForAgent: agentId
+        });
+      } catch {
+        return null;
+      }
+    };
 
     this.reapDeadAgentLeases();
     this.expireLeases();
@@ -1784,12 +1984,7 @@ export class CoordinatorEngine {
         if (existingResourceLock.agent_id === agentId) {
           // 自己再次执行同类命令（例如连续两次 go test）= 前一个进程已结束，锁仍归自己
           this.touchAgentLeases(agentId, finalProjectId);
-          let pendingHandoff = null;
-          if (this.handoffService) {
-            try {
-              pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
-            } catch {}
-          }
+          const pendingHandoff = fetchPendingHandoff();
           return { allow: true, reason: 'self-held-resource-lease', ...(pendingHandoff ? { pendingHandoff } : {}) };
         } else {
           this.logActivity(agentId, 'hook:blocked', cleanResource, `Blocked access to resource '${cleanResource}' (held by ${existingResourceLock.agent_name})`, finalProjectId);
@@ -1830,13 +2025,7 @@ export class CoordinatorEngine {
         };
       }
 
-      let pendingHandoff = null;
-      if (this.handoffService) {
-        try {
-          pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
-        } catch {}
-      }
-
+      const pendingHandoff = fetchPendingHandoff();
       return {
         allow: true,
         autoClaimed: true,
@@ -1845,29 +2034,39 @@ export class CoordinatorEngine {
       };
     }
 
-    // 5.2 文件与模块路径冲突拦截 (支持跨工作树相对化对齐与 #anchor 细粒度锁)
+    // 5.2 文件与模块路径冲突拦截 (支持跨机同源仓库、跨工作树相对化对齐与 #anchor 细粒度锁)
     assertClaimTarget(filePath, 'file', workspaceDir, finalProjectRoot);
     const normalizedFile = this.normalizePath(filePath, workspaceDir, finalProjectRoot);
     const { baseTarget: baseFile, anchor: fileAnchor } = splitTargetAnchor(normalizedFile);
+    const { eqIds, rootMap } = this._resolveEquivalentProjectContext(finalProjectId);
+    const placeholders = eqIds.map(() => '?').join(', ');
+    const relFile = this._toRepoRelativeTarget(baseFile, finalProjectId, rootMap, finalProjectRoot || workspaceDir);
 
     const existingLock = this._all(`
-      SELECT c.agent_id, c.claim_target, a.name as agent_name, a.workspace_dir as holder_workspace, i.summary, l.id as lease_id, l.expires_at
+      SELECT c.project_id, c.agent_id, c.claim_target, a.name as agent_name, a.host_id as holder_host_id, a.workspace_dir as holder_workspace, i.summary, l.id as lease_id, l.expires_at
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
       JOIN intents i ON c.intent_id = i.id
-      WHERE (c.project_id = ? OR c.project_id = 'default' OR ? = 'default') AND c.claim_type = 'file' AND (c.claim_target = ? OR c.claim_target LIKE ? || '#%') AND l.expires_at > ?
-    `, [finalProjectId, finalProjectId, baseFile, baseFile, now]);
+      WHERE (c.project_id IN (${placeholders}) OR c.project_id = 'default' OR ? = 'default')
+        AND c.claim_type = 'file'
+        AND l.expires_at > ?
+    `, [...eqIds, finalProjectId, now]);
 
-    // 检查是否存在冲突锁
+    // 检查是否存在冲突锁（支持同路径精确匹配 + 跨机同源仓库相对路径匹配）
     let conflictingLock = null;
     let selfHeld = false;
     for (const lock of existingLock) {
+      const { baseTarget: lockBase, anchor: lockAnchor } = splitTargetAnchor(lock.claim_target);
+      const relLock = this._toRepoRelativeTarget(lockBase, lock.project_id, rootMap, lock.holder_workspace);
+      const isSameFile = lockBase === baseFile ||
+        (relFile && relLock && relFile === relLock && relFile !== baseFile.replace(/\\/g, '/').toLowerCase());
+      if (!isSameFile) continue;
+
       if (lock.agent_id === agentId) {
         selfHeld = true;
         continue;
       }
-      const { anchor: lockAnchor } = splitTargetAnchor(lock.claim_target);
       // 如果双方都有不同 anchor，允许并发
       if (fileAnchor && lockAnchor && fileAnchor !== lockAnchor) {
         continue;
@@ -1877,16 +2076,20 @@ export class CoordinatorEngine {
     }
 
     if (conflictingLock) {
+      const isCrossHost = conflictingLock.holder_host_id && !isSameNode(conflictingLock.holder_host_id, targetHost);
       const isCrossWorktree = workspaceDir && conflictingLock.holder_workspace &&
         toComparablePath(workspaceDir, '') !== toComparablePath(conflictingLock.holder_workspace, '');
-      const conflictPrefix = isCrossWorktree ? 'CROSS-WORKTREE CONFLICT' : 'BLOCKED';
-      const worktreeNote = isCrossWorktree ? ' in another worktree (concurrent edits will cause git merge conflicts)' : '';
+      const conflictPrefix = (isCrossHost || isCrossWorktree) ? 'CROSS-WORKTREE CONFLICT' : 'BLOCKED';
+      const worktreeNote = isCrossHost
+        ? ` on remote node [${conflictingLock.holder_host_id}] (concurrent cross-machine edits will cause git merge conflicts)`
+        : (isCrossWorktree ? ' in another worktree (concurrent edits will cause git merge conflicts)' : '');
       const remainingSec = Math.max(0, Math.ceil((conflictingLock.expires_at - now) / 1000));
 
       this.logActivity(agentId, 'hook:blocked', normalizedFile, `Blocked write to ${normalizedFile} (held by ${conflictingLock.agent_name}${worktreeNote})`, finalProjectId);
       return {
         allow: false,
         holder: conflictingLock.agent_name,
+        holderHostId: conflictingLock.holder_host_id || null,
         holderWorkspace: conflictingLock.holder_workspace || '',
         expiresAt: conflictingLock.expires_at,
         remainingSec,
@@ -1899,12 +2102,7 @@ export class CoordinatorEngine {
       // 自己再次写同一文件 = 施工仍在继续，顺延名下租约。
       // 否则一次长编辑会在首次领锁后按固定 TTL 到期，把文件让给其他会话。
       this.touchAgentLeases(agentId, finalProjectId);
-      let pendingHandoff = null;
-      if (this.handoffService) {
-        try {
-          pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
-        } catch {}
-      }
+      const pendingHandoff = fetchPendingHandoff();
       return {
         allow: true,
         reason: 'self-held-lease',
@@ -1937,13 +2135,7 @@ export class CoordinatorEngine {
       };
     }
 
-    let pendingHandoff = null;
-    if (this.handoffService) {
-      try {
-        pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
-      } catch {}
-    }
-
+    const pendingHandoff = fetchPendingHandoff();
     return {
       allow: true,
       autoClaimed: true,

@@ -98,6 +98,184 @@ export function hashProjectId(canonicalRoot) {
 }
 
 /**
+ * 归一化 Git Remote URL 为跨协议、跨机器一致的仓库指纹（如 "github.com/owner/repo"）
+ * 支持 https://, http://, ssh://, git@host:owner/repo.git 等格式
+ */
+export function normalizeGitRemoteUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  let s = rawUrl.trim().replace(/\\/g, '/');
+  if (!s) return null;
+
+  // 去除末尾斜杠与 .git 后缀
+  s = s.replace(/\/+$/, '').replace(/\.git$/i, '');
+
+  // 幂等支持：若已是归一化后的 host/owner/repo 指纹（如 github.com/acme/repo）
+  if (!s.includes('://') && !s.includes(':') && !/\s/.test(s)) {
+    const slashIdx = s.indexOf('/');
+    if (slashIdx > 0) {
+      const host = s.slice(0, slashIdx).toLowerCase();
+      const pathPart = s.slice(slashIdx + 1).replace(/^\/+/, '').replace(/\/+$/, '').toLowerCase();
+      if ((host.includes('.') || host === 'localhost') && pathPart) {
+        return `${host}/${pathPart}`;
+      }
+    }
+  }
+
+  // 处理 SCP 风格 SSH URL: git@github.com:owner/repo
+  const scpMatch = s.match(/^(?:[^@/\s]+@)?([a-zA-Z0-9._-]+):([a-zA-Z0-9._/-]+)$/);
+  if (scpMatch && !s.includes('://')) {
+    const host = scpMatch[1].toLowerCase();
+    const pathPart = scpMatch[2].replace(/^\/+/, '').toLowerCase();
+    return `${host}/${pathPart}`;
+  }
+
+  // 处理标准 URL: https://, ssh://, git://
+  try {
+    const parsed = new URL(s);
+    const host = parsed.hostname.toLowerCase();
+    const pathPart = parsed.pathname.replace(/^\/+/, '').replace(/\/+$/, '').toLowerCase();
+    if (host && pathPart) {
+      return `${host}/${pathPart}`;
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * 从 Git 仓库目录或 .git 条目中提取归一化后的 remote origin 指纹
+ */
+export function extractGitRemoteFingerprint(repoRootOrGitPath) {
+  if (!repoRootOrGitPath || typeof repoRootOrGitPath !== 'string') return null;
+  try {
+    let gitDir = repoRootOrGitPath;
+    if (!gitDir.endsWith('.git')) {
+      gitDir = resolve(repoRootOrGitPath, '.git');
+    }
+    if (!existsSync(gitDir)) return null;
+
+    const stat = statSync(gitDir);
+    if (stat.isFile()) {
+      const content = readFileSync(gitDir, 'utf8').trim();
+      const match = content.match(/^gitdir:\s*(.+)$/i);
+      if (!match) return null;
+      const resolvedGitDir = resolve(dirname(gitDir), match[1].trim());
+      const commondirFile = resolve(resolvedGitDir, 'commondir');
+      if (existsSync(commondirFile)) {
+        const commondirRel = readFileSync(commondirFile, 'utf8').trim();
+        gitDir = resolve(resolvedGitDir, commondirRel);
+      } else {
+        gitDir = resolve(resolvedGitDir, '../..');
+      }
+    }
+
+    const configPath = resolve(gitDir, 'config');
+    if (!existsSync(configPath)) return null;
+    const content = readFileSync(configPath, 'utf8');
+
+    // 优先提取 [remote "origin"] 下的 url
+    const originBlockMatch = content.match(/\[remote\s+"origin"\]([\s\S]*?)(?=\n\[|$)/i);
+    if (originBlockMatch) {
+      const urlMatch = originBlockMatch[1].match(/^\s*url\s*=\s*(.+)$/m);
+      if (urlMatch) {
+        return normalizeGitRemoteUrl(urlMatch[1]);
+      }
+    }
+
+    // 回退提取任意第一个 remote 的 url
+    const anyUrlMatch = content.match(/\[remote\s+"[^"]+"\][\s\S]*?^\s*url\s*=\s*(.+)$/m);
+    if (anyUrlMatch) {
+      return normalizeGitRemoteUrl(anyUrlMatch[1]);
+    }
+  } catch {}
+  return null;
+}
+
+const GENERIC_DIR_NAMES = new Set([
+  'server', 'client', 'frontend', 'backend', 'web', 'app', 'ui', 'src', 'demo', 'test', 'workspace', 'repo', 'main'
+]);
+
+/**
+ * 提取项目的归一化可比对仓库标识（含通用目录的父级限定，防止同名通用目录串味）
+ */
+export function extractComparableProjectKey(displayName, rootPath) {
+  const cleanDisplay = (displayName || '')
+    .replace(/\s*\[[^\]]+\]\s*$/, '')
+    .replace(/\s*\([0-9a-f]{6}\)\s*$/i, '')
+    .trim();
+
+  if (cleanDisplay && cleanDisplay.toLowerCase() !== 'default project' && !/^project\s*\(/i.test(cleanDisplay)) {
+    // 如果 displayName 已经带有 parent/dir 或并非通用单层目录名，则可作为有效标识
+    if (!GENERIC_DIR_NAMES.has(cleanDisplay.toLowerCase())) {
+      return cleanDisplay.toLowerCase();
+    }
+  }
+
+  if (rootPath && typeof rootPath === 'string') {
+    const clean = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const parts = clean.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      const last = parts[parts.length - 1].toLowerCase();
+      if (GENERIC_DIR_NAMES.has(last)) {
+        if (parts.length >= 2 && !parts[parts.length - 2].includes(':')) {
+          return `${parts[parts.length - 2].toLowerCase()}/${last}`;
+        }
+        return null; // 顶层单字通用名（如 /app 或 D:/app）不参与跨机模糊合并，防止误串味
+      }
+      return last;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 解析跨机同源工程 ID 集合：
+ * 1. 强等价：若存在 git_remote 指纹，相同 git_remote 的工程 100% 视为同一仓库；若双方均有 git_remote 但不相同，严格隔离绝不合并（即使目录同名）。
+ * 2. 弱等价（无冲突 git_remote 时）：比对经过通用目录防碰撞保护的 extractComparableProjectKey。
+ */
+export function resolveEquivalentProjectIds(db, pid, stmtFn = null) {
+  if (!pid || pid === 'all' || pid === 'default') return [pid || 'default'];
+  const ids = new Set([pid]);
+  const prepare = stmtFn || ((sql) => db.prepare(sql));
+  try {
+    const row = prepare(`SELECT id, display_name, root_path, git_remote FROM projects WHERE id = ?`).get(pid);
+    if (!row) return [...ids];
+
+    const selfRemote = row.git_remote ? normalizeGitRemoteUrl(row.git_remote) : extractGitRemoteFingerprint(row.root_path);
+    const selfKey = extractComparableProjectKey(row.display_name, row.root_path);
+    if (!selfRemote && !selfKey) return [...ids];
+
+    const peers = prepare(`
+      SELECT id, display_name, root_path, git_remote FROM projects
+      WHERE id != 'all' AND id != '' AND id != 'default'
+    `).all();
+
+    for (const p of peers) {
+      if (p.id === pid) continue;
+      const peerRemote = p.git_remote ? normalizeGitRemoteUrl(p.git_remote) : extractGitRemoteFingerprint(p.root_path);
+
+      // 若双方都有明确 Git Remote 指纹：指纹相同即合并，指纹不同则严禁合并（哪怕目录同名）
+      if (selfRemote && peerRemote) {
+        if (selfRemote === peerRemote) {
+          ids.add(p.id);
+        }
+        continue;
+      }
+
+      // 至少一方无 Git Remote 指纹时，使用带父目录消歧的仓库键匹配
+      if (selfKey) {
+        const peerKey = extractComparableProjectKey(p.display_name, p.root_path);
+        if (peerKey && peerKey === selfKey) {
+          ids.add(p.id);
+        }
+      }
+    }
+  } catch {}
+  return [...ids];
+}
+
+/**
  * 探测 Git Worktree 并提取共同主仓库根路径（Git Common Dir Root）
  * 参考 crewmates 架构实践：一个 Git 仓库的所有工作树共享同一个 Roster 与 Project ID
  */
@@ -171,6 +349,7 @@ export function resolveProject(startDir) {
       projectId: hashProjectId(foreignRoot),
       projectRoot: foreignRoot,
       displayName: resolveProjectDisplayName(targetDir, foreignRoot),
+      gitRemote: null,
       marker: null,
       worktree: { isWorktree: false, name: null, worktreeRoot: foreignRoot }
     };
@@ -195,10 +374,12 @@ export function resolveProject(startDir) {
         }
 
         const canonicalRoot = canonicalizePath(rootToUse);
+        const gitRemote = extractGitRemoteFingerprint(rootToUse);
         return {
           projectId: hashProjectId(canonicalRoot),
           projectRoot: canonicalRoot,
           displayName: resolveProjectDisplayName(rootToUse, canonicalRoot),
+          gitRemote,
           marker,
           worktree: worktreeInfo
         };
@@ -219,6 +400,7 @@ export function resolveProject(startDir) {
     projectId: hashProjectId(fallbackRoot),
     projectRoot: fallbackRoot,
     displayName: resolveProjectDisplayName(targetDir, fallbackRoot),
+    gitRemote: extractGitRemoteFingerprint(targetDir),
     marker: null,
     worktree: { isWorktree: false, name: null, worktreeRoot: fallbackRoot }
   };
