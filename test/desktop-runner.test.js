@@ -9,7 +9,10 @@ const { ProbeClient } = require('../desktop/probe-client.cjs');
 // 桌面端现在是纯客户端：它只探活、读令牌、拼面板地址，绝不拉起探针。
 test('ProbeClient: 只连探针，不托管探针', async (t) => {
   let server;
-  const testPort = 58941;
+  const probeServer = http.createServer();
+  await new Promise((resolve) => probeServer.listen(0, '127.0.0.1', resolve));
+  const testPort = probeServer.address().port;
+  await new Promise((resolve) => probeServer.close(resolve));
 
   await t.test('checkAlive: 探针未启动时返回 alive=false', async () => {
     const client = new ProbeClient(testPort);

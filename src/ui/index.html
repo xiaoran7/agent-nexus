@@ -63,6 +63,13 @@
         </svg>
         <span>协同路由</span>
       </button>
+      <button class="seg-btn" data-view="memory" id="tab-memory">
+        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span>接力与记忆</span>
+      </button>
     </nav>
 
     <div class="topbar-right">
@@ -122,6 +129,9 @@
         <b id="stat-locks" class="pill-num">0</b>
       </div>
     </div>
+
+    <!-- 跨机集群算力拓扑带 (Cluster Nodes Ribbon) -->
+    <div class="cluster-nodes-bar" id="cluster-nodes-bar" title="跨机算力节点与探针拓扑"></div>
 
     <!-- 架构师状态 Ticker 胶囊 -->
     <div class="lead-ticker-wrap">
@@ -194,6 +204,9 @@
       <div class="split-layout" id="sessions-split-layout">
         <!-- 左栏 56%: 活跃会话与锁看板 -->
         <div class="pane-left" id="pane-sessions-left">
+          <!-- 跨机接力待认领浮动卡片 (Active Handoff Banner) -->
+          <div id="handoff-alert-banner" class="handoff-pipeline-card" style="display: none;"></div>
+
           <!-- 活跃会话卡片 -->
           <section class="panel-card flex-agents" id="section-agents">
             <div class="panel-head">
@@ -405,7 +418,131 @@
         </div>
       </section>
     </div>
+
+    <!-- VIEW 4: 跨机接力与工程记忆 (Cross-Machine Handoffs & Memories) -->
+    <div id="view-memory" class="view-panel">
+      <div class="split-layout" id="memory-split-layout">
+        <!-- 左栏 50%: 跨机工作交接流 (Active & Historical Handoffs) -->
+        <div class="pane-left" id="pane-memory-left">
+          <section class="panel-card flex-handoffs" id="section-handoffs">
+            <div class="panel-head">
+              <div class="panel-title-wrap">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 3h5v5"></path>
+                  <path d="M4 20L21 3"></path>
+                  <path d="M21 16v5h-5"></path>
+                  <path d="M15 15l6 6"></path>
+                  <path d="M4 4l5 5"></path>
+                </svg>
+                <span class="panel-title">跨机接力工单<span class="panel-title-en"> (Work Handoffs)</span></span>
+              </div>
+              <div class="panel-actions">
+                <button id="btn-create-handoff-open" class="btn-primary btn-sm">+ 新建接力</button>
+              </div>
+            </div>
+            <div class="scroll-container" id="handoffs-container">
+              <div class="empty-hint">暂无交接记录，当本地或远端会话提交 Git / 阶段完工时将自动生成</div>
+            </div>
+          </section>
+        </div>
+
+        <div class="split-resizer resizer-col" id="resizer-memory-split" title="左右拖动调整两栏宽度 (双击重置)">
+          <div class="resizer-handle-bar"></div>
+        </div>
+
+        <!-- 右栏 50%: 全局工程记忆与避坑规约 (Long-term Memories & Gotchas) -->
+        <div class="pane-right" id="pane-memory-right">
+          <section class="panel-card flex-memories" id="section-memories">
+            <div class="panel-head">
+              <div class="panel-title-wrap">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+                <span class="panel-title">工程记忆与规约<span class="panel-title-en"> (Memories & Gotchas)</span></span>
+              </div>
+              <div class="panel-actions">
+                <button id="btn-create-memory-open" class="btn-primary btn-sm">+ 沉淀经验</button>
+              </div>
+            </div>
+            <div class="memory-toolbar">
+              <div class="memory-filter-pills">
+                <button class="filter-pill active" data-category="all">全部</button>
+                <button class="filter-pill" data-category="gotcha">避坑 (Gotcha)</button>
+                <button class="filter-pill" data-category="rule">规约 (Rule)</button>
+                <button class="filter-pill" data-category="architecture">架构 (Arch)</button>
+                <button class="filter-pill" data-category="milestone">里程碑</button>
+              </div>
+              <div class="memory-search-wrap">
+                <input type="text" id="memory-search-input" class="memory-search-input" placeholder="搜索架构决议、规约、避坑经验..." />
+              </div>
+            </div>
+            <div class="scroll-container" id="memories-container">
+              <div class="empty-hint">暂无沉淀记录，使用 nexus_save_memory 或在此沉淀跨机共享经验</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
   </main>
+
+  <!-- 创建交接模态框 -->
+  <div id="modal-handoff" class="modal-backdrop" hidden>
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <span class="modal-title">发起跨机工作交接 (New Handoff)</span>
+        <button id="btn-modal-handoff-close" class="close-icon-btn" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label">阶段任务目标 (Objective):</label>
+        <input type="text" id="modal-handoff-objective" class="modal-input" placeholder="例如：重构状态机与单测验证完毕" />
+        <label class="modal-label">当前现场与进展 (State Summary):</label>
+        <textarea id="modal-handoff-state" class="modal-textarea" rows="3" placeholder="例如：已在 Windows 下跑通单测，涉及核心调度文件修改"></textarea>
+        <label class="modal-label">修改文件列表 (以逗号分隔):</label>
+        <input type="text" id="modal-handoff-files" class="modal-input" placeholder="src/daemon/coordinator.js, test/runner.test.js" />
+        <label class="modal-label">建议接力动作 (Next Action):</label>
+        <input type="text" id="modal-handoff-next" class="modal-input" placeholder="例如：在远端 Linux 下执行 make test 并打包 Docker 镜像" />
+      </div>
+      <div class="modal-footer">
+        <button id="btn-modal-handoff-cancel" class="btn-secondary">取消</button>
+        <button id="btn-modal-handoff-submit" class="btn-primary">生成交接工单</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建记忆模态框 -->
+  <div id="modal-memory" class="modal-backdrop" hidden>
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <span class="modal-title">沉淀工程长期记忆 (Save Memory)</span>
+        <button id="btn-modal-memory-close" class="close-icon-btn" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-row">
+          <div class="modal-col">
+            <label class="modal-label">分类 (Category):</label>
+            <select id="modal-memory-cat" class="modal-select">
+              <option value="gotcha">避坑经验 (Gotcha)</option>
+              <option value="rule">开发规约 (Rule)</option>
+              <option value="architecture">架构决议 (Architecture)</option>
+              <option value="milestone">里程碑 (Milestone)</option>
+              <option value="general">常规知识 (General)</option>
+            </select>
+          </div>
+          <div class="modal-col">
+            <label class="modal-label">唯一标识符 Key Slug:</label>
+            <input type="text" id="modal-memory-key" class="modal-input" placeholder="如: linux_glibc_build" />
+          </div>
+        </div>
+        <label class="modal-label">记忆详细内容 (Markdown 支持):</label>
+        <textarea id="modal-memory-content" class="modal-textarea" rows="4" placeholder="详细阐述架构决策、技术避坑经验或约束规则..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-modal-memory-cancel" class="btn-secondary">取消</button>
+        <button id="btn-modal-memory-submit" class="btn-primary">保存记忆</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

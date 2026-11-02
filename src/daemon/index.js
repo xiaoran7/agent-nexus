@@ -9,6 +9,8 @@ import { MessageService } from '../domain/messages.js';
 import { ProjectRegistry } from '../domain/project-registry.js';
 import { ProjectMemoryService } from '../domain/memory.js';
 import { TopologyService } from '../domain/topology.js';
+import { ClusterNodeService } from '../domain/cluster-nodes.js';
+import { ProjectHandoffService } from '../domain/handoff.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
 import { TokenStore, generateToken, getSessionTokenPath, readSessionToken, readHubConfig } from '../transport/auth.js';
@@ -35,7 +37,11 @@ export function startDaemon(options = {}) {
   const messageService = new MessageService(db, eventBus);
   const memoryService = new ProjectMemoryService(db, eventBus);
   const topologyService = new TopologyService(db, eventBus);
+  const clusterNodeService = new ClusterNodeService(db, eventBus, coordinator.localNodeId);
+  const handoffService = new ProjectHandoffService(db, eventBus);
   coordinator.topologyService = topologyService;
+  coordinator.clusterNodeService = clusterNodeService;
+  coordinator.handoffService = handoffService;
   const projectRegistry = new ProjectRegistry(db, coordinator, eventBus, null, memoryService);
   projectRegistry.topologyService = topologyService;
 
@@ -54,6 +60,7 @@ export function startDaemon(options = {}) {
     try {
       coordinator.syncClaudeSessions();
     } catch {}
+    clusterNodeService.sweepStaleNodes();
     coordinator.reapDeadAgentLeases();
     coordinator.expireLeases();
     // 每小时最多真正执行一次；放在定时器里，无人打开面板时也会回收过期流水
@@ -66,7 +73,7 @@ export function startDaemon(options = {}) {
   const operator = tokenStore.issue(generateToken(null, fixedAdminToken));
   tokenStore.localOperatorToken = operator.secret;
 
-  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService, topologyService);
+  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService, topologyService, handoffService, clusterNodeService);
   const server = createServer(handleRest);
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
@@ -104,7 +111,7 @@ export function startDaemon(options = {}) {
       }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, eventBus, db, tokenStore, cleanupTimer, sessionWatcher, port: boundPort, host, dbPath, writeSessionToken });
+      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, clusterNodeService, handoffService, eventBus, db, tokenStore, cleanupTimer, sessionWatcher, port: boundPort, host, dbPath, writeSessionToken });
     });
   });
 }

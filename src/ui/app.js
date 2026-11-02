@@ -321,7 +321,32 @@ const dom = {
   decisionsCountBadge: document.getElementById('decisions-count-badge'),
   decisionsFilterBtns: document.querySelectorAll('.d-filter-btn'),
   btnToggleDecisions: document.getElementById('btn-toggle-decisions'),
-  resizerRoutingDecisions: document.getElementById('resizer-routing-decisions')
+  resizerRoutingDecisions: document.getElementById('resizer-routing-decisions'),
+
+  // Cluster Nodes & Handoff Banner
+  clusterNodesBar: document.getElementById('cluster-nodes-bar'),
+  handoffAlertBanner: document.getElementById('handoff-alert-banner'),
+
+  // View 4: Work Handoffs & Long-Term Memories (跨机接力工单与工程记忆)
+  tabMemory: document.getElementById('tab-memory'),
+  viewMemory: document.getElementById('view-memory'),
+  paneMemoryLeft: document.getElementById('pane-memory-left'),
+  paneMemoryRight: document.getElementById('pane-memory-right'),
+  handoffsContainer: document.getElementById('handoffs-container'),
+  memoriesContainer: document.getElementById('memories-container'),
+  resizerMemorySplit: document.getElementById('resizer-memory-split'),
+  btnCreateHandoffOpen: document.getElementById('btn-create-handoff-open'),
+  btnCreateMemoryOpen: document.getElementById('btn-create-memory-open'),
+  modalHandoff: document.getElementById('modal-handoff'),
+  modalMemory: document.getElementById('modal-memory'),
+  btnModalHandoffClose: document.getElementById('btn-modal-handoff-close'),
+  btnModalHandoffCancel: document.getElementById('btn-modal-handoff-cancel'),
+  btnModalHandoffSubmit: document.getElementById('btn-modal-handoff-submit'),
+  btnModalMemoryClose: document.getElementById('btn-modal-memory-close'),
+  btnModalMemoryCancel: document.getElementById('btn-modal-memory-cancel'),
+  btnModalMemorySubmit: document.getElementById('btn-modal-memory-submit'),
+  memoryCategoryPills: document.querySelectorAll('.memory-filter-pills .filter-pill'),
+  memorySearchInput: document.getElementById('memory-search-input')
 };
 
 // =============================================================================
@@ -381,6 +406,9 @@ function switchView(viewName) {
   } else if (viewName === 'routing') {
     fetchRoutingTopology();
     setTimeout(() => requestAnimationFrame(drawRoutingConnectors), 60);
+  } else if (viewName === 'memory') {
+    fetchHandoffs();
+    fetchMemories();
   } else {
     fetchDashboard();
   }
@@ -671,6 +699,12 @@ function renderDashboardSnapshot(data) {
   renderActiveAgents(agents, activeClaims);
   renderActiveLocks(activeClaims, agents);
   renderLiveTimeline(timeline);
+
+  // 4. 渲染多机算力拓扑带与跨机接力浮动卡
+  if (data.clusterNodes) {
+    renderClusterNodes(data.clusterNodes);
+  }
+  renderHandoffAlertBanner(data.activeHandoffs || []);
 }
 
 function updateLeadStatus(workingCount, waitingCount) {
@@ -1040,6 +1074,384 @@ async function fetchMilestones() {
   } catch (err) {
     console.error('Fetch milestones error:', err);
   }
+}
+
+// =============================================================================
+// Cluster Computing Nodes Ribbon (多机节点与探针拓扑带)
+// =============================================================================
+function renderClusterNodes(nodes) {
+  if (!dom.clusterNodesBar) return;
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    dom.clusterNodesBar.innerHTML = '';
+    return;
+  }
+
+  dom.clusterNodesBar.innerHTML = nodes.map(node => {
+    const isOnline = node.status === 'online';
+    const isStale = node.status === 'stale';
+    const statusClass = isOnline ? 'online' : (isStale ? 'stale' : 'offline');
+    const isHub = node.role === 'hub';
+    const roleClass = isHub ? 'hub' : 'edge';
+    const nameSafe = escapeHtml(node.display_name || node.id);
+    const roleSafe = isHub ? 'HUB' : 'EDGE';
+    const timeDiff = Math.max(0, Math.round((Date.now() - (node.last_heartbeat || Date.now())) / 1000));
+    const pingText = timeDiff < 5 ? '极速' : `${timeDiff}s前`;
+
+    // 平台微型矢量图标 (0 Emoji)
+    const platformIcon = node.platform === 'win32'
+      ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5.5l7-1v7.5H3V5.5zm8-1.2l10-1.5v9.2h-10V4.3zM3 13.5h7v7.5l-7-1v-6.5zm8 0h10v9.2l-10-1.5v-7.7z"/></svg>`
+      : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg>`;
+
+    return `
+      <div class="node-chip ${roleClass} ${statusClass}" title="节点 ID: ${escapeHtml(node.id)} (${escapeHtml(node.platform || 'node')}, 角色: ${roleSafe}, 心跳: ${pingText})">
+        <span class="node-status-dot"></span>
+        ${platformIcon}
+        <span class="node-chip-name">${nameSafe}</span>
+        <span class="node-chip-role">${roleSafe}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// =============================================================================
+// Active Handoff Pipeline Alert Banner (跨机待认领交接浮动卡)
+// =============================================================================
+function renderHandoffAlertBanner(handoffs) {
+  if (!dom.handoffAlertBanner) return;
+  const pending = (handoffs || []).filter(h => h.status === 'pending');
+  if (pending.length === 0) {
+    dom.handoffAlertBanner.style.display = 'none';
+    dom.handoffAlertBanner.innerHTML = '';
+    return;
+  }
+
+  const h = pending[0];
+  const objSafe = escapeHtml(h.objective);
+  const nextSafe = escapeHtml(h.next_action || '');
+  const srcSafe = escapeHtml(h.source_host_id || '上游节点');
+  const tgtSafe = escapeHtml(h.target_host_id || '任意远端');
+  const idSafe = escapeHtml(h.id);
+
+  dom.handoffAlertBanner.style.display = 'flex';
+  dom.handoffAlertBanner.innerHTML = `
+    <div class="handoff-banner-head">
+      <div class="handoff-banner-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M16 3h5v5"></path>
+          <path d="M4 20L21 3"></path>
+          <path d="M21 16v5h-5"></path>
+          <path d="M15 15l6 6"></path>
+          <path d="M4 4l5 5"></path>
+        </svg>
+        <span>跨机阶段接力待认领 (${pending.length} 项)</span>
+      </div>
+      <span class="handoff-route-badge">${srcSafe} &rarr; ${tgtSafe}</span>
+    </div>
+    <div class="handoff-banner-body">
+      <div class="handoff-banner-objective">${objSafe}</div>
+      ${nextSafe ? `<div class="handoff-banner-next">&bull; 建议动作: ${nextSafe}</div>` : ''}
+    </div>
+    <div class="handoff-banner-actions">
+      <button class="btn-ghost-sm" onclick="switchView('memory')">查看全部工单</button>
+      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}')">一键认领</button>
+    </div>
+  `;
+}
+
+// =============================================================================
+// Work Handoffs & Long-Term Memories (View 4: 接力工单与工程记忆)
+// =============================================================================
+let currentMemoryCategory = 'all';
+
+async function fetchHandoffs() {
+  try {
+    const res = await fetch(`/api/handoffs?project_id=${encodeURIComponent(currentProjectId)}`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const list = await res.json();
+    renderHandoffs(list);
+  } catch (err) {
+    console.error('Fetch handoffs error:', err);
+  }
+}
+
+function renderHandoffs(list) {
+  if (!dom.handoffsContainer) return;
+  if (!Array.isArray(list) || list.length === 0) {
+    dom.handoffsContainer.innerHTML = '<div class="empty-hint">暂无交接记录，当本地或远端会话提交 Git / 阶段完工时将自动生成</div>';
+    return;
+  }
+
+  dom.handoffsContainer.innerHTML = list.map(h => {
+    const timeStr = escapeHtml(new Date(h.created_at || Date.now()).toLocaleDateString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+    const idSafe = escapeHtml(h.id);
+    const objSafe = escapeHtml(h.objective);
+    const stateSafe = escapeHtml(h.state_summary || '');
+    const nextSafe = escapeHtml(h.next_action || '');
+    const srcSafe = escapeHtml(h.source_host_id || 'local');
+    const tgtSafe = escapeHtml(h.target_host_id || 'all');
+    const statusClass = escapeHtml(h.status || 'pending');
+    const statusText = statusClass === 'pending' ? '待认领' : (statusClass === 'in_progress' ? '进行中' : '已完成');
+
+    let filesArr = [];
+    try {
+      filesArr = typeof h.modified_files === 'string' ? JSON.parse(h.modified_files) : (h.modified_files || []);
+    } catch {
+      filesArr = [];
+    }
+
+    const filesHtml = filesArr.length > 0 ? `
+      <div class="handoff-files-list">
+        ${filesArr.slice(0, 6).map(f => `<span class="handoff-file-pill">${escapeHtml(f)}</span>`).join('')}
+        ${filesArr.length > 6 ? `<span class="handoff-file-pill">+${filesArr.length - 6}</span>` : ''}
+      </div>
+    ` : '';
+
+    const nextBox = nextSafe ? `
+      <div class="handoff-next-box">
+        <span class="handoff-next-label">建议接力动作</span>
+        <span>${nextSafe}</span>
+      </div>
+    ` : '';
+
+    const actionBtn = statusClass === 'pending' ? `
+      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}')">认领工单</button>
+    ` : (statusClass === 'in_progress' ? `
+      <button class="btn-secondary btn-sm" onclick="claimHandoff('${idSafe}')">标记闭环</button>
+    ` : `<span style="color:var(--text-faint);font-size:11px;">已由 ${escapeHtml(h.consumed_by_agent_id || '助手')} 闭环</span>`);
+
+    return `
+      <div class="handoff-card">
+        <div class="handoff-card-head">
+          <span class="handoff-route-badge">${srcSafe} &rarr; ${tgtSafe}</span>
+          <span class="handoff-status-badge ${statusClass}">${statusText}</span>
+        </div>
+        <div class="handoff-objective">${objSafe}</div>
+        ${stateSafe ? `<div class="handoff-state-summary">${stateSafe}</div>` : ''}
+        ${filesHtml}
+        ${nextBox}
+        <div class="handoff-card-footer">
+          <span>创建于 ${timeStr} · 由 ${escapeHtml(h.source_agent_id || 'Agent')}</span>
+          ${actionBtn}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function claimHandoff(handoffId) {
+  try {
+    const res = await fetch(`/api/handoffs/${encodeURIComponent(handoffId)}/consume`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: 'operator' })
+    });
+    if (res.ok) {
+      fetchDashboard();
+      if (dom.viewMemory?.classList.contains('active')) {
+        fetchHandoffs();
+      }
+    }
+  } catch (err) {
+    console.error('Claim handoff error:', err);
+  }
+}
+window.claimHandoff = claimHandoff;
+
+async function fetchMemories(query = '', category = currentMemoryCategory) {
+  try {
+    let url = `/api/projects/${encodeURIComponent(currentProjectId)}/memories?limit=100`;
+    if (category && category !== 'all') {
+      url += `&category=${encodeURIComponent(category)}`;
+    }
+    if (query && query.trim()) {
+      url += `&query=${encodeURIComponent(query.trim())}`;
+    }
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) return;
+    const list = await res.json();
+    renderMemories(list);
+  } catch (err) {
+    console.error('Fetch memories error:', err);
+  }
+}
+
+function renderMemories(list) {
+  if (!dom.memoriesContainer) return;
+  if (!Array.isArray(list) || list.length === 0) {
+    dom.memoriesContainer.innerHTML = '<div class="empty-hint">暂无沉淀记录，使用 nexus_save_memory 或在此沉淀跨机共享经验</div>';
+    return;
+  }
+
+  dom.memoriesContainer.innerHTML = list.map(m => {
+    const timeStr = escapeHtml(new Date(m.updated_at || m.created_at || Date.now()).toLocaleDateString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+    const idSafe = escapeHtml(String(m.id || ''));
+    const keySafe = escapeHtml(m.key);
+    const catSafe = escapeHtml(m.category || 'general');
+    const contentSafe = escapeHtml(m.content);
+    const authorSafe = escapeHtml(m.source_agent_id || 'Team');
+
+    return `
+      <div class="memory-card">
+        <div class="memory-card-head">
+          <span class="memory-key">${keySafe}</span>
+          <span class="memory-cat-pill ${catSafe}">${catSafe}</span>
+        </div>
+        <div class="memory-content-box">${contentSafe}</div>
+        <div class="memory-card-footer">
+          <span>${authorSafe} 沉淀于 ${timeStr}</span>
+          ${idSafe ? `<button class="btn-ghost-sm" onclick="deleteMemory('${idSafe}')">删除</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function deleteMemory(id) {
+  if (!confirm('确定删除此条工程记忆吗？')) return;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/memories?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authHeaders()
+    });
+    if (res.ok) {
+      fetchMemories();
+    }
+  } catch (err) {
+    console.error('Delete memory error:', err);
+  }
+}
+window.deleteMemory = deleteMemory;
+
+// 记忆分类与搜索交互
+if (dom.memoryCategoryPills) {
+  dom.memoryCategoryPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      dom.memoryCategoryPills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      currentMemoryCategory = pill.dataset.category || 'all';
+      const q = dom.memorySearchInput ? dom.memorySearchInput.value : '';
+      fetchMemories(q, currentMemoryCategory);
+    });
+  });
+}
+
+if (dom.memorySearchInput) {
+  dom.memorySearchInput.addEventListener('input', debounce(() => {
+    const q = dom.memorySearchInput.value;
+    fetchMemories(q, currentMemoryCategory);
+  }, 250));
+}
+
+// 模态窗控制: 新建交接工单
+if (dom.btnCreateHandoffOpen) {
+  dom.btnCreateHandoffOpen.addEventListener('click', () => {
+    if (!dom.modalHandoff) return;
+    document.getElementById('modal-handoff-objective').value = '';
+    document.getElementById('modal-handoff-state').value = '';
+    document.getElementById('modal-handoff-files').value = '';
+    document.getElementById('modal-handoff-next').value = '';
+    dom.modalHandoff.removeAttribute('hidden');
+  });
+}
+
+const closeHandoffModal = () => {
+  if (dom.modalHandoff) dom.modalHandoff.setAttribute('hidden', '');
+};
+if (dom.btnModalHandoffClose) dom.btnModalHandoffClose.addEventListener('click', closeHandoffModal);
+if (dom.btnModalHandoffCancel) dom.btnModalHandoffCancel.addEventListener('click', closeHandoffModal);
+
+if (dom.btnModalHandoffSubmit) {
+  dom.btnModalHandoffSubmit.addEventListener('click', async () => {
+    const objective = document.getElementById('modal-handoff-objective').value.trim();
+    const stateSummary = document.getElementById('modal-handoff-state').value.trim();
+    const filesRaw = document.getElementById('modal-handoff-files').value.trim();
+    const nextAction = document.getElementById('modal-handoff-next').value.trim();
+
+    if (!objective) {
+      alert('请填写阶段任务目标 (Objective)');
+      return;
+    }
+
+    const filesArr = filesRaw ? filesRaw.split(/[,，\n]/).map(f => f.trim()).filter(Boolean) : [];
+    try {
+      const res = await fetch('/api/handoffs', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          project_id: currentProjectId === 'all' ? 'default' : currentProjectId,
+          source_host_id: 'operator',
+          source_agent_id: 'operator',
+          objective,
+          state_summary: stateSummary || objective,
+          modified_files: filesArr,
+          next_action: nextAction
+        })
+      });
+      if (res.ok) {
+        closeHandoffModal();
+        fetchHandoffs();
+        fetchDashboard();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || '创建交接工单失败');
+      }
+    } catch (err) {
+      console.error('Create handoff error:', err);
+    }
+  });
+}
+
+// 模态窗控制: 沉淀工程长期记忆
+if (dom.btnCreateMemoryOpen) {
+  dom.btnCreateMemoryOpen.addEventListener('click', () => {
+    if (!dom.modalMemory) return;
+    document.getElementById('modal-memory-key').value = '';
+    document.getElementById('modal-memory-content').value = '';
+    dom.modalMemory.removeAttribute('hidden');
+  });
+}
+
+const closeMemoryModal = () => {
+  if (dom.modalMemory) dom.modalMemory.setAttribute('hidden', '');
+};
+if (dom.btnModalMemoryClose) dom.btnModalMemoryClose.addEventListener('click', closeMemoryModal);
+if (dom.btnModalMemoryCancel) dom.btnModalMemoryCancel.addEventListener('click', closeMemoryModal);
+
+if (dom.btnModalMemorySubmit) {
+  dom.btnModalMemorySubmit.addEventListener('click', async () => {
+    const category = document.getElementById('modal-memory-cat').value;
+    const key = document.getElementById('modal-memory-key').value.trim();
+    const content = document.getElementById('modal-memory-content').value.trim();
+
+    if (!key || !content) {
+      alert('请完整填写标识符 Key 和详细记忆内容');
+      return;
+    }
+
+    try {
+      const targetProj = currentProjectId === 'all' ? 'default' : currentProjectId;
+      const res = await fetch(`/api/projects/${encodeURIComponent(targetProj)}/memories`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          category,
+          key,
+          content,
+          source_agent_id: 'operator'
+        })
+      });
+      if (res.ok) {
+        closeMemoryModal();
+        fetchMemories();
+        fetchMilestones();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || '保存工程记忆失败');
+      }
+    } catch (err) {
+      console.error('Save memory error:', err);
+    }
+  });
 }
 
 // =============================================================================
@@ -1943,6 +2355,58 @@ function setupPanelResizers() {
       resizerDialogue.addEventListener('pointercancel', onPointerUp);
     });
   }
+
+  // 5. View 4: 接力与记忆左右两栏横向分割条 (#resizer-memory-split)
+  const resizerMemorySplit = dom.resizerMemorySplit;
+  const memorySplitLayout = document.getElementById('memory-split-layout');
+  const paneMemoryLeft = dom.paneMemoryLeft;
+
+  const savedMemoryW = localStorage.getItem('nexus_memory_left_width');
+  if (savedMemoryW) {
+    document.documentElement.style.setProperty('--memory-left-width', savedMemoryW);
+  }
+
+  if (resizerMemorySplit && memorySplitLayout && paneMemoryLeft) {
+    resizerMemorySplit.addEventListener('dblclick', () => {
+      document.documentElement.style.setProperty('--memory-left-width', '50%');
+      localStorage.removeItem('nexus_memory_left_width');
+    });
+
+    resizerMemorySplit.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = paneMemoryLeft.getBoundingClientRect().width;
+      const containerW = memorySplitLayout.getBoundingClientRect().width;
+      resizerMemorySplit.classList.add('is-dragging');
+      document.body.classList.add('resizing-col');
+      resizerMemorySplit.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (mEvt) => {
+        const delta = mEvt.clientX - startX;
+        const minW = 240;
+        const maxW = containerW - 240;
+        const newW = Math.min(maxW, Math.max(minW, startW + delta));
+        const pct = Math.round((newW / containerW) * 100);
+        document.documentElement.style.setProperty('--memory-left-width', `${pct}%`);
+      };
+
+      const onPointerUp = (uEvt) => {
+        resizerMemorySplit.releasePointerCapture(uEvt.pointerId);
+        resizerMemorySplit.removeEventListener('pointermove', onPointerMove);
+        resizerMemorySplit.removeEventListener('pointerup', onPointerUp);
+        resizerMemorySplit.removeEventListener('pointercancel', onPointerUp);
+        resizerMemorySplit.classList.remove('is-dragging');
+        document.body.classList.remove('resizing-col');
+        const finalPct = document.documentElement.style.getPropertyValue('--memory-left-width');
+        if (finalPct) localStorage.setItem('nexus_memory_left_width', finalPct);
+      };
+
+      resizerMemorySplit.addEventListener('pointermove', onPointerMove);
+      resizerMemorySplit.addEventListener('pointerup', onPointerUp);
+      resizerMemorySplit.addEventListener('pointercancel', onPointerUp);
+    });
+  }
 }
 
 // Master Broadcast 发送
@@ -1984,6 +2448,8 @@ let wsPingTimer = null;
 const debouncedFetchDashboard = debounce(fetchDashboard, 500);
 const debouncedFetchDialogues = debounce(fetchDialogues, 500);
 const debouncedFetchMilestones = debounce(fetchMilestones, 500);
+const debouncedFetchHandoffs = debounce(fetchHandoffs, 500);
+const debouncedFetchMemories = debounce(fetchMemories, 500);
 
 function updateConnectionIndicators(connected, customStatus = null) {
   if (dom.liveDot) {
@@ -2108,9 +2574,21 @@ function connectWebSocket() {
           return;
         }
 
+        if (payload.type === 'handoff:created' || payload.type === 'handoff:consumed' || payload.type === 'cluster:node_heartbeat') {
+          debouncedFetchDashboard();
+          if (dom.viewMemory?.classList.contains('active')) {
+            debouncedFetchHandoffs();
+          }
+          return;
+        }
+
         debouncedFetchDashboard();
         if (dom.viewRouting?.classList.contains('active')) {
           debouncedFetchRoutingTopology();
+        }
+        if (dom.viewMemory?.classList.contains('active')) {
+          debouncedFetchHandoffs();
+          debouncedFetchMemories();
         }
       } catch (err) {
         console.error('Failed to parse WS payload:', err);
@@ -2152,7 +2630,7 @@ function connectWebSocket() {
 setupPanelResizers();
 
 const initialView = new URLSearchParams(location.search).get('view') || new URLSearchParams(location.search).get('tab');
-if (initialView && ['sessions', 'timeline', 'routing'].includes(initialView)) {
+if (initialView && ['sessions', 'timeline', 'routing', 'memory'].includes(initialView)) {
   switchView(initialView);
 }
 

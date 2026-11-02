@@ -531,6 +531,14 @@ export class CoordinatorEngine {
    */
   syncRemoteClaudeSessions({ hostId, sessions = [], fullSnapshot = true, now = Date.now() } = {}) {
     const cleanHost = normalizeNodeId(hostId);
+    if (this.clusterNodeService && cleanHost) {
+      try {
+        this.clusterNodeService.recordHeartbeat(cleanHost, {
+          role: isSameNode(cleanHost, this.localNodeId) ? 'hub' : 'edge',
+          displayName: cleanHost
+        });
+      } catch {}
+    }
     if (!Array.isArray(sessions)) return { scanned: 0, added: [], updated: [], departed: [] };
     const normalizedSessions = sessions
       .filter(s => s && s.sessionId)
@@ -1307,6 +1315,13 @@ export class CoordinatorEngine {
       });
     }
 
+    if (this.handoffService && releasedLeaseIds.length > 0 && (reason === 'git_action' || reason === 'git_lifecycle')) {
+      try {
+        const agent = this.getAgent(agentId);
+        this.handoffService.autoSynthesizeFromRelease(finalProjectId, agent, allReleasedClaims);
+      } catch {}
+    }
+
     return {
       success: true,
       releasedCount: releasedLeaseIds.length,
@@ -1693,6 +1708,16 @@ export class CoordinatorEngine {
       livenessVerified
     });
 
+    if (this.clusterNodeService) {
+      try {
+        const targetHost = normalizeNodeId(hostId || this.localNodeId);
+        this.clusterNodeService.recordHeartbeat(targetHost, {
+          role: isSameNode(targetHost, this.localNodeId) ? 'hub' : 'edge',
+          displayName: targetHost
+        });
+      } catch {}
+    }
+
     this.reapDeadAgentLeases();
     this.expireLeases();
 
@@ -1714,7 +1739,13 @@ export class CoordinatorEngine {
         if (existingResourceLock.agent_id === agentId) {
           // 自己再次执行同类命令（例如连续两次 go test）= 前一个进程已结束，锁仍归自己
           this.touchAgentLeases(agentId, finalProjectId);
-          return { allow: true, reason: 'self-held-resource-lease' };
+          let pendingHandoff = null;
+          if (this.handoffService) {
+            try {
+              pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
+            } catch {}
+          }
+          return { allow: true, reason: 'self-held-resource-lease', ...(pendingHandoff ? { pendingHandoff } : {}) };
         } else {
           this.logActivity(agentId, 'hook:blocked', cleanResource, `Blocked access to resource '${cleanResource}' (held by ${existingResourceLock.agent_name})`, finalProjectId);
           const remainingSec = Math.max(0, Math.ceil((existingResourceLock.expires_at - now) / 1000));
@@ -1753,10 +1784,18 @@ export class CoordinatorEngine {
         };
       }
 
+      let pendingHandoff = null;
+      if (this.handoffService) {
+        try {
+          pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
+        } catch {}
+      }
+
       return {
         allow: true,
         autoClaimed: true,
-        leaseId: intentRes.leaseId
+        leaseId: intentRes.leaseId,
+        ...(pendingHandoff ? { pendingHandoff } : {})
       };
     }
 
@@ -1814,7 +1853,17 @@ export class CoordinatorEngine {
       // 自己再次写同一文件 = 施工仍在继续，顺延名下租约。
       // 否则一次长编辑会在首次领锁后按固定 TTL 到期，把文件让给其他会话。
       this.touchAgentLeases(agentId, finalProjectId);
-      return { allow: true, reason: 'self-held-lease' };
+      let pendingHandoff = null;
+      if (this.handoffService) {
+        try {
+          pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
+        } catch {}
+      }
+      return {
+        allow: true,
+        reason: 'self-held-lease',
+        ...(pendingHandoff ? { pendingHandoff } : {})
+      };
     }
 
     const intentRes = this.declareIntent({
@@ -1841,10 +1890,18 @@ export class CoordinatorEngine {
       };
     }
 
+    let pendingHandoff = null;
+    if (this.handoffService) {
+      try {
+        pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId, { excludeAgentId: agentId });
+      } catch {}
+    }
+
     return {
       allow: true,
       autoClaimed: true,
-      leaseId: intentRes.leaseId
+      leaseId: intentRes.leaseId,
+      ...(pendingHandoff ? { pendingHandoff } : {})
     };
   }
 
@@ -1984,6 +2041,11 @@ export class CoordinatorEngine {
   // 现在由调用方声明是否需要刷新：顶层入口刷新，嵌套调用传 skipRefresh。
   _refreshTick(now) {
     this.syncClaudeSessions(now);
+    if (this.clusterNodeService) {
+      try {
+        this.clusterNodeService.sweepStaleNodes(now);
+      } catch {}
+    }
     this.reapStaleIntentsAndAgents(now);
     this.reapDeadAgentLeases();
     this.expireLeases();
@@ -2145,12 +2207,17 @@ export class CoordinatorEngine {
       };
     });
 
+    const clusterNodes = this.clusterNodeService ? this.clusterNodeService.listNodes(finalProjectId) : [];
+    const activeHandoffs = this.handoffService ? this.handoffService.list(finalProjectId, { limit: 5 }) : [];
+
     return {
       localNodeId: this.localNodeId,
       agents,
       activeClaims,
       timeline,
-      waitQueue
+      waitQueue,
+      clusterNodes,
+      activeHandoffs
     };
   }
 

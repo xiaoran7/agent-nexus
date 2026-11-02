@@ -348,12 +348,24 @@ ${deterministicAdvice}
       peerSessions
     );
 
+    let pendingHandoff = null;
+    if (this.coordinator.handoffService) {
+      try {
+        pendingHandoff = this.coordinator.handoffService.getPendingHandoff(this.projectId, { excludeAgentId: agentId });
+      } catch {}
+    }
+
+    let finalAdvice = advice;
+    if (pendingHandoff) {
+      finalAdvice = `[跨机接力上下文] 检测到来自节点 ${pendingHandoff.source_host_id} 的待接力工单: "${pendingHandoff.objective}"。\n已修改文件: ${pendingHandoff.modified_files.join(', ') || '无'}\n建议动作: ${pendingHandoff.next_action}\n\n` + (advice || '');
+    }
+
     this.lastArbitration = {
       agentId,
       leadState: leadState.state,
       safeToStart,
       mustWait: conflicts,
-      advice,
+      advice: finalAdvice,
       adviceSource,
       peerSessionsCount: peerSessions.length,
       evaluatedAt: Date.now()
@@ -365,7 +377,8 @@ ${deterministicAdvice}
       planned_count: plannedWork.length,
       conflicts_count: conflicts.length,
       advice_source: adviceSource,
-      lead_state: leadState.state
+      lead_state: leadState.state,
+      pending_handoff: pendingHandoff ? pendingHandoff.id : null
     });
 
     return {
@@ -375,9 +388,10 @@ ${deterministicAdvice}
       safeToStart,
       mustWait: conflicts,
       peerSessions,
-      advice,
+      advice: finalAdvice,
       adviceSource,
-      deterministicAdvice
+      deterministicAdvice,
+      pendingHandoff
     };
   }
 

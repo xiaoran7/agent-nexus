@@ -2970,3 +2970,526 @@ body.resizing-row {
   font-family: var(--font-mono);
   color: var(--sky-primary);
 }
+
+/* =============================================================================
+   Cluster Nodes Ribbon (多机节点与探针拓扑带)
+   ============================================================================= */
+.cluster-nodes-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+  margin: 0 8px;
+}
+
+.cluster-nodes-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.node-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--capsule-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: all 0.2s var(--ease-smooth);
+  cursor: default;
+}
+
+.node-chip:hover {
+  background: var(--card-hover);
+  border-color: var(--border-hover);
+  color: var(--text-title);
+}
+
+.node-chip.hub {
+  border-color: var(--border-accent);
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.node-chip.online .node-status-dot {
+  background: var(--status-running);
+  box-shadow: 0 0 6px var(--status-running);
+}
+
+.node-chip.stale .node-status-dot {
+  background: var(--status-waiting);
+}
+
+.node-chip.offline .node-status-dot {
+  background: var(--status-idle);
+}
+
+.node-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-chip-name {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.node-chip-role {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+/* =============================================================================
+   Active Handoff Pipeline Banner (跨机待认领交接横幅)
+   ============================================================================= */
+.handoff-pipeline-card {
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: modalFadeIn 0.25s var(--ease-smooth);
+  box-shadow: 0 4px 16px -2px rgba(56, 189, 248, 0.18);
+}
+
+.handoff-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.handoff-banner-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--sky-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.handoff-route-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  background: rgba(56, 189, 248, 0.18);
+  color: var(--text-main);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.handoff-banner-body {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.handoff-banner-objective {
+  font-weight: 600;
+  color: var(--text-title);
+}
+
+.handoff-banner-next {
+  color: var(--status-waiting);
+  margin-top: 2px;
+}
+
+.handoff-banner-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* =============================================================================
+   View 4: Handoffs & Memories (接力工单与全局记忆体系)
+   ============================================================================= */
+#pane-memory-left {
+  width: var(--memory-left-width, 50%);
+  min-width: 240px;
+  max-width: calc(100% - 240px);
+}
+
+.flex-handoffs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.flex-memories {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.handoff-card {
+  background: var(--card-nested);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s var(--ease-smooth);
+}
+
+.handoff-card:hover {
+  border-color: var(--border-hover);
+  background: var(--card-bg-elevated);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.handoff-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.handoff-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.handoff-status-badge.pending {
+  background: var(--status-waiting-bg);
+  color: var(--status-waiting);
+  border: 1px solid var(--status-waiting-border);
+}
+
+.handoff-status-badge.in_progress {
+  background: var(--status-running-bg);
+  color: var(--status-running);
+  border: 1px solid var(--status-running-border);
+}
+
+.handoff-status-badge.completed {
+  background: var(--status-idle-bg);
+  color: var(--text-faint);
+  border: 1px solid var(--status-idle-border);
+}
+
+.handoff-objective {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-title);
+  line-height: 1.4;
+}
+
+.handoff-state-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.handoff-files-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.handoff-file-pill {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--sky-primary);
+}
+
+.handoff-next-box {
+  background: rgba(251, 191, 36, 0.08);
+  border-left: 3px solid var(--status-waiting);
+  padding: 6px 10px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 11.5px;
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.handoff-next-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--status-waiting);
+  text-transform: uppercase;
+}
+
+.handoff-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.memory-toolbar {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--card-nested);
+}
+
+.memory-filter-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.memory-search-wrap {
+  width: 100%;
+}
+
+.memory-search-input {
+  width: 100%;
+  height: 28px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.memory-search-input:focus {
+  border-color: var(--border-focus);
+}
+
+.memory-card {
+  background: var(--card-nested);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.2s var(--ease-smooth);
+}
+
+.memory-card:hover {
+  border-color: var(--border-hover);
+  background: var(--card-bg-elevated);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.memory-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.memory-cat-pill {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.memory-cat-pill.gotcha {
+  background: rgba(251, 113, 133, 0.16);
+  color: #fb7185;
+  border: 1px solid rgba(251, 113, 133, 0.35);
+}
+
+.memory-cat-pill.rule {
+  background: rgba(192, 132, 252, 0.16);
+  color: #c084fc;
+  border: 1px solid rgba(192, 132, 252, 0.35);
+}
+
+.memory-cat-pill.architecture {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.memory-cat-pill.milestone {
+  background: rgba(52, 211, 153, 0.16);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+.memory-cat-pill.general {
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.memory-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-title);
+}
+
+.memory-content-box {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.memory-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* =============================================================================
+   Generic Modals (模态窗与表单控件)
+   ============================================================================= */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: modalFadeIn 0.15s ease-out;
+}
+
+.modal-backdrop[hidden] {
+  display: none !important;
+}
+
+.modal-dialog {
+  background: var(--card-bg-elevated);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-md);
+  box-shadow: 0 20px 48px -8px rgba(0, 0, 0, 0.65);
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-main);
+  overflow: hidden;
+  animation: modalPopIn 0.18s var(--ease-smooth);
+}
+
+@keyframes modalPopIn {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-title);
+}
+
+.modal-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: 75vh;
+}
+
+.modal-row {
+  display: flex;
+  gap: 12px;
+}
+
+.modal-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.modal-input,
+.modal-select,
+.modal-textarea {
+  background: var(--card-nested);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text-main);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.modal-input:focus,
+.modal-select:focus,
+.modal-textarea:focus {
+  border-color: var(--border-focus);
+}
+
+.modal-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.45);
+}

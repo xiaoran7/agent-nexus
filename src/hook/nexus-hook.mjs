@@ -650,6 +650,18 @@ async function main() {
     process.exit(2);
   }
 
+  if (res.pendingHandoff) {
+    const h = res.pendingHandoff;
+    const fromHost = h.source_host_id ? `[${h.source_host_id}] ` : '';
+    console.error(`[Agent-Nexus] 跨机接力上下文：检测到上游节点 ${fromHost}提交的阶段任务 "${h.objective}"`);
+    if (h.modified_files && h.modified_files.length > 0) {
+      console.error(`  - 已改动文件: ${h.modified_files.slice(0, 3).join(', ')}${h.modified_files.length > 3 ? ` 等共 ${h.modified_files.length} 个文件` : ''}`);
+    }
+    if (h.next_action) {
+      console.error(`  - 建议接力动作: ${h.next_action}`);
+    }
+  }
+
   process.exit(0);
 }
 

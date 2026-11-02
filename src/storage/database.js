@@ -163,6 +163,40 @@ export function createDatabase(customPath = null) {
       metadata TEXT DEFAULT '{}',
       created_at INTEGER NOT NULL
     );
+
+    -- 11. 跨机集群节点拓扑表 (Cluster Nodes Registry)
+    CREATE TABLE IF NOT EXISTS cluster_nodes (
+      id TEXT PRIMARY KEY,
+      display_name TEXT,
+      role TEXT NOT NULL DEFAULT 'edge',
+      platform TEXT NOT NULL DEFAULT 'unknown',
+      ip TEXT,
+      last_heartbeat INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'online',
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    -- 12. 跨机与跨会话工作交接簿 (PowerContext Work Handoffs)
+    CREATE TABLE IF NOT EXISTS project_handoffs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default',
+      source_host_id TEXT NOT NULL,
+      source_agent_id TEXT NOT NULL,
+      source_session_id TEXT,
+      target_host_id TEXT,
+      objective TEXT NOT NULL,
+      state_summary TEXT NOT NULL,
+      modified_files TEXT NOT NULL DEFAULT '[]',
+      next_action TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      consumed_by_agent_id TEXT,
+      consumed_at INTEGER,
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // 针对已存在的旧版本表结构进行平滑补列迁移
@@ -194,6 +228,9 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_topology_project_created ON topology_nodes(project_id, created_at ASC);
     CREATE INDEX IF NOT EXISTS idx_topology_agent ON topology_nodes(project_id, agent_id);
     CREATE INDEX IF NOT EXISTS idx_topology_intent ON topology_nodes(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_cluster_nodes_status ON cluster_nodes(status, last_heartbeat);
+    CREATE INDEX IF NOT EXISTS idx_project_handoffs_proj_status ON project_handoffs(project_id, status);
+    CREATE INDEX IF NOT EXISTS idx_project_handoffs_created ON project_handoffs(project_id, created_at DESC);
   `);
 
   return db;

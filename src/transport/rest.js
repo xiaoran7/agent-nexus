@@ -48,7 +48,7 @@ function applyCors(req, res) {
   return false;
 }
 
-export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null, topologyService = null) {
+export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null, topologyService = null, handoffService = null, clusterNodeService = null) {
   const staticCache = new Map();
 
   return async function handleRest(req, res) {
@@ -271,6 +271,33 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
             }
           }
 
+          if (action === 'handoffs') {
+            const hSvc = handoffService || coordinator.handoffService;
+            if (!hSvc) return sendJson(200, []);
+
+            if (req.method === 'GET') {
+              const status = url.searchParams.get('status') || null;
+              const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+              return sendJson(200, hSvc.list(projectId, { status, limit }));
+            }
+
+            if (req.method === 'POST') {
+              const body = await readJson();
+              const saved = hSvc.createHandoff(projectId, {
+                sourceHostId: body.source_host_id || body.sourceHostId || 'local',
+                sourceAgentId: body.source_agent_id || body.sourceAgentId || token?.agent_id || 'manual',
+                sourceSessionId: body.source_session_id || body.sourceSessionId || null,
+                targetHostId: body.target_host_id || body.targetHostId || null,
+                objective: body.objective || '',
+                stateSummary: body.state_summary || body.stateSummary || '',
+                modifiedFiles: body.modified_files || body.modifiedFiles || [],
+                nextAction: body.next_action || body.nextAction || '',
+                metadata: body.metadata || {}
+              });
+              return sendJson(201, saved);
+            }
+          }
+
           if (action === 'progress' && req.method === 'POST') {
             const data = await readJson();
             const result = messageService.reportProgress(data.agent_id, data.summary, projectId);
@@ -445,6 +472,60 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           fullSnapshot
         });
         return sendJson(200, { success: true, host_id: hostId, ...syncRes });
+      }
+
+      // 2.2 跨机集群算力节点拓扑查询与心跳
+      if (url.pathname === '/api/cluster/nodes' && req.method === 'GET') {
+        const nodeSvc = clusterNodeService || coordinator.clusterNodeService;
+        const projectId = url.searchParams.get('project_id') || null;
+        return sendJson(200, nodeSvc ? nodeSvc.listNodes(projectId) : []);
+      }
+      if (url.pathname === '/api/cluster/heartbeat' && req.method === 'POST') {
+        const data = await readJson();
+        const nodeSvc = clusterNodeService || coordinator.clusterNodeService;
+        if (!nodeSvc) return sendJson(200, { success: true });
+        const record = nodeSvc.recordHeartbeat(data.node_id || data.host_id || 'remote', {
+          role: data.role || 'edge',
+          platform: data.platform || null,
+          ip: data.ip || null,
+          displayName: data.display_name || data.displayName || null,
+          metadata: data.metadata || {}
+        });
+        return sendJson(200, { success: true, ok: true, node: record });
+      }
+
+      // 2.3 跨机会话工作交接 (PowerContext Work Handoffs)
+      if (url.pathname === '/api/handoffs' && req.method === 'GET') {
+        const hSvc = handoffService || coordinator.handoffService;
+        const projectId = url.searchParams.get('project_id') || 'all';
+        const status = url.searchParams.get('status') || null;
+        const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+        return sendJson(200, hSvc ? hSvc.list(projectId, { status, limit }) : []);
+      }
+      if (url.pathname === '/api/handoffs' && req.method === 'POST') {
+        const body = await readJson();
+        const hSvc = handoffService || coordinator.handoffService;
+        if (!hSvc) return sendJson(500, { error: 'Handoff service unavailable' });
+        const saved = hSvc.createHandoff(body.project_id || 'default', {
+          sourceHostId: body.source_host_id || body.sourceHostId || 'local',
+          sourceAgentId: body.source_agent_id || body.sourceAgentId || token?.agent_id || 'manual',
+          sourceSessionId: body.source_session_id || body.sourceSessionId || null,
+          targetHostId: body.target_host_id || body.targetHostId || null,
+          objective: body.objective || '',
+          stateSummary: body.state_summary || body.stateSummary || '',
+          modifiedFiles: body.modified_files || body.modifiedFiles || [],
+          nextAction: body.next_action || body.nextAction || '',
+          metadata: body.metadata || {}
+        });
+        return sendJson(201, saved);
+      }
+      if (url.pathname.startsWith('/api/handoffs/') && url.pathname.endsWith('/consume') && req.method === 'POST') {
+        const hId = url.pathname.replace('/api/handoffs/', '').replace('/consume', '');
+        const body = await readJson();
+        const hSvc = handoffService || coordinator.handoffService;
+        if (!hSvc) return sendJson(500, { error: 'Handoff service unavailable' });
+        const consumed = hSvc.consumeHandoff(hId, body.agent_id || token?.agent_id || 'unknown', body.host_id || null);
+        return sendJson(200, { success: Boolean(consumed), handoff: consumed });
       }
 
       // 3. Token minting
