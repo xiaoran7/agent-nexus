@@ -13,6 +13,50 @@ export class ProjectHandoffService {
     this.eventBus = eventBus;
   }
 
+  _stmt(sql) {
+    if (this._stmtDb !== this.db) {
+      this._stmtDb = this.db;
+      this._stmtCache = new Map();
+    }
+    let stmt = this._stmtCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this._stmtCache.set(sql, stmt);
+    }
+    return stmt;
+  }
+
+  /**
+   * 解析跨机同源工程 ID 集合：
+   * 解决本地 Windows (D:\...\Agent-Nexus) 与远端 Linux (/root/.../Agent-Nexus)
+   * 因跨 OS 绝对路径哈希不同导致生成的 projectId 不一致、无法跨机共享同一仓库交接工单的问题。
+   */
+  _resolveEquivalentProjectIds(pid) {
+    if (!pid || pid === 'all' || pid === 'default') return [pid || 'default'];
+    const ids = new Set([pid, 'default']);
+    try {
+      const row = this._stmt(`SELECT display_name, root_path FROM projects WHERE id = ?`).get(pid);
+      const rawName = row?.display_name || (row?.root_path ? row.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : null);
+      if (rawName) {
+        const baseName = rawName.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
+        if (baseName && baseName !== 'default project' && !baseName.startsWith('project (')) {
+          const peers = this._stmt(`
+            SELECT id, display_name, root_path FROM projects
+            WHERE id != 'all' AND id != ''
+          `).all();
+          for (const p of peers) {
+            const pRaw = p.display_name || (p.root_path ? p.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : '');
+            const pBase = pRaw.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
+            if (pBase === baseName) {
+              ids.add(p.id);
+            }
+          }
+        }
+      }
+    } catch {}
+    return [...ids];
+  }
+
   /**
    * 创建一份持久交接工单
    */
@@ -54,9 +98,21 @@ export class ProjectHandoffService {
     const now = Date.now();
     const files = modifiedFiles.length > 0 ? modifiedFiles : modified_files;
     const filesJson = JSON.stringify(Array.isArray(files) ? files : []);
-    const metaJson = JSON.stringify(metadata && typeof metadata === 'object' ? metadata : {});
+    const metaObj = metadata && typeof metadata === 'object' ? metadata : {};
+    const metaJson = JSON.stringify(metaObj);
 
-    this.db.prepare(`
+    // 若为自动合成的新一轮阶段提交，自动将同项目此前未认领的旧自动合成工单演进为 completed，避免过期接力堆积
+    if (metaObj.auto_synthesized) {
+      try {
+        this._stmt(`
+          UPDATE project_handoffs
+          SET status = 'completed', updated_at = ?
+          WHERE project_id = ? AND status = 'pending' AND instr(metadata, '"auto_synthesized":true') > 0
+        `).run(now, finalProjectId);
+      } catch {}
+    }
+
+    this._stmt(`
       INSERT INTO project_handoffs (
         id, project_id, source_host_id, source_agent_id, source_session_id,
         target_host_id, objective, state_summary, modified_files, next_action,
@@ -99,11 +155,14 @@ export class ProjectHandoffService {
     const excludeAgentId = options.excludeAgentId || options.exclude_agent_id || null;
     const forHostId = options.forHostId || options.for_host_id || options.targetHostId || options.target_host_id || null;
 
+    const eqIds = this._resolveEquivalentProjectIds(pid);
+    const placeholders = eqIds.map(() => '?').join(', ');
+
     let sql = `
       SELECT * FROM project_handoffs
-      WHERE (project_id = ? OR project_id = 'default' OR ? = 'default') AND status = 'pending'
+      WHERE (project_id IN (${placeholders}) OR ? = 'default') AND status = 'pending'
     `;
-    const params = [pid, pid];
+    const params = [...eqIds, pid];
 
     if (excludeAgentId) {
       sql += ` AND source_agent_id != ?`;
@@ -115,20 +174,23 @@ export class ProjectHandoffService {
     }
 
     sql += ` ORDER BY created_at DESC LIMIT 1`;
-    const row = this.db.prepare(sql).get(...params);
+    const row = this._stmt(sql).get(...params);
     return row ? this._formatRow(row) : null;
   }
 
   /**
-   * 标记交接工单已被接力会话认领/消费
+   * 标记交接工单已被接力会话认领/消费，或已完成闭环
    */
-  consumeHandoff(id, consumingAgentId, hostId = null) {
+  consumeHandoff(id, consumingAgentId, hostId = null, targetStatus = null) {
     const now = Date.now();
-    this.db.prepare(`
+    const existing = this.getById(id);
+    const nextStatus = targetStatus || (existing?.status === 'in_progress' ? 'completed' : 'in_progress');
+
+    this._stmt(`
       UPDATE project_handoffs
-      SET status = 'in_progress', consumed_by_agent_id = ?, consumed_at = ?, updated_at = ?
+      SET status = ?, consumed_by_agent_id = COALESCE(?, consumed_by_agent_id), consumed_at = COALESCE(consumed_at, ?), updated_at = ?
       WHERE id = ?
-    `).run(consumingAgentId || 'unknown', now, now, id);
+    `).run(nextStatus, consumingAgentId || 'unknown', now, now, id);
 
     const record = this.getById(id);
     if (this.eventBus && record) {
@@ -147,7 +209,7 @@ export class ProjectHandoffService {
    */
   updateStatus(id, status) {
     const now = Date.now();
-    this.db.prepare(`
+    this._stmt(`
       UPDATE project_handoffs
       SET status = ?, updated_at = ?
       WHERE id = ?
@@ -156,7 +218,7 @@ export class ProjectHandoffService {
   }
 
   /**
-   * 列出指定工程的交接历史
+   * 列出指定工程的交接历史（支持跨机同名工程聚合）
    */
   list(projectId, { status = null, limit = 20, offset = 0 } = {}) {
     const pid = projectId || 'default';
@@ -167,8 +229,10 @@ export class ProjectHandoffService {
     const params = [];
 
     if (pid !== 'all') {
-      sql += ` AND project_id = ?`;
-      params.push(pid);
+      const eqIds = this._resolveEquivalentProjectIds(pid);
+      const placeholders = eqIds.map(() => '?').join(', ');
+      sql += ` AND project_id IN (${placeholders})`;
+      params.push(...eqIds);
     }
 
     if (status) {
@@ -179,12 +243,12 @@ export class ProjectHandoffService {
     sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
     params.push(lim, off);
 
-    const rows = this.db.prepare(sql).all(...params);
+    const rows = this._stmt(sql).all(...params);
     return rows.map(r => this._formatRow(r));
   }
 
   getById(id) {
-    const row = this.db.prepare(`SELECT * FROM project_handoffs WHERE id = ?`).get(id);
+    const row = this._stmt(`SELECT * FROM project_handoffs WHERE id = ?`).get(id);
     return row ? this._formatRow(row) : null;
   }
 

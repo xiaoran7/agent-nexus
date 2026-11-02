@@ -195,7 +195,7 @@ test('REST API: 算力拓扑与跨机接力端点完整性', async () => {
     assert.ok(Array.isArray(listRes.json));
     assert.ok(listRes.json.some(h => h.id === handoffId));
 
-    // 5. POST /api/handoffs/:id/consume
+    // 5. POST /api/handoffs/:id/consume (认领 -> in_progress)
     const consumeRes = await daemon.request(`/api/handoffs/${handoffId}/consume`, {
       method: 'POST',
       body: { agent_id: 'linux-worker' }
@@ -203,7 +203,88 @@ test('REST API: 算力拓扑与跨机接力端点完整性', async () => {
     assert.equal(consumeRes.status, 200);
     assert.equal(consumeRes.json.success, true);
     assert.equal(consumeRes.json.handoff.status, 'in_progress');
+
+    // 6. POST /api/handoffs/:id/consume 再次调用自动演进为 completed 闭环
+    const completeRes = await daemon.request(`/api/handoffs/${handoffId}/consume`, {
+      method: 'POST',
+      body: { agent_id: 'linux-worker' }
+    });
+    assert.equal(completeRes.status, 200);
+    assert.equal(completeRes.json.handoff.status, 'completed');
   } finally {
     await daemon.close();
   }
 });
+
+test('跨 OS 同源仓库等价解析：Windows 与 Linux 异构路径共享接力工单与工程长期记忆', () => {
+  const { coordinator, handoffService, memoryService, db } = createHarness();
+  coordinator.localNodeId = 'win-workstation';
+
+  // 注册本机 Windows 会话与远端 Linux 会话（同一仓库名 Agent-Nexus，不同跨系统路径与 projectId）
+  coordinator.registerAgent({
+    id: 'claude-win-dev',
+    hostId: 'win-workstation',
+    name: 'Windows 主开发会话',
+    provider: 'claude',
+    sessionId: 'win-dev',
+    workspaceDir: 'D:/Claudespace/Project/Agent-Nexus',
+    projectRoot: 'd:/claudespace/project/agent-nexus',
+    projectId: 'proj_win_hash_01'
+  });
+
+  coordinator.registerAgent({
+    id: 'claude-linux-runner',
+    hostId: 'us-zenix',
+    name: 'Linux 美西验证会话',
+    provider: 'claude',
+    sessionId: 'linux-runner',
+    workspaceDir: '/root/Claudespace/Project/Agent-Nexus',
+    projectRoot: '/root/Claudespace/Project/Agent-Nexus',
+    projectId: 'proj_linux_hash_02'
+  });
+
+  // 1. 在 Windows projectId 下沉淀长期记忆与自动合成工单
+  memoryService.set('proj_win_hash_01', {
+    category: 'architecture',
+    key: 'hub_edge_topology',
+    content: '单中心 Hub + 边缘轻量无状态探针',
+    sourceAgentId: 'claude-win-dev'
+  });
+
+  const h1 = handoffService.createHandoff('proj_win_hash_01', {
+    sourceHostId: 'win-workstation',
+    sourceAgentId: 'claude-win-dev',
+    objective: '第一阶段草稿提交',
+    stateSummary: '初步修改',
+    nextAction: '待继续',
+    metadata: { auto_synthesized: true }
+  });
+  assert.equal(h1.status, 'pending');
+
+  // 新一轮自动合成工单应自动将上一条未认领的自动合成工单演进为 completed
+  const h2 = handoffService.createHandoff('proj_win_hash_01', {
+    sourceHostId: 'win-workstation',
+    sourceAgentId: 'claude-win-dev',
+    objective: '第二阶段完整提交',
+    stateSummary: '已完成 SQL 预编译缓存与单次 RTT Hook 优化',
+    modifiedFiles: ['src/daemon/coordinator.js', 'src/hook/nexus-hook.mjs'],
+    nextAction: '在 Linux 远端执行全量基准验证',
+    metadata: { auto_synthesized: true }
+  });
+  assert.equal(handoffService.getById(h1.id).status, 'completed');
+  assert.equal(h2.status, 'pending');
+
+  // 2. 远端 Linux 会话使用自己的 proj_linux_hash_02 查询待接力工单与长期记忆，应自动跨机命中！
+  const pendingForLinux = handoffService.getPendingHandoff('proj_linux_hash_02', {
+    excludeAgentId: 'claude-linux-runner'
+  });
+  assert.ok(pendingForLinux, '远端 Linux 工程 ID 应自动感知同仓库 Windows 工程下的待接力工单');
+  assert.equal(pendingForLinux.id, h2.id);
+
+  const linuxMemories = memoryService.list('proj_linux_hash_02');
+  assert.equal(linuxMemories.length, 1, '远端 Linux 工程 ID 应自动共享同仓库 Windows 工程下的长期记忆');
+  assert.equal(linuxMemories[0].key, 'hub_edge_topology');
+
+  db.close();
+});
+

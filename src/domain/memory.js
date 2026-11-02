@@ -12,6 +12,49 @@ export class ProjectMemoryService {
     this.eventBus = eventBus;
   }
 
+  _stmt(sql) {
+    if (this._stmtDb !== this.db) {
+      this._stmtDb = this.db;
+      this._stmtCache = new Map();
+    }
+    let stmt = this._stmtCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this._stmtCache.set(sql, stmt);
+    }
+    return stmt;
+  }
+
+  /**
+   * 解析跨机同源工程 ID 集合：
+   * 使本地与远端同名工程（如 Windows 与 Linux 下的同一个仓库）天然共享长期工程记忆。
+   */
+  _resolveEquivalentProjectIds(pid) {
+    if (!pid || pid === 'all' || pid === 'default') return [pid || 'default'];
+    const ids = new Set([pid]);
+    try {
+      const row = this._stmt(`SELECT display_name, root_path FROM projects WHERE id = ?`).get(pid);
+      const rawName = row?.display_name || (row?.root_path ? row.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : null);
+      if (rawName) {
+        const baseName = rawName.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
+        if (baseName && baseName !== 'default project' && !baseName.startsWith('project (')) {
+          const peers = this._stmt(`
+            SELECT id, display_name, root_path FROM projects
+            WHERE id != 'all' AND id != ''
+          `).all();
+          for (const p of peers) {
+            const pRaw = p.display_name || (p.root_path ? p.root_path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() : '');
+            const pBase = pRaw.replace(/\s*\[[^\]]+\]\s*$/, '').trim().toLowerCase();
+            if (pBase === baseName) {
+              ids.add(p.id);
+            }
+          }
+        }
+      }
+    } catch {}
+    return [...ids];
+  }
+
   set(projectId, { category = 'general', key, content, sourceAgentId = null }) {
     const finalProjectId = requireString(projectId, 'project_id');
     const finalKey = requireString(key, 'key');
@@ -24,7 +67,7 @@ export class ProjectMemoryService {
 
     const now = Date.now();
 
-    const stmt = this.db.prepare(`
+    const stmt = this._stmt(`
       INSERT INTO project_memories (project_id, category, key, content, source_agent_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id, category, key) DO UPDATE SET
@@ -50,12 +93,12 @@ export class ProjectMemoryService {
   get(projectId, key, category = null) {
     const pid = projectId || 'default';
     if (category) {
-      return this.db.prepare(`
+      return this._stmt(`
         SELECT * FROM project_memories
         WHERE project_id = ? AND category = ? AND key = ?
       `).get(pid, category, key) || null;
     }
-    return this.db.prepare(`
+    return this._stmt(`
       SELECT * FROM project_memories
       WHERE project_id = ? AND key = ?
       ORDER BY updated_at DESC
@@ -65,7 +108,7 @@ export class ProjectMemoryService {
 
   getById(projectId, id) {
     const pid = projectId || 'default';
-    return this.db.prepare(`
+    return this._stmt(`
       SELECT * FROM project_memories
       WHERE project_id = ? AND id = ?
     `).get(pid, id) || null;
@@ -78,35 +121,38 @@ export class ProjectMemoryService {
 
     if (pid === 'all') {
       if (category) {
-        return this.db.prepare(`
+        return this._stmt(`
           SELECT * FROM project_memories
           WHERE category = ?
           ORDER BY updated_at DESC
           LIMIT ? OFFSET ?
         `).all(category, lim, off);
       }
-      return this.db.prepare(`
+      return this._stmt(`
         SELECT * FROM project_memories
         ORDER BY updated_at DESC
         LIMIT ? OFFSET ?
       `).all(lim, off);
     }
 
+    const eqIds = this._resolveEquivalentProjectIds(pid);
+    const placeholders = eqIds.map(() => '?').join(', ');
+
     if (category) {
-      return this.db.prepare(`
+      return this._stmt(`
         SELECT * FROM project_memories
-        WHERE project_id = ? AND category = ?
+        WHERE project_id IN (${placeholders}) AND category = ?
         ORDER BY updated_at DESC
         LIMIT ? OFFSET ?
-      `).all(pid, category, lim, off);
+      `).all(...eqIds, category, lim, off);
     }
 
-    return this.db.prepare(`
+    return this._stmt(`
       SELECT * FROM project_memories
-      WHERE project_id = ?
+      WHERE project_id IN (${placeholders})
       ORDER BY updated_at DESC
       LIMIT ? OFFSET ?
-    `).all(pid, lim, off);
+    `).all(...eqIds, lim, off);
   }
 
   search(projectId, query, { category = null, limit = 20 } = {}) {
@@ -119,14 +165,14 @@ export class ProjectMemoryService {
 
     if (pid === 'all') {
       if (category) {
-        return this.db.prepare(`
+        return this._stmt(`
           SELECT * FROM project_memories
           WHERE category = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
           ORDER BY updated_at DESC
           LIMIT ?
         `).all(category, pattern, pattern, lim);
       }
-      return this.db.prepare(`
+      return this._stmt(`
         SELECT * FROM project_memories
         WHERE key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\'
         ORDER BY updated_at DESC
@@ -134,21 +180,24 @@ export class ProjectMemoryService {
       `).all(pattern, pattern, lim);
     }
 
+    const eqIds = this._resolveEquivalentProjectIds(pid);
+    const placeholders = eqIds.map(() => '?').join(', ');
+
     if (category) {
-      return this.db.prepare(`
+      return this._stmt(`
         SELECT * FROM project_memories
-        WHERE project_id = ? AND category = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+        WHERE project_id IN (${placeholders}) AND category = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
         ORDER BY updated_at DESC
         LIMIT ?
-      `).all(pid, category, pattern, pattern, lim);
+      `).all(...eqIds, category, pattern, pattern, lim);
     }
 
-    return this.db.prepare(`
+    return this._stmt(`
       SELECT * FROM project_memories
-      WHERE project_id = ? AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+      WHERE project_id IN (${placeholders}) AND (key LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
       ORDER BY updated_at DESC
       LIMIT ?
-    `).all(pid, pattern, pattern, lim);
+    `).all(...eqIds, pattern, pattern, lim);
   }
 
   delete(projectId, identifier) {

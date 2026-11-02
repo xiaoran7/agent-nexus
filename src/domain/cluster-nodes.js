@@ -1,4 +1,4 @@
-import { requireString } from './errors.js';
+import { isSameNode } from './project.js';
 
 /**
  * 跨机算力节点与探针拓扑管理服务 (Cluster Nodes Registry)
@@ -10,7 +10,7 @@ export class ClusterNodeService {
   constructor(db, eventBus = null, localNodeId = 'local') {
     this.db = db;
     this.eventBus = eventBus;
-    this.localNodeId = localNodeId || 'local';
+    this.localNodeId = (localNodeId || 'local').trim().toLowerCase();
 
     // 初始化确保本机 Hub 节点常驻登记
     this.recordHeartbeat(this.localNodeId, {
@@ -18,6 +18,28 @@ export class ClusterNodeService {
       platform: process.platform,
       displayName: 'Hub (控制中枢)'
     });
+  }
+
+  _stmt(sql) {
+    if (this._stmtDb !== this.db) {
+      this._stmtDb = this.db;
+      this._stmtCache = new Map();
+    }
+    let stmt = this._stmtCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this._stmtCache.set(sql, stmt);
+    }
+    return stmt;
+  }
+
+  _normalizeHostKey(rawHostId) {
+    if (!rawHostId) return this.localNodeId;
+    const clean = String(rawHostId).trim().toLowerCase();
+    if (!clean || clean === 'local' || isSameNode(clean, this.localNodeId)) {
+      return this.localNodeId;
+    }
+    return clean;
   }
 
   /**
@@ -45,18 +67,20 @@ export class ClusterNodeService {
     } = options;
 
     const now = Date.now();
-    const finalRole = cleanId === this.localNodeId ? 'hub' : (role || 'edge');
-    const finalPlatform = platform || (cleanId === this.localNodeId ? process.platform : 'unknown');
-    const finalDisplay = displayName || display_name || (cleanId === this.localNodeId ? 'Hub (控制中枢)' : cleanId);
+    const isHub = cleanId === this.localNodeId || isSameNode(cleanId, this.localNodeId);
+    const targetId = isHub ? this.localNodeId : cleanId;
+    const finalRole = isHub ? 'hub' : (role || 'edge');
+    const finalPlatform = platform || (isHub ? process.platform : 'unknown');
+    const finalDisplay = displayName || display_name || (isHub ? 'Hub (控制中枢)' : targetId);
 
-    const existing = this.getNode(cleanId);
+    const existing = this.getNode(targetId);
     const metaObj = {
       ...(existing?.metadata || {}),
       ...(metadata && typeof metadata === 'object' ? metadata : {})
     };
     const metaJson = JSON.stringify(metaObj);
 
-    this.db.prepare(`
+    this._stmt(`
       INSERT INTO cluster_nodes (
         id, display_name, role, platform, ip, last_heartbeat, status, metadata, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'online', ?, ?, ?)
@@ -70,15 +94,15 @@ export class ClusterNodeService {
         metadata = excluded.metadata,
         updated_at = excluded.updated_at
     `).run(
-      cleanId, finalDisplay, finalRole, finalPlatform, ip || null,
+      targetId, finalDisplay, finalRole, finalPlatform, ip || null,
       now, metaJson, existing?.created_at || now, now
     );
 
-    const record = this.getNode(cleanId);
+    const record = this.getNode(targetId);
 
     if (this.eventBus && (!existing || existing.status !== 'online')) {
       this.eventBus.emit('node:status', {
-        node_id: cleanId,
+        node_id: targetId,
         status: 'online',
         node: record
       });
@@ -93,7 +117,7 @@ export class ClusterNodeService {
    */
   sweepStaleNodes(now = Date.now()) {
     // 自身 Hub 节点自动保持在线
-    this.db.prepare(`
+    this._stmt(`
       UPDATE cluster_nodes
       SET last_heartbeat = ?, status = 'online', updated_at = ?
       WHERE id = ?
@@ -103,13 +127,13 @@ export class ClusterNodeService {
     const offlineThreshold = now - 180000;
 
     // 变更为 offline
-    const newlyOffline = this.db.prepare(`
+    const newlyOffline = this._stmt(`
       SELECT id FROM cluster_nodes
       WHERE id != ? AND last_heartbeat < ? AND status != 'offline'
     `).all(this.localNodeId, offlineThreshold);
 
     if (newlyOffline.length > 0) {
-      this.db.prepare(`
+      this._stmt(`
         UPDATE cluster_nodes
         SET status = 'offline', updated_at = ?
         WHERE id != ? AND last_heartbeat < ? AND status != 'offline'
@@ -121,13 +145,13 @@ export class ClusterNodeService {
     }
 
     // 变更为 stale (但尚未 offline)
-    const newlyStale = this.db.prepare(`
+    const newlyStale = this._stmt(`
       SELECT id FROM cluster_nodes
       WHERE id != ? AND last_heartbeat < ? AND last_heartbeat >= ? AND status = 'online'
     `).all(this.localNodeId, staleThreshold, offlineThreshold);
 
     if (newlyStale.length > 0) {
-      this.db.prepare(`
+      this._stmt(`
         UPDATE cluster_nodes
         SET status = 'stale', updated_at = ?
         WHERE id != ? AND last_heartbeat < ? AND last_heartbeat >= ? AND status = 'online'
@@ -142,43 +166,68 @@ export class ClusterNodeService {
   }
 
   /**
-   * 获取所有注册节点，并聚合当前节点下的在席会话与活跃锁数量
+   * 获取所有注册节点，并批量聚合当前节点下的在席会话与活跃锁数量（消除 N+1 查询）
    */
   listNodes(projectId = null) {
-    const nodes = this.db.prepare(`
+    const nodes = this._stmt(`
       SELECT * FROM cluster_nodes
       ORDER BY CASE WHEN role = 'hub' THEN 0 ELSE 1 END, last_heartbeat DESC
     `).all();
 
+    if (nodes.length === 0) return [];
+
     const now = Date.now();
+    const filterByProj = Boolean(projectId && projectId !== 'all');
+    const agentCountsByHost = new Map();
+    const lockCountsByHost = new Map();
+
+    try {
+      const agentRows = filterByProj
+        ? this._stmt(`
+            SELECT host_id, COUNT(*) as count FROM agents
+            WHERE status != 'departed' AND project_id = ?
+            GROUP BY host_id
+          `).all(projectId)
+        : this._stmt(`
+            SELECT host_id, COUNT(*) as count FROM agents
+            WHERE status != 'departed'
+            GROUP BY host_id
+          `).all();
+
+      for (const r of agentRows) {
+        const key = this._normalizeHostKey(r.host_id);
+        agentCountsByHost.set(key, (agentCountsByHost.get(key) || 0) + (r.count || 0));
+      }
+
+      const lockRows = filterByProj
+        ? this._stmt(`
+            SELECT a.host_id, COUNT(*) as count FROM claims c
+            JOIN leases l ON c.intent_id = l.intent_id
+            JOIN agents a ON c.agent_id = a.id
+            WHERE l.expires_at > ? AND c.project_id = ?
+            GROUP BY a.host_id
+          `).all(now, projectId)
+        : this._stmt(`
+            SELECT a.host_id, COUNT(*) as count FROM claims c
+            JOIN leases l ON c.intent_id = l.intent_id
+            JOIN agents a ON c.agent_id = a.id
+            WHERE l.expires_at > ?
+            GROUP BY a.host_id
+          `).all(now);
+
+      for (const r of lockRows) {
+        const key = this._normalizeHostKey(r.host_id);
+        lockCountsByHost.set(key, (lockCountsByHost.get(key) || 0) + (r.count || 0));
+      }
+    } catch {}
 
     return nodes.map(n => {
       let meta = {};
       try { meta = JSON.parse(n.metadata || '{}'); } catch {}
 
-      // 统计挂在该节点下的实时在席 Agent 数量 (排除 departed)
-      let agentCount = 0;
-      let activeLockCount = 0;
-
-      try {
-        const agentCountRow = this.db.prepare(`
-          SELECT COUNT(*) as count FROM agents
-          WHERE host_id = ? AND status != 'departed'
-          ${projectId && projectId !== 'all' ? 'AND project_id = ?' : ''}
-        `).get(...(projectId && projectId !== 'all' ? [n.id, projectId] : [n.id]));
-        agentCount = agentCountRow?.count || 0;
-
-        const lockCountRow = this.db.prepare(`
-          SELECT COUNT(*) as count FROM claims c
-          JOIN leases l ON c.intent_id = l.intent_id
-          JOIN agents a ON c.agent_id = a.id
-          WHERE a.host_id = ? AND l.expires_at > ?
-          ${projectId && projectId !== 'all' ? 'AND c.project_id = ?' : ''}
-        `).get(...(projectId && projectId !== 'all' ? [n.id, now, projectId] : [n.id, now]));
-        activeLockCount = lockCountRow?.count || 0;
-      } catch {}
-
-      // 算力节点健康度评分与延迟推测
+      const hostKey = this._normalizeHostKey(n.id);
+      const agentCount = agentCountsByHost.get(hostKey) || 0;
+      const activeLockCount = lockCountsByHost.get(hostKey) || 0;
       const timeSinceHeartbeat = Math.max(0, now - n.last_heartbeat);
 
       return {
@@ -199,7 +248,7 @@ export class ClusterNodeService {
 
   getNode(nodeId) {
     if (!nodeId) return null;
-    const row = this.db.prepare(`SELECT * FROM cluster_nodes WHERE id = ?`).get(nodeId.trim().toLowerCase());
+    const row = this._stmt(`SELECT * FROM cluster_nodes WHERE id = ?`).get(nodeId.trim().toLowerCase());
     if (!row) return null;
     let meta = {};
     try { meta = JSON.parse(row.metadata || '{}'); } catch {}

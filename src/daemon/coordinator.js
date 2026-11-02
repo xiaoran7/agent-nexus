@@ -430,14 +430,14 @@ export class CoordinatorEngine {
 
   // 四级冲突判定的唯一实现，加入 projectId 作用域与资源锁互斥，支持 #anchor 大文件细粒度锁
   findConflict(normalizedClaims, agentId, now, projectId = 'default') {
-    const activeClaims = this.db.prepare(`
+    const activeClaims = this._all(`
       SELECT c.claim_type, c.claim_target, c.agent_id, l.intent_id, l.expires_at,
              a.name as agent_name, a.workspace_dir as holder_workspace
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
       WHERE (l.project_id = ? OR l.project_id = 'default' OR ? = 'default') AND l.expires_at > ? AND (c.project_id = ? OR c.project_id = 'default' OR ? = 'default')
-    `).all(projectId, projectId, now, projectId, projectId);
+    `, [projectId, projectId, now, projectId, projectId]);
 
     for (const claim of normalizedClaims) {
       for (const active of activeClaims) {
@@ -529,13 +529,15 @@ export class CoordinatorEngine {
    * 0.1b 接收远端工作区（如 us-zenix）推送或 Hook 捎带的 Claude 会话注册表快照
    * 远端已在本地完成 PID / 命名管道存活校验，Hub 直接信任其 alive/verified 结论，绝不调用本机 process.kill
    */
-  syncRemoteClaudeSessions({ hostId, sessions = [], fullSnapshot = true, now = Date.now() } = {}) {
+  syncRemoteClaudeSessions({ hostId, platform = null, sessions = [], fullSnapshot = true, now = Date.now() } = {}) {
     const cleanHost = normalizeNodeId(hostId);
     if (this.clusterNodeService && cleanHost) {
       try {
         this.clusterNodeService.recordHeartbeat(cleanHost, {
           role: isSameNode(cleanHost, this.localNodeId) ? 'hub' : 'edge',
-          displayName: cleanHost
+          platform: platform || null,
+          displayName: cleanHost,
+          metadata: { claude_sessions_count: Array.isArray(sessions) ? sessions.length : 0 }
         });
       } catch {}
     }
@@ -793,7 +795,7 @@ export class CoordinatorEngine {
    */
   resolveCanonicalAgentId(rawAgentId, sessionId = null, hostId = null) {
     if (!rawAgentId || typeof rawAgentId !== 'string') return rawAgentId;
-    const direct = this.db.prepare('SELECT id FROM agents WHERE id = ?').get(rawAgentId);
+    const direct = this._get('SELECT id FROM agents WHERE id = ?', [rawAgentId]);
     if (direct) return direct.id;
 
     const cleanHost = normalizeNodeId(hostId || this.localNodeId);
@@ -802,10 +804,10 @@ export class CoordinatorEngine {
       : (rawAgentId.startsWith('agent-') ? rawAgentId.slice(6) : (rawAgentId.startsWith('claude-') ? rawAgentId.slice(7) : null));
 
     if (derivedSession && (rawAgentId === `agent-${derivedSession}` || rawAgentId === `claude-${derivedSession}`)) {
-      const peers = this.db.prepare(`
+      const peers = this._all(`
         SELECT id, host_id FROM agents
         WHERE session_id = ? OR id = ? OR id = ?
-      `).all(derivedSession, `claude-${derivedSession}`, `agent-${derivedSession}`);
+      `, [derivedSession, `claude-${derivedSession}`, `agent-${derivedSession}`]);
       const sameHostPeer = peers.find(p => isSameNode(p.host_id, cleanHost));
       if (sameHostPeer) return sameHostPeer.id;
     }
@@ -825,7 +827,7 @@ export class CoordinatorEngine {
     const finalProvider = (params.provider ?? 'unknown') == null ? 'unknown' : String(params.provider);
     let finalName = sanitizeAgentName(params.name, id, finalProvider, finalSessionId);
     if (isMechanicalAgentName(finalName)) {
-      const existing = this.db.prepare('SELECT name FROM agents WHERE id = ?').get(id);
+      const existing = this._get('SELECT name FROM agents WHERE id = ?', [id]);
       if (existing?.name && !isMechanicalAgentName(existing.name)) {
         finalName = existing.name;
       } else if (isLocalAgent && this.claudeSessionsDir) {
@@ -850,7 +852,7 @@ export class CoordinatorEngine {
     // 心跳不是协同事件：写工具每次都会触发 Hook 上报，如果每次都落一条 activity_log，
     // 时间线会被心跳刷屏（实测占 41%），真正的冲突与释放被淹没。
     // 只有首次登记、名称/归属变化或从离线恢复才值得记一条。
-    const existingRow = this.db.prepare('SELECT name, project_id, status, host_id FROM agents WHERE id = ?').get(id);
+    const existingRow = this._get('SELECT name, project_id, status, host_id FROM agents WHERE id = ?', [id]);
     const isNewAgent = !existingRow;
     const identityChanged = existingRow && (
       existingRow.name !== finalName ||
@@ -858,7 +860,7 @@ export class CoordinatorEngine {
     );
     const cameBackOnline = existingRow && existingRow.status === 'departed';
 
-    const stmt = this.db.prepare(`
+    const stmt = this._stmt(`
       INSERT INTO agents (id, project_id, host_id, name, provider, session_id, workspace_dir, status, last_heartbeat, registered_at, pid, last_tool, last_action, last_target, liveness_verified_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
@@ -885,7 +887,7 @@ export class CoordinatorEngine {
         // projectRoot 可能已被 canonicalizePath 统一小写，workspaceDir 才是用户侧原始大小写
         const displayPath = pickDisplayPath([projectRootParam, workspaceDir], canonicalRoot);
         const displayName = resolveProjectDisplayName(displayPath, canonicalRoot, finalProjectId);
-        this.db.prepare(`
+        this._stmt(`
           INSERT INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
           VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
@@ -934,7 +936,7 @@ export class CoordinatorEngine {
 
     let agent = this.getAgent(agentId, finalProjectId);
     if (params.name && !isMechanicalAgentName(params.name)) {
-      this.db.prepare('UPDATE agents SET name = ? WHERE id = ?').run(params.name, agentId);
+      this._run('UPDATE agents SET name = ? WHERE id = ?', [params.name, agentId]);
     }
     if (!agent) {
       this.registerAgent({
@@ -953,7 +955,7 @@ export class CoordinatorEngine {
         livenessVerified: Boolean(livenessStamp)
       });
     } else {
-      this.db.prepare(`
+      this._stmt(`
         UPDATE agents
         SET last_heartbeat = ?,
             host_id = COALESCE(?, host_id),
@@ -965,6 +967,15 @@ export class CoordinatorEngine {
             pid = CASE WHEN ? IS NOT NULL THEN ? ELSE pid END
         WHERE id = ?
       `).run(now, cleanHost, livenessStamp, cleanTool, cleanAction, cleanTarget, finalPid, finalPid, agentId);
+    }
+
+    if (this.clusterNodeService && cleanHost) {
+      try {
+        this.clusterNodeService.recordHeartbeat(cleanHost, {
+          role: isSameNode(cleanHost, this.localNodeId) ? 'hub' : 'edge',
+          displayName: cleanHost
+        });
+      } catch {}
     }
 
     this.eventBus.emit('agent:telemetry', {
@@ -998,8 +1009,8 @@ export class CoordinatorEngine {
 
   getAgent(id, projectId = null) {
     const raw = projectId
-      ? this.db.prepare('SELECT * FROM agents WHERE id = ? AND project_id = ?').get(id, projectId)
-      : this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
+      ? this._get('SELECT * FROM agents WHERE id = ? AND project_id = ?', [id, projectId])
+      : this._get('SELECT * FROM agents WHERE id = ?', [id]);
     if (!raw) return null;
     const { lifecycleState, isOnline } = computeAgentLifecycleState(raw, Date.now(), this.localNodeId);
     return {
@@ -1022,7 +1033,7 @@ export class CoordinatorEngine {
   }
 
   // 2. 意图声明与确定性冲突检查 (Core Algorithm)
-  declareIntent({ agentId, intentSummary, claims = [], ttlSeconds = 300, projectId = 'default', projectRoot = null }) {
+  declareIntent({ agentId, intentSummary, claims = [], ttlSeconds = 300, projectId = 'default', projectRoot = null, _skipReap = false }) {
     requireAgentId(agentId);
     const rawSummary = requireString(intentSummary, 'summary');
     const summary = cleanUtf8String(rawSummary, 'Coordinated Task');
@@ -1039,7 +1050,7 @@ export class CoordinatorEngine {
     let effectiveProjectRoot = projectRoot;
     if (!effectiveProjectRoot && finalProjectId !== 'default') {
       try {
-        const pRow = this.db.prepare('SELECT root_path FROM projects WHERE id = ?').get(finalProjectId);
+        const pRow = this._get('SELECT root_path FROM projects WHERE id = ?', [finalProjectId]);
         if (pRow?.root_path) effectiveProjectRoot = pRow.root_path;
       } catch {}
     }
@@ -1051,8 +1062,10 @@ export class CoordinatorEngine {
       return assertClaimTarget(c.target, c.type, baseDir, effectiveProjectRoot);
     });
 
-    this.reapDeadAgentLeases();
-    this.expireLeases();
+    if (!_skipReap) {
+      this.reapDeadAgentLeases();
+      this.expireLeases();
+    }
     const now = Date.now();
     this.reapStaleIntentsAndAgents(now);
     const intentId = `intent_${randomUUID().slice(0, 8)}`;
@@ -1348,18 +1361,20 @@ export class CoordinatorEngine {
     if (!agentId) return { touchedCount: 0 };
     const now = Date.now();
 
-    const query = projectId && projectId !== 'all'
-      ? `SELECT id, ttl_seconds, expires_at, created_at FROM leases WHERE agent_id = ? AND (project_id = ? OR project_id = 'default') AND expires_at > ?`
-      : `SELECT id, ttl_seconds, expires_at, created_at FROM leases WHERE agent_id = ? AND expires_at > ?`;
-
     const activeLeases = (projectId && projectId !== 'all')
-      ? this.db.prepare(query).all(agentId, projectId, now)
-      : this.db.prepare(query).all(agentId, now);
+      ? this._all(
+          `SELECT id, ttl_seconds, expires_at, created_at FROM leases WHERE agent_id = ? AND (project_id = ? OR project_id = 'default') AND expires_at > ?`,
+          [agentId, projectId, now]
+        )
+      : this._all(
+          `SELECT id, ttl_seconds, expires_at, created_at FROM leases WHERE agent_id = ? AND expires_at > ?`,
+          [agentId, now]
+        );
 
     if (activeLeases.length === 0) return { touchedCount: 0 };
 
     let touchedCount = 0;
-    const updateStmt = this.db.prepare(`
+    const updateStmt = this._stmt(`
       UPDATE leases
       SET expires_at = ?
       WHERE id = ?
@@ -1687,7 +1702,7 @@ export class CoordinatorEngine {
   }
 
   // 5. 极速权限检查与自动补报 (针对通用 Hook 与资源锁)
-  fastCheckAndAutoClaim({ agentId: rawAgentId, hostId = null, name = null, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null, livenessVerified = false }) {
+  fastCheckAndAutoClaim({ agentId: rawAgentId, hostId = null, name = null, provider, sessionId, filePath, resourceName, promptHint, projectId = 'default', workspaceDir = '', projectRoot = null, pid = null, livenessVerified = false, lastTool = null, lastAction = null, lastTarget = null }) {
     requireAgentId(rawAgentId);
     const agentId = this.resolveCanonicalAgentId(rawAgentId, sessionId, hostId);
     const finalProjectId = projectId || 'default';
@@ -1697,7 +1712,7 @@ export class CoordinatorEngine {
     let finalProjectRoot = projectRoot;
     if (!finalProjectRoot && finalProjectId !== 'default') {
       try {
-        const pRow = this.db.prepare('SELECT root_path FROM projects WHERE id = ?').get(finalProjectId);
+        const pRow = this._get('SELECT root_path FROM projects WHERE id = ?', [finalProjectId]);
         if (pRow?.root_path) finalProjectRoot = pRow.root_path;
       } catch {}
     }
@@ -1705,6 +1720,10 @@ export class CoordinatorEngine {
     const preferredName = (name && !isMechanicalAgentName(name))
       ? name
       : ((promptHint && !isMechanicalAgentName(promptHint)) ? promptHint.slice(0, 40) : sanitizeAgentName(null, agentId, provider, sessionId, promptHint));
+
+    const effectiveTool = lastTool || (filePath ? 'Edit' : (resourceName ? 'Bash' : null));
+    const effectiveAction = lastAction || effectiveTool;
+    const effectiveTarget = lastTarget || filePath || resourceName || null;
 
     this.registerAgent({
       id: agentId,
@@ -1716,8 +1735,23 @@ export class CoordinatorEngine {
       projectRoot: finalProjectRoot,
       projectId: finalProjectId,
       pid,
-      livenessVerified
+      livenessVerified,
+      lastTool: effectiveTool,
+      lastAction: effectiveAction,
+      lastTarget: effectiveTarget
     });
+
+    if (lastTool) {
+      this.eventBus.emit('agent:telemetry', {
+        agent_id: agentId,
+        host_id: normalizeNodeId(hostId || this.localNodeId),
+        project_id: finalProjectId,
+        tool: cleanUtf8String(lastTool, null),
+        action: cleanUtf8String(effectiveAction, null),
+        target: cleanUtf8String(effectiveTarget, null),
+        timestamp: now
+      });
+    }
 
     if (this.clusterNodeService) {
       try {
@@ -1737,14 +1771,14 @@ export class CoordinatorEngine {
       const cleanResource = resourceName.trim().toLowerCase();
       assertClaimTarget(cleanResource, 'resource', workspaceDir, finalProjectRoot);
 
-      const existingResourceLock = this.db.prepare(`
+      const existingResourceLock = this._get(`
         SELECT c.agent_id, a.name as agent_name, a.workspace_dir, i.summary, l.id as lease_id, l.expires_at
         FROM claims c
         JOIN leases l ON c.intent_id = l.intent_id
         JOIN agents a ON c.agent_id = a.id
         JOIN intents i ON c.intent_id = i.id
         WHERE (c.project_id = ? OR c.project_id = 'default' OR ? = 'default') AND c.claim_type = 'resource' AND c.claim_target = ? AND l.expires_at > ?
-      `).get(finalProjectId, finalProjectId, cleanResource, now);
+      `, [finalProjectId, finalProjectId, cleanResource, now]);
 
       if (existingResourceLock) {
         if (existingResourceLock.agent_id === agentId) {
@@ -1778,7 +1812,8 @@ export class CoordinatorEngine {
         claims: [{ type: 'resource', target: cleanResource }],
         ttlSeconds: LEASE_POLICY.resourceTtlSeconds, // 覆盖真实命令时长；PostToolUse 结束时毫秒级释放
         projectId: finalProjectId,
-        projectRoot: finalProjectRoot
+        projectRoot: finalProjectRoot,
+        _skipReap: true
       });
 
       if (intentRes.status === 'WAITING') {
@@ -1815,14 +1850,14 @@ export class CoordinatorEngine {
     const normalizedFile = this.normalizePath(filePath, workspaceDir, finalProjectRoot);
     const { baseTarget: baseFile, anchor: fileAnchor } = splitTargetAnchor(normalizedFile);
 
-    const existingLock = this.db.prepare(`
+    const existingLock = this._all(`
       SELECT c.agent_id, c.claim_target, a.name as agent_name, a.workspace_dir as holder_workspace, i.summary, l.id as lease_id, l.expires_at
       FROM claims c
       JOIN leases l ON c.intent_id = l.intent_id
       JOIN agents a ON c.agent_id = a.id
       JOIN intents i ON c.intent_id = i.id
       WHERE (c.project_id = ? OR c.project_id = 'default' OR ? = 'default') AND c.claim_type = 'file' AND (c.claim_target = ? OR c.claim_target LIKE ? || '#%') AND l.expires_at > ?
-    `).all(finalProjectId, finalProjectId, baseFile, baseFile, now);
+    `, [finalProjectId, finalProjectId, baseFile, baseFile, now]);
 
     // 检查是否存在冲突锁
     let conflictingLock = null;
@@ -1883,7 +1918,8 @@ export class CoordinatorEngine {
       claims: [{ type: 'file', target: filePath }],
       ttlSeconds: LEASE_POLICY.fileTtlSeconds, // 覆盖“阅读→思考→改写”间隔，写工具遥测继续滑动续期
       projectId: finalProjectId,
-      projectRoot: finalProjectRoot
+      projectRoot: finalProjectRoot,
+      _skipReap: true
     });
 
     // 关键防御：如果意图被判定为冲突等待（例如命中模块锁或符号锁），坚决实施拦截
@@ -1996,10 +2032,10 @@ export class CoordinatorEngine {
   logActivity(agentId, eventType, target, description, projectId = 'default') {
     const now = Date.now();
     const finalProjectId = projectId || 'default';
-    this.db.prepare(`
+    this._run(`
       INSERT INTO activity_log (project_id, agent_id, event_type, target, description, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(finalProjectId, agentId, eventType, target, description, now);
+    `, [finalProjectId, agentId, eventType, target, description, now]);
 
     this.eventBus.emit('timeline:event', {
       project_id: finalProjectId,

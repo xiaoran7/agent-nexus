@@ -561,7 +561,7 @@ async function main() {
     process.exit(0);
   }
 
-  // 1. 上报实时工具调用态势与心跳活跃度 (非阻塞后台刷新)
+  // 1. 解析工具动作与目标特征
   const toolName = payload.tool_name || null;
   const toolInput = payload.tool_input || payload.input || {};
   const toolTarget = toolInput.file_path || toolInput.path || toolInput.target || toolInput.pattern || null;
@@ -574,7 +574,27 @@ async function main() {
   const rawPeers = IS_REMOTE_HUB ? collectLocalClaudePeerSessions() : null;
   const peerSessions = rawPeers && rawPeers.length > 0 ? rawPeers : undefined;
 
-  if (toolName) {
+  // 2. 优先检查生命周期动作：若执行 git commit / git push，说明当前施工单元完结，零感释放持有的所有租约
+  if (isGitCommitOrPush(payload)) {
+    const releaseRes = await notifyGitRelease({
+      agent_id: identity.agentId,
+      host_id: NODE_ID,
+      project_id: projectInfo.projectId,
+      workspace_dir: workspaceDir,
+      reason: 'git_lifecycle'
+    });
+    if (releaseRes && releaseRes.releasedCount > 0) {
+      console.error(`[Agent-Nexus] [Auto-Released] Auto-released ${releaseRes.releasedCount} lease(s) upon git commit/push and notified waiters.`);
+    }
+    process.exit(0);
+  }
+
+  const targetResource = extractBashResource(payload);
+  const targetFile = resolveTargetFile(payload) || extractBashTarget(payload, workspaceDir);
+
+  // 3. 仅对纯只读/非锁类工具单独发送 /api/hook/telemetry；
+  //    涉及资源锁或文件锁的操作直接将 telemetry 元数据合并进 /api/hook/check 单次 RTT 完成，消除跨机双倍网络往返
+  if (toolName && !targetResource && !targetFile) {
     try {
       const telRes = await reportTelemetry({
         agent_id: identity.agentId,
@@ -598,23 +618,7 @@ async function main() {
     } catch {}
   }
 
-  // 1. 优先检查生命周期动作：若执行 git commit / git push，说明当前施工单元完结，零感释放持有的所有租约
-  if (isGitCommitOrPush(payload)) {
-    const releaseRes = await notifyGitRelease({
-      agent_id: identity.agentId,
-      host_id: NODE_ID,
-      project_id: projectInfo.projectId,
-      workspace_dir: workspaceDir,
-      reason: 'git_lifecycle'
-    });
-    if (releaseRes && releaseRes.releasedCount > 0) {
-      console.error(`[Agent-Nexus] [Auto-Released] Auto-released ${releaseRes.releasedCount} lease(s) upon git commit/push and notified waiters.`);
-    }
-    process.exit(0);
-  }
-
-  // 2. 检查 Bash 是否涉及命名排他性资源（如 tests, dev-server, build）
-  const targetResource = extractBashResource(payload);
+  // 4. 检查 Bash 是否涉及命名排他性资源（如 tests, dev-server, build）
   if (targetResource) {
     const resourceRes = await checkPermission({
       agent_id: identity.agentId,
@@ -624,6 +628,9 @@ async function main() {
       name: identity.name,
       prompt_hint: identity.promptHint,
       resource_name: targetResource,
+      tool: toolName,
+      action: toolAction,
+      target: toolTarget || targetResource,
       project_id: projectInfo.projectId,
       project_root: projectInfo.projectRoot,
       workspace_dir: workspaceDir,
@@ -654,9 +661,7 @@ async function main() {
     }
   }
 
-  // 3. 检查文件改写与文件锁冲突 (支持跨 Worktree 相对化对齐与 #anchor 细粒度锁)
-  const targetFile = resolveTargetFile(payload) || extractBashTarget(payload, workspaceDir);
-
+  // 5. 检查文件改写与文件锁冲突 (支持跨 Worktree 相对化对齐与 #anchor 细粒度锁)
   if (!targetFile) {
     process.exit(0);
   }
@@ -669,12 +674,15 @@ async function main() {
     name: identity.name,
     prompt_hint: identity.promptHint,
     file_path: targetFile,
+    tool: toolName,
+    action: toolAction,
+    target: toolTarget || targetFile,
     project_id: projectInfo.projectId,
     project_root: projectInfo.projectRoot,
     workspace_dir: workspaceDir,
     pid: identity.pid,
     liveness_verified: identity.livenessVerified,
-    ...(peerSessions && !toolName ? { peer_sessions: peerSessions } : {})
+    ...(peerSessions && !targetResource ? { peer_sessions: peerSessions } : {})
   });
 
   if (res.allow === false) {

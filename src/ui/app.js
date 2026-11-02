@@ -1214,9 +1214,9 @@ function renderHandoffs(list) {
     ` : '';
 
     const actionBtn = statusClass === 'pending' ? `
-      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}')">认领工单</button>
+      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}', 'in_progress')">认领工单</button>
     ` : (statusClass === 'in_progress' ? `
-      <button class="btn-secondary btn-sm" onclick="claimHandoff('${idSafe}')">标记闭环</button>
+      <button class="btn-secondary btn-sm" onclick="claimHandoff('${idSafe}', 'completed')">标记闭环</button>
     ` : `<span style="color:var(--text-faint);font-size:11px;">已由 ${escapeHtml(h.consumed_by_agent_id || '助手')} 闭环</span>`);
 
     return `
@@ -1238,12 +1238,12 @@ function renderHandoffs(list) {
   }).join('');
 }
 
-async function claimHandoff(handoffId) {
+async function claimHandoff(handoffId, targetStatus = null) {
   try {
     const res = await fetch(`/api/handoffs/${encodeURIComponent(handoffId)}/consume`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ agent_id: 'operator' })
+      body: JSON.stringify({ agent_id: 'operator', ...(targetStatus ? { status: targetStatus } : {}) })
     });
     if (res.ok) {
       fetchDashboard();
@@ -2512,7 +2512,9 @@ function connectWebSocket() {
         if (ws.readyState === WebSocket.OPEN) {
           try {
             ws.send(JSON.stringify({ type: 'ping' }));
-            ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
+            if (typeof document === 'undefined' || !document.hidden) {
+              ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
+            }
           } catch {}
         }
       }, 4000);
@@ -2574,7 +2576,7 @@ function connectWebSocket() {
           return;
         }
 
-        if (payload.type === 'handoff:created' || payload.type === 'handoff:consumed' || payload.type === 'cluster:node_heartbeat') {
+        if (payload.type === 'handoff:created' || payload.type === 'handoff:consumed' || payload.type === 'node:status' || payload.type === 'cluster:node_heartbeat') {
           debouncedFetchDashboard();
           if (dom.viewMemory?.classList.contains('active')) {
             debouncedFetchHandoffs();

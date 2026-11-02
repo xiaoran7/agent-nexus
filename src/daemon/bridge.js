@@ -62,6 +62,7 @@ export async function pushRemoteSessionsOnce(options = {}) {
     headers,
     body: JSON.stringify({
       host_id: endpoint.nodeId,
+      platform: process.platform,
       full_snapshot: true,
       sessions
     })

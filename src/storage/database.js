@@ -216,6 +216,7 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_intents_proj_status ON intents(project_id, status);
     CREATE INDEX IF NOT EXISTS idx_intents_agent_status ON intents(agent_id, status);
     CREATE INDEX IF NOT EXISTS idx_agents_proj_heartbeat ON agents(project_id, last_heartbeat);
+    CREATE INDEX IF NOT EXISTS idx_agents_host_status ON agents(host_id, status);
     CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);

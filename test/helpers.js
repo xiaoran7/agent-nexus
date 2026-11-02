@@ -4,6 +4,7 @@ import { StateService } from '../src/domain/state.js';
 import { MessageService } from '../src/domain/messages.js';
 import { ClusterNodeService } from '../src/domain/cluster-nodes.js';
 import { ProjectHandoffService } from '../src/domain/handoff.js';
+import { ProjectMemoryService } from '../src/domain/memory.js';
 import { handleMcpTool } from '../src/mcp/server.js';
 import { createDatabase } from '../src/storage/database.js';
 import { startDaemon, stopDaemon } from '../src/daemon/index.js';
@@ -21,6 +22,7 @@ export function createHarness() {
   coordinator.messageService = messageService;
   const clusterNodeService = new ClusterNodeService(db, eventBus, coordinator.localNodeId);
   const handoffService = new ProjectHandoffService(db, eventBus);
+  const memoryService = new ProjectMemoryService(db, eventBus);
   coordinator.clusterNodeService = clusterNodeService;
   coordinator.handoffService = handoffService;
 
@@ -32,7 +34,8 @@ export function createHarness() {
     messageService,
     clusterNodeService,
     handoffService,
-    mcp: (toolName, args) => handleMcpTool(toolName, args, { coordinator, stateService, messageService }),
+    memoryService,
+    mcp: (toolName, args) => handleMcpTool(toolName, args, { coordinator, stateService, messageService, memoryService }),
     close: () => db.close()
   };
 }

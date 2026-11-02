@@ -149,7 +149,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const events = [
           'timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent',
           'project:onboarded', 'milestone:reached', 'lead:broadcast', 'lead:awakened',
-          'agent:progress', 'messages:read', 'memory:saved', 'memory:deleted'
+          'agent:progress', 'messages:read', 'memory:saved', 'memory:deleted',
+          'handoff:created', 'handoff:consumed', 'node:status'
         ];
         const handlers = new Map();
         for (const ev of events) {
@@ -466,10 +467,12 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const hostId = data.host_id || data.hostId || data.node_id || 'remote';
         const sessions = Array.isArray(data.sessions) ? data.sessions : [];
         const fullSnapshot = data.full_snapshot !== false && data.fullSnapshot !== false;
+        const platform = data.platform || null;
         const syncRes = coordinator.syncRemoteClaudeSessions({
           hostId,
           sessions,
-          fullSnapshot
+          fullSnapshot,
+          platform
         });
         return sendJson(200, { success: true, host_id: hostId, ...syncRes });
       }
@@ -524,7 +527,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const body = await readJson();
         const hSvc = handoffService || coordinator.handoffService;
         if (!hSvc) return sendJson(500, { error: 'Handoff service unavailable' });
-        const consumed = hSvc.consumeHandoff(hId, body.agent_id || token?.agent_id || 'unknown', body.host_id || null);
+        const consumed = hSvc.consumeHandoff(hId, body.agent_id || token?.agent_id || 'unknown', body.host_id || null, body.status || null);
         return sendJson(200, { success: Boolean(consumed), handoff: consumed });
       }
 
@@ -620,7 +623,10 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           workspaceDir: data.workspace_dir || '',
           projectRoot: data.project_root || null,
           pid: data.pid || null,
-          livenessVerified: Boolean(data.liveness_verified)
+          livenessVerified: Boolean(data.liveness_verified),
+          lastTool: data.tool || data.tool_name || null,
+          lastAction: data.action || data.tool_action || null,
+          lastTarget: data.target || data.tool_target || null
         });
         return sendJson(200, checkResult);
       }

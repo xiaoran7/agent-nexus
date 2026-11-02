@@ -2,6 +2,7 @@ import { ProjectLead } from './project-lead.js';
 import { NullAdapter, AnthropicAdapter, GatewayRouterAdapter, parseLlmConfig } from './llm-adapter.js';
 import { GatewayRouter } from './gateway-router.js';
 import { resolveProjectDisplayName, getLocalNodeId, normalizeNodeId, isSameNode } from './project.js';
+import { computeAgentLifecycleState } from '../daemon/coordinator.js';
 
 export class ProjectRegistry {
   constructor(db, coordinator, eventBus, llmAdapterFactory = null, memoryService = null) {
@@ -33,6 +34,19 @@ export class ProjectRegistry {
 
     // 历史数据库平滑回填：将存量 "Project <hash>" 迁移为真实可读名称
     this.backfillProjectDisplayNames();
+  }
+
+  _stmt(sql) {
+    if (this._stmtDb !== this.db) {
+      this._stmtDb = this.db;
+      this._stmtCache = new Map();
+    }
+    let stmt = this._stmtCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this._stmtCache.set(sql, stmt);
+    }
+    return stmt;
   }
 
   backfillProjectDisplayNames() {
@@ -80,7 +94,7 @@ export class ProjectRegistry {
     if (!projectId || projectId === 'all') return null;
     const now = Date.now();
     const finalName = displayName || resolveProjectDisplayName(rootPath, rootPath, projectId);
-    this.db.prepare(`
+    this._stmt(`
       INSERT INTO projects (id, root_path, display_name, created_at, last_activity)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
@@ -103,7 +117,7 @@ export class ProjectRegistry {
 
   getProject(projectId) {
     if (!projectId || projectId === 'all') return null;
-    const project = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) || null;
+    const project = this._stmt('SELECT * FROM projects WHERE id = ?').get(projectId) || null;
     if (project && (!project.display_name || /^Project\s+[0-9a-f]{16}$/i.test(project.display_name) || project.display_name === `Project ${project.id}`)) {
       project.display_name = resolveProjectDisplayName(project.root_path, project.root_path, project.id);
     }
@@ -112,22 +126,27 @@ export class ProjectRegistry {
 
   listProjects() {
     // 强制排除保留的虚拟全景 'all' 与空 id，确保下拉选单主权清晰且无冲突
-    const projects = this.db.prepare("SELECT * FROM projects WHERE id != 'all' AND id != '' ORDER BY last_activity DESC").all();
+    const projects = this._stmt("SELECT * FROM projects WHERE id != 'all' AND id != '' ORDER BY last_activity DESC").all();
 
-    // 统计当前各个项目的在线助手数量与远端节点标识
+    // 轻量窄列统计当前各个项目的在线助手数量与远端节点标识（避免重跑整份 getDashboardSnapshot 全景快照）
     const onlineMap = new Map();
     const projectHostMap = new Map();
     const localNodeId = this.coordinator?.localNodeId || getLocalNodeId();
+    const now = Date.now();
     try {
-      if (this.coordinator) {
-        const snap = this.coordinator.getDashboardSnapshot('all');
-        for (const a of snap.agents || []) {
-          if (a.is_online) {
-            onlineMap.set(a.project_id, (onlineMap.get(a.project_id) || 0) + 1);
-          }
-          if (a.host_id && !projectHostMap.has(a.project_id)) {
-            projectHostMap.set(a.project_id, a.host_id);
-          }
+      const liveRows = this._stmt(`
+        SELECT a.project_id, a.host_id, a.status, a.pid, a.last_heartbeat, a.liveness_verified_at, a.last_tool,
+               (SELECT count(*) FROM leases l WHERE l.agent_id = a.id AND l.expires_at > ?) as active_leases_count
+        FROM agents a
+        WHERE a.status != 'departed'
+      `).all(now);
+      for (const a of liveRows) {
+        const { isOnline } = computeAgentLifecycleState(a, now, localNodeId);
+        if (isOnline) {
+          onlineMap.set(a.project_id, (onlineMap.get(a.project_id) || 0) + 1);
+        }
+        if (a.host_id && !projectHostMap.has(a.project_id)) {
+          projectHostMap.set(a.project_id, a.host_id);
         }
       }
     } catch {}

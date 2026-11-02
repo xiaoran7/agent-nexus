@@ -167,6 +167,18 @@ export function createWsServer(httpServer, eventBus, tokenStore, coordinator = n
     broadcast(wss, { type: 'topology:node_created', data });
   });
 
+  eventBus.on('handoff:created', (data) => {
+    broadcast(wss, { type: 'handoff:created', data });
+  });
+
+  eventBus.on('handoff:consumed', (data) => {
+    broadcast(wss, { type: 'handoff:consumed', data });
+  });
+
+  eventBus.on('node:status', (data) => {
+    broadcast(wss, { type: 'node:status', data });
+  });
+
   return wss;
 }
 
