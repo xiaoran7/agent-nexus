@@ -161,10 +161,10 @@ test('冲突拦截高级诊断 (ETA, Holder Info & Action Advice)', async (t) =>
   assert.match(check.advice, /git commit\/push/);
 });
 
-test('持久化唤醒通知 (Durable Waiter Messages & Dialogue Integration)', async (t) => {
+test('唤醒事件与排队状态转换 (Waiter Wakeup Event & Status Transition)', async (t) => {
   const h = createHarness();
   t.after(() => h.close());
-  const { coordinator, messageService } = h;
+  const { coordinator, eventBus } = h;
 
   coordinator.registerAgent({ id: 'agent-a', name: 'Agent A', provider: 'claude', sessionId: 'sa' });
   coordinator.registerAgent({ id: 'agent-b', name: 'Agent B', provider: 'codex', sessionId: 'sb' });
@@ -182,16 +182,16 @@ test('持久化唤醒通知 (Durable Waiter Messages & Dialogue Integration)', a
   });
   assert.equal(decB.status, 'WAITING');
 
-  // A 释放租约
-  coordinator.releaseLease(decA.leaseId, 'agent-a');
+  const woken = capture(eventBus, 'agent:woken');
+  t.after(() => woken.stop());
 
-  // 验证 B 的信箱中持久化写入了一条 handoff 唤醒通知
-  const inbox = messageService.inbox('agent-b');
-  assert.equal(inbox.length, 1, '被唤醒的 Agent 信箱中应有一条持久化通知');
-  assert.equal(inbox[0].dialogue_type, 'handoff');
-  assert.equal(inbox[0].importance, 'urgent');
-  assert.match(inbox[0].content, /config\.json/);
-  assert.match(inbox[0].content, /Agent A/);
+  // A 释放租约
+  const rel = coordinator.releaseLease(decA.leaseId, 'agent-a');
+
+  assert.equal(rel.notifiedWaiter.agent_id, 'agent-b');
+  assert.equal(woken.events.length, 1);
+  assert.equal(woken.events[0].agent_id, 'agent-b');
+  assert.match(woken.events[0].resume_hint, /config\.json/);
 });
 
 test('REST API: /api/hook/git-release 与 /api/leases/release-agent 端点集成', async (t) => {

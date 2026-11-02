@@ -4,11 +4,8 @@ import { join, dirname } from 'node:path';
 import { writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { createDatabase } from '../storage/database.js';
 import { CoordinatorEngine } from './coordinator.js';
-import { StateService } from '../domain/state.js';
-import { MessageService } from '../domain/messages.js';
 import { ProjectRegistry } from '../domain/project-registry.js';
 import { ProjectMemoryService } from '../domain/memory.js';
-import { TopologyService } from '../domain/topology.js';
 import { ClusterNodeService } from '../domain/cluster-nodes.js';
 import { ProjectHandoffService } from '../domain/handoff.js';
 import { createRestRouter } from '../transport/rest.js';
@@ -33,27 +30,17 @@ export function startDaemon(options = {}) {
     nodeId: options.nodeId,
     claudeSessionsDir: options.claudeSessionsDir
   });
-  const stateService = new StateService(db, eventBus);
-  const messageService = new MessageService(db, eventBus);
   const memoryService = new ProjectMemoryService(db, eventBus);
-  const topologyService = new TopologyService(db, eventBus);
   const clusterNodeService = new ClusterNodeService(db, eventBus, coordinator.localNodeId);
   const handoffService = new ProjectHandoffService(db, eventBus);
-  coordinator.topologyService = topologyService;
   coordinator.clusterNodeService = clusterNodeService;
   coordinator.handoffService = handoffService;
-  const projectRegistry = new ProjectRegistry(db, coordinator, eventBus, null, memoryService);
-  projectRegistry.topologyService = topologyService;
+  const projectRegistry = new ProjectRegistry(db, coordinator);
 
-  messageService.agentResolver = (agentId) => coordinator.getAgent(agentId);
-  coordinator.messageService = messageService;
-
-  // 启动即刻感知本机存量与新会长会话
   try {
     coordinator.syncClaudeSessions();
   } catch {}
 
-  // 毫秒级文件系统目录监视器 (非测试环境下启用)
   const sessionWatcher = isRunningInTest ? null : coordinator.watchClaudeSessions?.();
 
   const cleanupTimer = setInterval(() => {
@@ -63,9 +50,7 @@ export function startDaemon(options = {}) {
     clusterNodeService.sweepStaleNodes();
     coordinator.reapDeadAgentLeases();
     coordinator.expireLeases();
-    // 每小时最多真正执行一次；放在定时器里，无人打开面板时也会回收过期流水
     coordinator.housekeeping();
-    stateService.expireSweep(true);
   }, 3000);
   cleanupTimer.unref();
 
@@ -73,7 +58,12 @@ export function startDaemon(options = {}) {
   const operator = tokenStore.issue(generateToken(null, fixedAdminToken));
   tokenStore.localOperatorToken = operator.secret;
 
-  const handleRest = createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry, memoryService, topologyService, handoffService, clusterNodeService);
+  const handleRest = createRestRouter(coordinator, uiPath, tokenStore, {
+    projectRegistry,
+    memoryService,
+    handoffService,
+    clusterNodeService
+  });
   const server = createServer(handleRest);
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
@@ -92,15 +82,6 @@ export function startDaemon(options = {}) {
       const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
       console.log(`[Agent-Nexus] Daemon listening on http://${host}:${boundPort}`);
       console.log(`[Agent-Nexus] Real-time Dashboard: http://${displayHost}:${boundPort}/`);
-      if (projectRegistry.llmConfig?.enabled) {
-        const cands = projectRegistry.gatewayRouter?.candidates || [];
-        const provs = [...new Set(cands.map(c => c.provider))].join(',') || projectRegistry.llmConfig.provider;
-        console.log(`[Agent-Nexus] AI Gateway: ENABLED (strategy=${projectRegistry.gatewayRouter?.strategy || 'smart'}, candidates=${cands.length}, providers=${provs})`);
-        console.log(`[Agent-Nexus] AI Project Lead: ENABLED (provider=${projectRegistry.llmConfig.provider}, model=${projectRegistry.llmConfig.model}, endpoint=${projectRegistry.llmConfig.baseUrl})`);
-      } else {
-        console.log(`[Agent-Nexus] AI Gateway: DISABLED`);
-        console.log(`[Agent-Nexus] AI Project Lead: DISABLED (deterministic scheduler only)`);
-      }
       if (writeSessionToken) {
         try {
           const tokenPath = getSessionTokenPath();
@@ -111,7 +92,24 @@ export function startDaemon(options = {}) {
       }
       console.log(`[Agent-Nexus] Operator token (read + write + mint, active session):`);
       console.log(`  ${operator.secret}`);
-      resolve({ server, wss, coordinator, stateService, messageService, projectRegistry, memoryService, topologyService, clusterNodeService, handoffService, eventBus, db, tokenStore, cleanupTimer, sessionWatcher, port: boundPort, host, dbPath, writeSessionToken });
+      resolve({
+        server,
+        wss,
+        coordinator,
+        projectRegistry,
+        memoryService,
+        clusterNodeService,
+        handoffService,
+        eventBus,
+        db,
+        tokenStore,
+        cleanupTimer,
+        sessionWatcher,
+        port: boundPort,
+        host,
+        dbPath,
+        writeSessionToken
+      });
     });
   });
 }

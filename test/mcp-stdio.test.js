@@ -64,16 +64,15 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
     assert.equal(responses[1].id, 2);
     const tools = responses[1].result.tools;
     assert.equal(tools.length, ALL_NEXUS_TOOLS.length);
+    assert.equal(tools.length, 7);
 
     const toolNames = new Set(tools.map(t => t.name));
-    assert.ok(toolNames.has('nexus_onboard'));
-    assert.ok(toolNames.has('nexus_advise_plan'));
     assert.ok(toolNames.has('nexus_declare_intent'));
     assert.ok(toolNames.has('nexus_release_lease'));
-    assert.ok(toolNames.has('nexus_report_milestone'));
+    assert.ok(toolNames.has('nexus_lock_resource'));
+    assert.ok(toolNames.has('nexus_unlock_resource'));
     assert.ok(toolNames.has('nexus_search_memory'));
     assert.ok(toolNames.has('nexus_save_memory'));
-    assert.ok(toolNames.has('nexus_broadcast'));
     assert.ok(toolNames.has('nexus_status'));
 
     mcp.close();
@@ -142,7 +141,7 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
     mcp.close();
   });
 
-  await t.test('tools/call 端到端调用：AI Tech Lead 进场申报与冲突走廊', async () => {
+  await t.test('tools/call 端到端调用：意图声明与租约仲裁', async () => {
     const input = new PassThrough();
     const output = new PassThrough();
 
@@ -157,39 +156,37 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
     const mcp = startMcpStdio({
       baseUrl: daemon.base,
       token: daemon.operatorToken,
-      projectId: 'proj-mcp-lead',
+      projectId: 'proj-mcp-lock',
       input,
       output
     });
 
-    // 1. 先通过 HTTP 模拟 agent-1 锁定了 core.js
+    // 1. 先通过 coordinator 模拟 agent-1 锁定了 core.js
     daemon.coordinator.registerAgent({
       id: 'agent-1',
       name: 'Agent Alpha',
       provider: 'claude',
       sessionId: 's1',
-      projectId: 'proj-mcp-lead'
+      projectId: 'proj-mcp-lock'
     });
     daemon.coordinator.declareIntent({
       agentId: 'agent-1',
       intentSummary: 'Refactoring core',
       claims: [{ type: 'file', target: 'src/core.js' }],
-      projectId: 'proj-mcp-lead'
+      projectId: 'proj-mcp-lock'
     });
 
-    // 2. MCP 客户端代表 agent-2 进场申报
+    // 2. MCP 客户端代表 agent-2 申报同一个文件，触发 WAITING
     input.write(JSON.stringify({
       jsonrpc: '2.0',
       id: 20,
       method: 'tools/call',
       params: {
-        name: 'nexus_onboard',
+        name: 'nexus_declare_intent',
         arguments: {
           agent_id: 'agent-2',
-          planned_work: [
-            { type: 'file', target: 'src/core.js' },
-            { type: 'file', target: 'src/utils.js' }
-          ]
+          summary: 'Need core.js too',
+          claims: [{ type: 'file', target: 'src/core.js' }]
         }
       }
     }) + '\n');
@@ -200,10 +197,8 @@ test('MCP Stdio Server: JSON-RPC 2.0 握手与工具列表', async (t) => {
     assert.ok(!responses[0].result.isError);
 
     const parsedContent = JSON.parse(responses[0].result.content[0].text);
-    assert.equal(parsedContent.safeToStart.length, 1);
-    assert.equal(parsedContent.safeToStart[0].target, 'src/utils.js');
-    assert.equal(parsedContent.mustWait.length, 1);
-    assert.equal(parsedContent.mustWait[0].target, 'src/core.js');
+    assert.equal(parsedContent.status, 'WAITING');
+    assert.equal(parsedContent.blockedBy, 'agent-1');
 
     mcp.close();
   });

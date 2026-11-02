@@ -1,441 +1,125 @@
-# Agent-Nexus API 参考手册
+# Agent-Nexus API 与 MCP 参考手册
 
 所有 REST 接口默认监听 `http://127.0.0.1:4300`，返回标准 JSON。
 
-## 认证
+## 认证与安全边界
 
-`/api/*` 与 WebSocket 都需要令牌，只放行 `/health`、`/api/status` 与面板 HTML 本身。
+`/api/*` 与 WebSocket 均需携带令牌，仅放行 `/health`、`/api/status` 与静态面板资源（`/`、`/index.html`、`/style.css`、`/app.js`）。
 
-`/api/status` 是唯一公开的读接口，只返回计数、不含任何会话明细——桌面端托盘每 3 秒轮询它。看板与驾驶舱里有全部会话名、工作目录与文件锁，必须带令牌。
-
-令牌在 daemon 启动时签发、只打印一次、不落盘，重启即轮换。启动日志里那枚是 **operator 令牌**（read + write + mint），用它换绑定具体 agent 的令牌：
-
-```bash
-NEXUS_ADMIN_TOKEN=<启动时打印的令牌> nexus token <agent-id>
-```
-
-两种令牌：
-
-| 令牌 | 作用域 | 能做什么 |
-| --- | --- | --- |
-| operator | `read` `write` `mint` | 读写全部接口，并签发 agent 令牌；`?to=` 可读任意收件箱 |
-| agent | `read` `write` | 只能读**自己**的收件箱；不能签发令牌 |
-
-- HTTP：`Authorization: Bearer <token>`，或查询参数 `?token=`（浏览器面板发不了自定义头，只能走后者）。
-- WebSocket：查询参数 `?token=`。令牌在 HTTP upgrade 阶段校验，不通过直接 401，**不会先握手成功再关闭**——那中间有窗口，未授权客户端可能已被算进广播接收方。
-- 对同一 agent 重复签发会**作废上一枚**。
-- 签发令牌会顺带登记该 agent，否则新令牌会撞上 `messages.from_agent` 的外键。
-- agent 令牌不能签发令牌；签发权只留在 operator 手上，否则任何 agent 都能给自己领一个新身份。
-
-**身份以令牌为准，不采信请求体里的 `from`。** 令牌绑定了 agent_id 时，`from` 与之不符直接 400；请求体里不带 `from` 也行，由令牌填。`provider` 字段只作展示，不参与任何准入判断——它是调用方可控的字符串，自称 `claude` 的陌生进程和真 Claude Code 无法区分。
-
-跨源默认不放行：`NEXUS_ALLOWED_ORIGINS` 白名单外的来源既拿不到 CORS 响应头，预检也返回 403。该变量按请求读取，改完无需重启。
-
-## 〇、错误约定
-
-| 状态码 | 含义 |
-| --- | --- |
-| 400 | 请求体不是合法 JSON，或字段不满足契约。响应为 `{"error": "...", "field": "claims[].target"}` |
-| 401 | 缺少令牌，或令牌无效/已被轮换作废 |
-| 403 | 令牌作用域不足（只读令牌发写请求、agent 令牌读别人收件箱、agent 令牌试图签发令牌），或预检来源不在白名单内 |
-| 404 | 资源不存在（含租约不存在或不属于该 agent） |
-| 500 | 服务端内部错误，只回 `{"error": "Internal Server Error"}`，细节写服务端日志 |
-
-入参硬性要求，任何一条不满足都返回 400 且**不写入任何协调记录**（不会留下半截 intent 或 claim）：
-
-- `agent_id`：非空字符串。协调核心与 hook 通道都必须有它。
-- `summary` / `prompt_hint` 之类的描述字段：非空字符串。
-- `claims[].type`：`file` | `module` | `symbol` | `resource` 之一。
-- `claims[].target`：
-  - `file` / `module`——可相对可绝对，但归一化后不得落在工作目录或盘符根。空串、纯空白、`.`、`./` 都会被拒。
-  - `symbol`——非空且不以空白或路径分隔符开头。
-  - `resource`——非空且不含空白或路径分隔符的命名资源标示符（如 `tests`、`dev-server`、`build`）。
-- hook 通道的 `file_path` 或 `resource_name` 必填，与 `claims[].target` 同规则。
-
-状态与消息通道的硬性要求（同样返回 400 且不写入）：
-
-- 状态的 `value`、`updated_by`、`namespace`、`key`：非空字符串。`value` 必须是字符串——复杂载荷由调用方自己序列化，和 `messages.content` 一致。传数字、对象或 `null` 一律拒绝。
-- 状态的 `ttl_seconds`：正数或不给。给 `0`、负数或非数字都拒绝。
-- CAS 的 `expected`：字符串或 `null`（键不存在时就是 `null`）。
-- CAS 的 `new_value`：字符串或 `null`，`''` 和 `null` 表示删除该键。这两个字段语义不同，必须分开校验。
-- 消息的 `from` / `content`：非空字符串。`from` 必须指向已注册的 agent。
-- 消息的 `to` / `intent_id`：给了就必须指向真实存在的 agent / intent，不存在返回 400。
-- 消息的 `importance`：`normal` | `urgent`。
-
-字段名按请求体原样回报：CAS 的字段叫 `new_value`，错误里的 `field` 也是 `new_value`。
+- **Operator 令牌**（`read` + `write` + `mint`）：daemon 启动时自动生成并写入 `~/.agent-nexus/session.token`（权限 `0600`），供本机 CLI、Hook 与 MCP 自动读取；也可通过 `NEXUS_ADMIN_TOKEN` 环境变量固定。
+- **Agent 令牌**（`read` + `write`）：通过 `POST /api/tokens` 签发，绑定特定 `agent_id`，不可伪造其他 `agent_id`，也不可签发新令牌。
+- **传递方式**：HTTP 请求头 `Authorization: Bearer <token>` 或查询参数 `?token=<token>`；WebSocket 连接在 HTTP `upgrade` 阶段校验 `?token=<token>`。
+- **跨源保护**：默认拒绝非白名单跨源请求；可通过 `NEXUS_ALLOWED_ORIGINS`（逗号分隔）按需放行。
 
 ---
 
-## 一、协调核心接口 (Coordinator Endpoints)
+## 一、健康检查与全景看板接口
 
-### 1. 意图声明与冲突检查
+| 方法 | 路径 | 认证 | 说明 |
+|---|---|---|---|
+| `GET` | `/health` | 公开 | 健康探针，返回 `{ status: "healthy", service: "agent-nexus", version }` |
+| `GET` | `/api/status` | 公开 | 轻量在席计数（`active_agents_count`, `working`, `waiting`, `idle`, `active_leases`, `waiting_intents`），供桌面托盘轮询 |
+| `GET` | `/api/dashboard` | 需令牌 | 返回指定项目（`?project_id=all` 或具体 ID）的在席 `agents`、`activeClaims`、`waitQueue`、`timeline`、`clusterNodes` 与 `activeHandoffs` |
+| `GET` | `/api/cockpit` | 需令牌 | 返回协同路由视图所需的聚合数据（`metrics`、`lockContention`、`dashboard`、`collab`） |
+| `GET` | `/api/events` | 需令牌 | SSE 实时事件流（转发 `timeline:event`、`agent:status`、`agent:woken`、`resource:freed`、`memory:saved`、`handoff:created`、`handoff:consumed`、`node:status`） |
+| `GET` | `/api/projects` | 需令牌 | 列出已登记的所有工程及其实时在席会话数（`online_agents_count`） |
+
+---
+
+## 二、协调核心与锁接口 (Coordinator & Resource Locks)
+
+### 1. 声明意图与申请租约
 - **路径**：`POST /api/intents/declare`
 - **请求体**：
   ```json
   {
-    "agent_id": "codex-sess_01",
-    "summary": "重构 InteractionResolver 的候选决策逻辑",
+    "agent_id": "claude-sess_01",
+    "summary": "重构认证中间件",
     "claims": [
-      { "type": "file", "target": "src/InteractionResolver.kt" },
-      { "type": "symbol", "target": "buildClickCandidates" }
+      { "type": "file", "target": "src/auth.js" }
     ],
-    "ttl_seconds": 300
+    "ttl_seconds": 300,
+    "project_id": "default"
   }
   ```
-- **响应 (无冲突 GRANTED)**：
-  ```json
-  {
-    "status": "GRANTED",
-    "intentId": "intent_47c91dbd",
-    "leaseId": "lease_8a49f3a3",
-    "expiresAt": 1774218000000,
-    "claims": [...]
-  }
-  ```
-- **响应 (冲突 WAITING)**：
-  ```json
-  {
-    "status": "WAITING",
-    "intentId": "intent_2a7fc900",
-    "blockedBy": "codex-sess_01",
-    "blockedByName": "重构 InteractionResolver",
-    "reason": "File conflict: 'src/InteractionResolver.kt' is currently locked by 重构 InteractionResolver",
-    "claims": [...]
-  }
-  ```
+- **响应**：无冲突返回 `{ "status": "GRANTED", "intentId": "...", "leaseId": "...", "expiresAt": ... }`；冲突返回 `{ "status": "WAITING", "intentId": "...", "blockedBy": "...", "reason": "..." }`。
 
-**租约时长策略**：显式传 `ttl_seconds` 时按传入值；Hook 自动补报的租约走 `LEASE_POLICY`（`src/daemon/coordinator.js`）——文件租约 300s、命名资源锁 900s、滑动续期 120s、单条租约总时长上限 1800s。文件租约覆盖“读代码 → 思考 → 改写”的间隔（只读工具不触发 Hook，纯阅读阶段没有续约来源），资源锁覆盖真实命令时长（PostToolUse 结束时毫秒级释放，TTL 只作进程崩溃兜底）。持有者再次写入同一目标会顺延租约，因此持续施工不会掉锁；失联会话最多占锁 1800s 后由过期回收接管。
-
-### 2. 租约释放与唤醒
+### 2. 释放租约与唤醒排队者
 - **路径**：`POST /api/leases/:id/release`
-- **请求体**：
-  ```json
-  {
-    "agent_id": "codex-sess_01"
-  }
-  ```
-- **响应**：
-  ```json
-  {
-    "success": true,
-    "releasedLeaseId": "lease_8a49f3a3",
-    "notifiedWaiter": {
-      "agent_id": "claude-sess_02",
-      "intent_id": "intent_2a7fc900"
-    },
-    "stillBlocked": 1
-  }
-  ```
+- **请求体**：`{ "agent_id": "claude-sess_01" }`
+- **响应**：`{ "success": true, "releasedLeaseId": "...", "notifiedWaiter": { "agent_id": "...", "intent_id": "..." }, "stillBlocked": 0 }`
 
-  唤醒谁不是纯 FIFO：候选项按 claim 段数降序（范围窄的先过）排列，再逐个复核此刻是否真的无冲突——仍在冲突的留在队列里计入 `stillBlocked`，不唤醒。选中的那枚 `agent:woken` 事件带 `verified: true`，表示它的 claim 在唤醒瞬间已确认无冲突。`notifiedWaiter` 为 `null` 表示当前无人可唤醒。
-
-### 3. 通用 Hook 毫秒级极速校验与自动补报
-- **路径**：`POST /api/hook/check`
-- **请求体**：
-  ```json
-  {
-    "agent_id": "claude-sess_02",
-    "provider": "claude",
-    "session_id": "sess_02",
-    "file_path": "src/InteractionResolver.kt",
-    "prompt_hint": "增加视觉兜底"
-  }
-  ```
-- **响应 (放行)**：
-  ```json
-  { "allow": true, "autoClaimed": true, "leaseId": "lease_999" }
-  ```
-- **响应 (阻断，带高信息密度诊断与 ETA)**：
-  ```json
-  {
-    "allow": false,
-    "holder": "claude-sess_01",
-    "holder_workspace": "D:/Claudespace/Project/gate",
-    "expires_at": 1774218300000,
-    "remaining_sec": 185,
-    "reason": "BLOCKED: File 'src/InteractionResolver.kt' is locked by [claude-sess_01].",
-    "advice": "Consider reading other files or working on unrelated modules while waiting for claude-sess_01 to commit."
-  }
-  ```
-- **响应 (跨工作树阻断)**：
-  ```json
-  {
-    "allow": false,
-    "holder": "claude-sess_01",
-    "holder_workspace": "D:/Claudespace/Project/gate-worktree-feat",
-    "reason": "CROSS-WORKTREE CONFLICT: File 'src/InteractionResolver.kt' is locked by [claude-sess_01] in another worktree (concurrent edits will cause git merge conflicts)."
-  }
-  ```
-
-### 4. Git 生命周期零感释放 (Git Commit / Push Auto-Release)
+### 3. 批量释放会话租约与 Git 生命周期释放
 - **路径**：`POST /api/hook/git-release` 或 `POST /api/leases/release-agent`
-- **说明**：Agent 执行 `git commit` 或 `git push` 时由通用 Hook 自动触发，批量释放该 Agent 在当前项目下的所有活跃租约，并在毫秒级唤醒等待队列，彻底消除 TTL 空耗。
 - **请求体**：
   ```json
   {
     "agent_id": "claude-sess_01",
-    "project_id": "efdbbb4db064cbdf",
-    "reason": "git_lifecycle"
+    "project_id": "default",
+    "reason": "git_lifecycle",
+    "git_context": {
+      "commitMessage": "feat: add pkce verifier",
+      "modifiedFiles": ["src/auth.js"]
+    }
   }
   ```
-- **响应**：
-  ```json
-  {
-    "success": true,
-    "releasedCount": 2,
-    "notifiedWaiters": [
-      { "agent_id": "claude-sess_02", "intent_id": "intent_2a7fc900" }
-    ]
-  }
-  ```
-- **响应 (入参非法)**：`400`，`{"error": "\"claims[].target\" is required and must be a non-empty string", "field": "claims[].target"}`。Hook 收到 4xx 会按"协调库无法评估"处理并拦截（退出码 2），不会当成放行。
+- **说明**：一次性释放该会话持有的全部活跃租约，唤醒排队等待者，并基于 `git_context` 或近期授权流水自动合成跨机阶段工作交接工单（Handoff）。
 
-### 5. 命名资源锁接口 (Resource Locks)
-针对 `tests`（全量测试）、`dev-server`（开发服务器端口）、`build`（打包构建）等系统排他性资源提供互斥锁定。
+### 4. 命名排他资源锁 (`tests`, `dev-server`, `build`)
+- **`GET /api/resources/locks?project_id=default`**：列出当前活跃的排他资源锁。
+- **`POST /api/resources/lock`**：申请排他资源锁 `{ "agent_id": "a1", "resource_name": "tests", "ttl_seconds": 900, "reason": "Running test suite" }`。
+- **`POST /api/resources/unlock`**：释放排他资源锁 `{ "agent_id": "a1", "resource_name": "tests", "project_id": "default" }`。
 
-- **`GET /api/resources/locks?project_id=default`**：列出当前项目所有活跃的排他资源锁。
-- **`POST /api/resources/lock`**：
-  - 请求体：`{ "agent_id": "a1", "resource_name": "tests", "ttl_seconds": 900, "reason": "Running tests" }`（`ttl_seconds` 可省略，缺省取 `LEASE_POLICY.resourceTtlSeconds`）
-  - 响应：`{ "success": true, "status": "GRANTED", "resource_name": "tests", "leaseId": "lease_xxx" }` 或 `{ "success": false, "status": "WAITING", "blockedBy": "...", "reason": "..." }`
-- **`POST /api/resources/unlock`**：
-  - 请求体：`{ "agent_id": "a1", "resource_name": "tests" }`
-  - 响应：`{ "success": true, "resource_name": "tests" }`
-
-### 6. 远端工作区会话快照汇聚 (Remote Workspace Session Sync)
-- **路径**：`POST /api/agents/sync-remote`
-- **说明**：供远端节点（如 `nexus bridge` 或远端 Hook `peer_sessions` 捎带）上报已在边缘本地完成 PID / 命名管道存活校验的会话列表。中心 Hub 按 `host_id` 隔离节点身份，绝不对异机 `pid` 执行本机 `process.kill` 探针；当 `full_snapshot: true` 且某远端会话从列表中消失时，自动将其标为 `departed` 并立即回收其持有的活跃租约。
-- **请求体**：
-  ```json
-  {
-    "host_id": "us-zenix",
-    "full_snapshot": true,
-    "sessions": [
-      {
-        "pid": 88101,
-        "sessionId": "zenix-sess-alpha",
-        "name": "美西沙箱联调",
-        "cwd": "/root/Claudespace/Project/gate",
-        "status": "idle",
-        "alive": true,
-        "verified": true
-      }
-    ]
-  }
-  ```
-- **响应**：`{ "scanned": 1, "added": [...], "updated": [...], "departed": [...] }`
+### 5. 全局 Hook 极速判冲与释放接口
+- **`POST /api/hook/check`**：供 `PreToolUse` 调用，支持文件锁与命令资源锁极速校验、自动补报租约、捎带 `peer_sessions` 同步，并在同源工程存在待接力工单时返回 `handoff_context`。
+- **`POST /api/hook/resource-release`**：供 `PostToolUse` 在排他命令执行完毕后毫秒级释放资源锁。
+- **`POST /api/hook/telemetry`**：供 Hook 上报非阻塞工具活动遥测。
 
 ---
 
-## 二、共享状态与 CAS 接口 (State & CAS Endpoints)
+## 三、多机探针、阶段交接工单与全局工程记忆接口
 
-对齐 `agent-comm`，支持命名空间、自动过期与原子并发互斥。
+### 1. 算力节点与远端会话同步
+- **`GET /api/nodes`**：列出集群内所有常驻算力节点（Hub 与 Edge）及其在线状态。
+- **`POST /api/nodes/heartbeat`**：边缘节点上报心跳。
+- **`POST /api/agents/sync-remote`**：边缘探针（`nexus probe --edge` 或 `nexus bridge`）批量推送远端机器上已验活的 Claude 会话快照。
 
-| 方法 | 路径 | 参数说明 | 描述 |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/state` | `?namespace=default&prefix=` | 列出指定命名空间下的键值对 |
-| `GET` | `/api/state/:ns/:key` | - | 获取特定 Key 的状态内容 |
-| `POST` | `/api/state/:ns/:key` | `{ "value": "...", "updated_by": "a1", "ttl_seconds": 60 }` | 写入或更新状态 |
-| `POST` | `/api/state/:ns/:key/cas` | `{ "expected": "...", "new_value": "...", "updated_by": "a1" }` | **原子 Compare-And-Swap** |
-| `POST` | `/api/state/:ns/cas` | `{ "key": "...", "expected": "...", "new_value": "...", "updated_by": "a1" }` | 同上，键名放在请求体的 `key` 里 |
-| `DELETE` | `/api/state/:ns/:key` | - | 删除状态键 |
+### 2. 跨机阶段工作交接工单 (Work Handoffs)
+- **`GET /api/handoffs?project_id=default`**：查询当前项目（含同源关联项目）的交接工单列表。
+- **`POST /api/handoffs`**：创建阶段交接工单 `{ "project_id": "...", "source_host_id": "...", "source_agent_id": "...", "objective": "...", "state_summary": "...", "modified_files": [...], "next_action": "..." }`。
+- **`POST /api/handoffs/:id/consume`**：认领或闭环交接工单 `{ "agent_id": "operator", "status": "in_progress" | "completed" }`。
 
-CAS 的两种写法等价。路径里的 `cas` 是保留段：它不会被当成键名，所以键名要么来自它前面那一段，要么来自请求体的 `key`。两者都缺返回 400。
-
----
-
-## 三、消息管道接口 (Messaging Endpoints)
-
-| 方法 | 路径 | 参数说明 | 描述 |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/messages` | `{ "from": "a1", "to": "a2", "content": "hello", "importance": "normal" }` | 发送点对点或广播消息（to 为空为广播）。agent 令牌可省略 `from`，由令牌填 |
-| `GET` | `/api/messages` | `?to=agent-id` | 查询收件箱。**agent 令牌只能 `?to=` 自己的 id**，读别人的返回 403 |
-| `GET` | `/api/messages` | 无参数 | 全局消息流水。**agent 令牌调用返回 403**（否则等于绕过收件箱隔离）；operator 令牌可用 |
-
-`POST /api/tokens`：用 operator 令牌调用，`{ "agent_id": "a1" }` → 201 `{ agent_id, token }`。重复对同一 agent 签发会作废上一枚。
+### 3. 全局长期工程记忆 (Engineering Memories)
+- **`GET /api/projects/:id/memories?category=all&query=...`**：检索项目长期工程记忆（自动聚合相同 `git_remote` 的同源项目记忆）。
+- **`POST /api/projects/:id/memories`**：保存或更新工程记忆 `{ "category": "architecture" | "rule" | "gotcha" | "milestone" | "general", "key": "...", "content": "...", "source_agent_id": "..." }`。
+- **`DELETE /api/projects/:id/memories?id=<memory_id>`**：按 ID 或 `category + key` 删除指定工程记忆。
 
 ---
 
-## 四、Dashboard 与观察者接口
+## 四、WebSocket 实时推送协议
 
-- **路径**：`GET /api/dashboard`（可选 `?project_id=<id>`，缺省或 `all` 为跨工程全景）
-- **返回范围**：默认只返回在席会话（`is_online: true`）。已离席（`lifecycle_state: 'departed'`）的历史记录不参与序列化——它们是数据库里的存量主体，全量返回会让快照膨胀到百 KB 级。需要完整历史做审计时，服务端调用 `coordinator.getDashboardSnapshot(projectId, { includeDeparted: true })`；HTTP 接口不开放该开关。
-- **响应**：
-  ```json
-  {
-    "agents": [
-      {
-        "id": "codex-sess_01",
-        "name": "重构 InteractionResolver",
-        "provider": "codex",
-        "status": "running",
-        "active_leases_count": 1,
-        "current_intent": "重构 InteractionResolver 的候选决策逻辑",
-        "current_intent_status": "granted"
-      }
-    ],
-    "activeClaims": [
-      {
-        "claim_type": "file",
-        "claim_target": "src/InteractionResolver.kt",
-        "agent_id": "codex-sess_01",
-        "agent_name": "重构 InteractionResolver"
-      }
-    ],
-    "timeline": [
-      {
-        "id": 1,
-        "agent_name": "重构 InteractionResolver",
-        "event_type": "intent:granted",
-        "description": "Granted lease for intent: ...",
-        "created_at": 1774217000000
-      }
-    ],
-    "waitQueue": [
-      {
-        "intent_id": "intent_9f2c1a0b",
-        "agent_id": "codex-sess_02",
-        "agent_name": "重排交互决策",
-        "summary": "重构 InteractionResolver 的候选决策逻辑",
-        "blocked_reason": "src/InteractionResolver.kt is locked by codex-sess_01",
-        "blocked_by_agent_id": "codex-sess_01"
-      }
-    ]
-  }
-  ```
+连接地址：`ws://127.0.0.1:4300/?token=<TOKEN>&project=<PROJECT_ID>`
 
-- **`waitQueue`**：当前排队等锁的意图，按入队顺序。驾驶舱的「N 处冲突等待」与决策流水都读这一项。
-- **`GET /api/cockpit`**（同样可选 `?project_id=`）返回驾驶舱聚合：`metrics` / `summary` / `activeWorkers` / `topologySnapshot` / `lockContention` / `dashboard` / `collab`。其中 `lockContention` 把 `dashboard.activeClaims` 拆成两类：`activeClaims` 是文件/模块/符号锁，`resourceLocks` 是 `claim_type = 'resource'` 的命名锁（`tests`、`dev-server` 等），`waitQueue` 同上。一次 cockpit 请求只刷新一轮会话与租约，内层 dashboard/collab 复用同一轮结果。
-- **`GET /api/status`**：公开端点，只返回在席计数（`active_agents_count` / `working` / `waiting` / `idle` / `active_leases` / `waiting_intents`），供桌面托盘每 3 秒轮询。口径与 `getDashboardSnapshot` 一致，但不序列化任何会话明细。
+- `init:state` / `sync:response`：下发看板快照 `data.snapshot` 与路由聚合 `data.cockpit`。
+- `timeline`：新增协调时间线事件。
+- `agent:woken`：租约释放后向首个无冲突等待者派发的唤醒信号（含 `verified: true`）。
+- `resource:freed`：租约或排他资源锁释放事件。
+- `handoff:created` / `handoff:consumed`：跨机交接工单生成或状态变更。
+- `memory:saved` / `memory:deleted`：工程记忆新增、更新或删除。
+- `node:status`：集群算力节点状态变更。
 
 ---
 
-## 五、WebSocket 实时推送事件
+## 五、Stdio MCP 工具协议定义 (7 项核心工具)
 
-连接地址：`ws://127.0.0.1:4300`
+通过 `nexus mcp` 启动标准 JSON-RPC 2.0 stdio 服务，`src/mcp/server.js` 暴露以下 7 项核心工具：
 
-- `init:state`（连接建立即下发）与 `sync:response`（回应客户端 `sync:request`）：`data.snapshot` 是看板快照（与 `GET /api/dashboard` 同构），`data.cockpit` 是驾驶舱聚合。推送帧里 `cockpit` **不含** `dashboard` / `collab`——同帧的 `snapshot` 就是那份 dashboard，重复发等于把同一批会话在线上发两遍。需要完整结构时走 `GET /api/cockpit`。
-- `timeline`：时间线新增事件（Intent 声明、放行、冲突阻断、释放租约等）。
-- `agent:woken`：资源被释放后的主动唤醒信号（携带目标 `agent_id`、`intent_id` 与 `verified: true`）。`verified` 表示该等待者的 claim 在唤醒瞬间已复核无冲突，收到即可刷新工作区开工，不必再问一次。
-- `state:changed`：共享状态键值发生变动。
-- `message:sent`：接收到新的协调消息。
-
----
-
-## 六、AI 网关路由 REST 端点
-
-### 1. `GET /api/gateway/route` 或 `GET /api/gateway/status`
-检索 AI 智能网关当前各候选节点（Candidate）的运行态数据、健康熔断状态与请求指标。
-
-- 响应：`200 OK`
-  ```json
-  {
-    "strategy": "smart",
-    "candidateCount": 2,
-    "candidates": [
-      {
-        "id": "anthropic-primary",
-        "name": "Anthropic Messages",
-        "provider": "anthropic",
-        "model": "claude-3-5-sonnet-latest",
-        "priority": 0,
-        "weight": 1,
-        "resting": false,
-        "remainingRestSeconds": 0,
-        "consecutiveFailures": 0,
-        "totalRequests": 12,
-        "successCount": 12,
-        "failureCount": 0,
-        "lastLatencyMs": 850
-      },
-      {
-        "id": "openai-fallback",
-        "name": "OpenAI Chat",
-        "provider": "openai",
-        "model": "gpt-4o-mini",
-        "priority": 1,
-        "weight": 1,
-        "resting": false,
-        "remainingRestSeconds": 0,
-        "consecutiveFailures": 0,
-        "totalRequests": 0,
-        "successCount": 0,
-        "failureCount": 0,
-        "lastLatencyMs": 0
-      }
-    ]
-  }
-  ```
-
-### 2. `POST /api/gateway/chat`
-通过网关实施多模型多候选自动故障转移调用。
-
-- 请求体：
-  ```json
-  {
-    "system_prompt": "You are a tech lead.",
-    "user_message": "How should we schedule task A and B?",
-    "affinity_key": "project-01",
-    "strategy": "smart"
-  }
-  ```
-- 响应：`200 OK`
-  ```json
-  {
-    "content": "建议先执行任务 A 解耦数据模型，再并行推进任务 B。",
-    "candidateId": "anthropic-primary",
-    "provider": "anthropic",
-    "model": "claude-3-5-sonnet-latest",
-    "latencyMs": 760,
-    "tries": [
-      { "id": "anthropic-primary", "success": true, "latencyMs": 760 }
-    ]
-  }
-  ```
-
-### 3. `POST /api/gateway/reset`
-运维手动一键解除指定候选节点或全部节点的熔断冷却（Unrest）。
-
-- 请求体（解除单个节点）：`{ "id": "anthropic-primary" }`
-- 请求体（重置全部节点）：`{}`
-- 响应：`200 OK`，返回 `{ "success": true, "resetId": "..." }` 或 `{ "success": true, "resetCount": N }`
-
-### 4. `POST /api/gateway/strategy`
-动态热切换网关路由策略，立即在当前运行态生效。
-
-- 请求体：
-  ```json
-  {
-    "strategy": "ordered"
-  }
-  ```
-  合法策略值包括：
-  - `smart`：缓存亲和绑定（Prompt Cache 优化）；
-  - `ordered`：优先级主备瀑布流；
-  - `rotate`：轮询负载分发；
-  - `least-used`：最小负载均衡。
-- 响应：
-  - 成功：`200 OK`，返回 `{ "success": true, "strategy": "ordered" }`
-  - 非法策略：`400 Bad Request`，返回 `{ "error": "Invalid strategy ... Allowed: smart, ordered, rotate, least-used", "field": "strategy" }`
-
----
-
-## 七、MCP 工具协议定义
-
-`src/mcp/stdio.js` 现已提供标准 JSON-RPC 2.0 stdio 服务（通过 `nexus mcp` 运行），`src/mcp/server.js` 提供以下工具定义与处理函数：
-
-### 核心协调工具 (NEXUS_TOOLS)
-1. `nexus_declare_intent`：声明意图与三级/四级资源 Claims（file, module, symbol, resource）；
-2. `nexus_release_lease`：完成任务后释放租约；
-3. `nexus_state`：共享状态 CRUD 与 CAS 原子操作；
-4. `nexus_message`：向同工作区其他 Agent 投递消息；
-5. `nexus_status`：检索全局协调矩阵与阻塞快照。
-
-### 项目级进阶工具 (NEXUS_PROJECT_TOOLS)
-6. `nexus_lock_resource`：申请命名排他资源锁（如 `tests`, `dev-server`, `build`）；
-7. `nexus_unlock_resource`：释放命名排他资源锁；
-8. `nexus_onboard`：进场向 AI Project Lead 申报工作计划并获取避障通道；
-9. `nexus_advise_plan`：重新评估工作计划与当前系统锁并获取更新建议；
-10. `nexus_report_milestone`：汇报阶段性里程碑、释放资源并沉淀长期记忆；
-11. `nexus_search_memory`：检索项目长期工程记忆（架构决策、规则、踩坑、里程碑）；
-12. `nexus_save_memory`：存入或更新长期工程记忆；
-13. `nexus_broadcast`：向全项目活跃 Agent 会话广播高优先级指令与避障警示。
+| 工具名 | 职责说明 | 必填参数 |
+|---|---|---|
+| `nexus_declare_intent` | 修改代码前声明工作意图与 `file` / `module` / `symbol` 资源声明 | `agent_id`, `summary`, `claims` |
+| `nexus_release_lease` | 完工或中止任务时主动释放持有的租约，触发排队唤醒 | `agent_id`, `lease_id` |
+| `nexus_lock_resource` | 申请命名排他资源锁（如 `tests`, `dev-server`, `build`） | `agent_id`, `resource_name` |
+| `nexus_unlock_resource` | 释放命名排他资源锁 | `agent_id`, `resource_name` |
+| `nexus_search_memory` | 按关键词或分类检索跨机共享的长期工程记忆 | 无（可选 `query`, `category`, `limit`, `project_id`） |
+| `nexus_save_memory` | 将架构决策、项目规约、踩坑经验或里程碑沉淀至长期工程记忆 | `category`, `key`, `content` |
+| `nexus_status` | 查询当前项目的在席会话、活跃锁、等待队列与时间线快照 | 无（可选 `project_id`） |

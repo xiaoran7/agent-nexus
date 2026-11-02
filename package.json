@@ -1,7 +1,7 @@
 {
   "name": "@xiaoran7/agent-nexus",
   "version": "0.2.31",
-  "description": "Zero-overhead Concurrency Coordinator & Resilient AI Gateway for Multi-Agent Coding (Claude Code, Codex, Cursor). Prevents file edit collisions and Git worktree conflicts.",
+  "description": "Zero-overhead Multi-Agent Concurrency Coordinator & Cross-Machine Context Relay for Claude Code. Prevents file edit collisions, Git worktree conflicts, and cross-node race conditions.",
   "main": "src/daemon/index.js",
   "type": "module",
   "bin": {
@@ -46,14 +46,12 @@
     "agent",
     "coordinator",
     "claude-code",
-    "codex",
-    "cursor",
     "multi-agent",
     "concurrency-control",
     "conflict-detection",
     "git-worktree",
-    "ai-gateway",
-    "circuit-breaker",
+    "context-handoff",
+    "engineering-memory",
     "developer-tools",
     "coding-assistant"
   ],

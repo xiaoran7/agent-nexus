@@ -34,7 +34,7 @@ test('主动通知总线与 SSE 实时事件流', async (t) => {
     await new Promise(r => setTimeout(r, 80));
 
     // 触发一个目标项目的事件
-    daemon.eventBus.emit('milestone:reached', {
+    daemon.eventBus.emit('memory:saved', {
       project_id: 'proj-sse',
       agent_id: 'worker-sse',
       description: 'API v2 shipped'
@@ -77,7 +77,7 @@ test('主动通知总线与 SSE 实时事件流', async (t) => {
     await new Promise(r => setTimeout(r, 60));
 
     // 触发事件，客户端 2 必须依然能正常收到
-    daemon.eventBus.emit('milestone:reached', {
+    daemon.eventBus.emit('memory:saved', {
       project_id: 'multi-sse',
       agent_id: 'worker-2',
       description: 'Second Client Still Alive'

@@ -44,7 +44,6 @@ export function createDatabase(customPath = null) {
       last_heartbeat INTEGER NOT NULL,
       registered_at INTEGER NOT NULL,
       current_intent TEXT,
-      progress_summary TEXT,
       pid INTEGER,
       last_tool TEXT,
       last_action TEXT,
@@ -107,35 +106,7 @@ export function createDatabase(customPath = null) {
       created_at INTEGER NOT NULL
     );
 
-    -- 7. 共享状态表与 CAS (以 project_id, namespace, key 为复合主键)
-    CREATE TABLE IF NOT EXISTS state (
-      project_id TEXT NOT NULL DEFAULT 'default',
-      namespace TEXT NOT NULL,
-      key TEXT NOT NULL,
-      value TEXT NOT NULL,
-      updated_by TEXT NOT NULL,
-      expires_at INTEGER,
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (project_id, namespace, key)
-    );
-
-    -- 8. 协调点对点/广播消息流
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id TEXT NOT NULL DEFAULT 'default',
-      from_agent TEXT NOT NULL REFERENCES agents(id),
-      to_agent TEXT,
-      intent_id TEXT REFERENCES intents(id),
-      content TEXT NOT NULL,
-      importance TEXT DEFAULT 'normal',
-      created_at INTEGER NOT NULL,
-      thread_id TEXT,
-      reply_to_id INTEGER REFERENCES messages(id),
-      status TEXT NOT NULL DEFAULT 'unread',
-      dialogue_type TEXT NOT NULL DEFAULT 'chat'
-    );
-
-    -- 9. 项目长期工程记忆库 (Project Long-term Memories)
+    -- 7. 项目长期工程记忆库 (Project Long-term Memories)
     CREATE TABLE IF NOT EXISTS project_memories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id TEXT NOT NULL DEFAULT 'default',
@@ -147,25 +118,7 @@ export function createDatabase(customPath = null) {
       updated_at INTEGER NOT NULL
     );
 
-    -- 10. 功能开发与问题解决拓扑节点 (Changelog & Topology Ledger)
-    CREATE TABLE IF NOT EXISTS topology_nodes (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL DEFAULT 'default',
-      agent_id TEXT NOT NULL,
-      agent_name TEXT,
-      provider TEXT,
-      node_type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      intent_id TEXT,
-      claims_snapshot TEXT NOT NULL DEFAULT '[]',
-      parent_node_ids TEXT NOT NULL DEFAULT '[]',
-      causality_type TEXT DEFAULT 'sequence',
-      metadata TEXT DEFAULT '{}',
-      created_at INTEGER NOT NULL
-    );
-
-    -- 11. 跨机集群节点拓扑表 (Cluster Nodes Registry)
+    -- 8. 跨机集群节点拓扑表 (Cluster Nodes Registry)
     CREATE TABLE IF NOT EXISTS cluster_nodes (
       id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -179,7 +132,7 @@ export function createDatabase(customPath = null) {
       updated_at INTEGER NOT NULL
     );
 
-    -- 12. 跨机与跨会话工作交接簿 (PowerContext Work Handoffs)
+    -- 9. 跨机与跨会话工作交接簿 (PowerContext Work Handoffs)
     CREATE TABLE IF NOT EXISTS project_handoffs (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default',
@@ -200,16 +153,13 @@ export function createDatabase(customPath = null) {
     );
   `);
 
-  // 针对已存在的旧版本表结构进行平滑补列迁移
   migrateOldSchemaIfNeeded(db);
 
-  // 确保补齐 host_id 列后再插入默认项目（兼容存量旧版 nexus.db 平滑升级）
   db.exec(`
     INSERT OR IGNORE INTO projects (id, root_path, display_name, host_id, created_at, last_activity)
     VALUES ('default', '', 'Default Project', 'local', 0, 0);
   `);
 
-  // 补列完成后，统一创建索引与热点查询加速索引
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_claims_project_type_target ON claims(project_id, claim_type, claim_target);
     CREATE INDEX IF NOT EXISTS idx_claims_intent_id ON claims(intent_id);
@@ -220,16 +170,9 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_agents_host_status ON agents(host_id, status);
     CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
-    CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
-    CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(project_id, thread_id);
-    CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(project_id, to_agent, status);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_cat ON project_memories(project_id, category);
     CREATE INDEX IF NOT EXISTS idx_project_memories_proj_updated ON project_memories(project_id, updated_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_proj_cat_key ON project_memories(project_id, category, key);
-    CREATE INDEX IF NOT EXISTS idx_topology_project_created ON topology_nodes(project_id, created_at ASC);
-    CREATE INDEX IF NOT EXISTS idx_topology_agent ON topology_nodes(project_id, agent_id);
-    CREATE INDEX IF NOT EXISTS idx_topology_intent ON topology_nodes(intent_id);
     CREATE INDEX IF NOT EXISTS idx_cluster_nodes_status ON cluster_nodes(status, last_heartbeat);
     CREATE INDEX IF NOT EXISTS idx_project_handoffs_proj_status ON project_handoffs(project_id, status);
     CREATE INDEX IF NOT EXISTS idx_project_handoffs_created ON project_handoffs(project_id, created_at DESC);
@@ -239,109 +182,55 @@ export function createDatabase(customPath = null) {
 }
 
 function migrateOldSchemaIfNeeded(db) {
-  const tables = ['agents', 'intents', 'claims', 'leases', 'wait_queue', 'activity_log', 'messages'];
+  // 清理存量数据库中已退役的历史冗余表
+  try {
+    db.exec(`
+      DROP TABLE IF EXISTS state;
+      DROP TABLE IF EXISTS messages;
+      DROP TABLE IF EXISTS topology_nodes;
+    `);
+  } catch {}
+
+  const tables = ['agents', 'intents', 'claims', 'leases', 'wait_queue', 'activity_log'];
   for (const table of tables) {
     try {
       db.exec(`ALTER TABLE ${table} ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';`);
-    } catch {
-      // 字段已存在，忽略错误
-    }
+    } catch {}
   }
 
-  // 针对 projects 表的跨节点标识与 Git 远端指纹补列
   try {
     db.exec(`ALTER TABLE projects ADD COLUMN host_id TEXT DEFAULT 'local';`);
-  } catch {
-    // 忽略已存在列
-  }
+  } catch {}
   try {
     db.exec(`ALTER TABLE projects ADD COLUMN git_remote TEXT;`);
-  } catch {
-    // 忽略已存在列
-  }
+  } catch {}
 
-  // 针对 agents 表的进度追踪、节点身份与进程监控字段平滑补列
   const agentColumns = [
     { name: 'host_id', type: "TEXT NOT NULL DEFAULT 'local'" },
     { name: 'current_intent', type: 'TEXT' },
-    { name: 'progress_summary', type: 'TEXT' },
     { name: 'pid', type: 'INTEGER' },
     { name: 'last_tool', type: 'TEXT' },
     { name: 'last_action', type: 'TEXT' },
     { name: 'last_target', type: 'TEXT' },
-    // 会话命名管道的最近一次验证时间：存在即证明宿主进程仍存活，可免疫 Windows PID 复用
     { name: 'liveness_verified_at', type: 'INTEGER' },
   ];
   for (const col of agentColumns) {
     try {
       db.exec(`ALTER TABLE agents ADD COLUMN ${col.name} ${col.type};`);
-    } catch {
-      // 忽略已存在列
-    }
+    } catch {}
   }
 
-  // 针对 messages 表的跨 Session 对话增强字段平滑补列
-  const messageColumns = [
-    { name: 'thread_id', type: 'TEXT' },
-    { name: 'reply_to_id', type: 'INTEGER REFERENCES messages(id)' },
-    { name: 'status', type: "TEXT NOT NULL DEFAULT 'unread'" },
-    { name: 'dialogue_type', type: "TEXT NOT NULL DEFAULT 'chat'" },
-  ];
-  for (const col of messageColumns) {
-    try {
-      db.exec(`ALTER TABLE messages ADD COLUMN ${col.name} ${col.type};`);
-    } catch {
-      // 忽略已存在列
-    }
-  }
-
-  // 针对 state 表的复合主键平滑重建 (如果旧库只有两列主键)
-  try {
-    const tableInfo = db.prepare(`PRAGMA table_info(state);`).all();
-    const hasProjectId = tableInfo.some(col => col.name === 'project_id');
-    if (!hasProjectId) {
-      db.exec(`
-        CREATE TABLE state_v2 (
-          project_id TEXT NOT NULL DEFAULT 'default',
-          namespace TEXT NOT NULL,
-          key TEXT NOT NULL,
-          value TEXT NOT NULL,
-          updated_by TEXT NOT NULL,
-          expires_at INTEGER,
-          updated_at INTEGER NOT NULL,
-          PRIMARY KEY (project_id, namespace, key)
-        );
-        INSERT INTO state_v2 (project_id, namespace, key, value, updated_by, expires_at, updated_at)
-        SELECT 'default', namespace, key, value, updated_by, expires_at, updated_at FROM state;
-        DROP TABLE state;
-        ALTER TABLE state_v2 RENAME TO state;
-        CREATE INDEX IF NOT EXISTS idx_state_project_expires ON state(project_id, expires_at);
-      `);
-    }
-  } catch {
-    // 忽略迁移失败（例如新库已是 state_v2 形状）
-  }
-
-  // 启动时自动自我修复脏数据、乱码与僵尸排队记录
   selfHealDatabase(db);
 }
 
-/**
- * 数据库启动自愈器：
- * 1. 彻底清除数据库中残存的乱码符号 (� /  / 控制字符)
- * 2. 清理超期僵尸等待记录，避免历史上阻塞的冲突卡片永久挂在协同面板
- * 3. 自动将超时不活跃会话归档为 departed 状态
- */
 function selfHealDatabase(db) {
   try {
     const now = Date.now();
 
-    // 1. 清理超过 5 分钟的陈旧等待队列记录
     try {
       db.prepare(`DELETE FROM wait_queue WHERE (? - created_at) > 300000`).run(now);
     } catch {}
 
-    // 2. 将超过 10 分钟无心跳且依然处于 waiting/running 的意图标记为 aborted
     try {
       db.prepare(`
         UPDATE intents
@@ -350,28 +239,27 @@ function selfHealDatabase(db) {
       `).run(now, now);
     } catch {}
 
-    // 3. 自愈修复包含 � 或损坏字符的 intents 记录
+    const BAD_CHAR = '�';
     try {
       const badIntents = db.prepare(`
         SELECT id, summary, blocked_reason FROM intents
         WHERE instr(summary, ?) > 0 OR instr(blocked_reason, ?) > 0
-      `).all('�', '�');
+      `).all(BAD_CHAR, BAD_CHAR);
 
       const updateIntent = db.prepare(`UPDATE intents SET summary = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`);
       for (const row of badIntents) {
         let summary = row.summary || '';
         let blocked = row.blocked_reason || null;
-        if (summary.includes('�')) summary = 'Background Coordination Task';
-        if (blocked && blocked.includes('�')) {
+        if (summary.includes(BAD_CHAR)) summary = 'Background Coordination Task';
+        if (blocked && blocked.includes(BAD_CHAR)) {
           blocked = blocked.replace(/[^\x20-\x7E一-龥_.\-/:#\[\]\(\)'\"]/g, 'System Agent').replace(/\s+/g, ' ');
         }
         updateIntent.run(summary, blocked, now, row.id);
       }
     } catch {}
 
-    // 4. 自愈修复包含 � 的 activity_log 记录
     try {
-      const badLogs = db.prepare(`SELECT id, description FROM activity_log WHERE instr(description, ?) > 0`).all('�');
+      const badLogs = db.prepare(`SELECT id, description FROM activity_log WHERE instr(description, ?) > 0`).all(BAD_CHAR);
       const updateLog = db.prepare(`UPDATE activity_log SET description = ? WHERE id = ?`);
       for (const log of badLogs) {
         const cleanDesc = log.description.replace(/[^\x20-\x7E一-龥_.\-/:#\[\]\(\)'\"]/g, 'System Agent').replace(/\s+/g, ' ');
@@ -379,7 +267,6 @@ function selfHealDatabase(db) {
       }
     } catch {}
 
-    // 5. 校验超期无心跳 (>120s) 的在线 Agent，若 PID 已消亡或心跳超期 (>10min 被系统复用) 则归位为 departed，防止幽灵在线
     try {
       const staleAgents = db.prepare(`
         SELECT id, pid, last_heartbeat, liveness_verified_at FROM agents
@@ -406,7 +293,5 @@ function selfHealDatabase(db) {
         }
       }
     } catch {}
-  } catch (err) {
-    // 自愈异常不阻断主流程启动
-  }
+  } catch {}
 }

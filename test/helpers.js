@@ -1,7 +1,5 @@
 import { EventEmitter } from 'node:events';
 import { CoordinatorEngine } from '../src/daemon/coordinator.js';
-import { StateService } from '../src/domain/state.js';
-import { MessageService } from '../src/domain/messages.js';
 import { ClusterNodeService } from '../src/domain/cluster-nodes.js';
 import { ProjectHandoffService } from '../src/domain/handoff.js';
 import { ProjectMemoryService } from '../src/domain/memory.js';
@@ -15,11 +13,6 @@ export function createHarness() {
   const db = createDatabase(':memory:');
   const eventBus = new EventEmitter();
   const coordinator = new CoordinatorEngine(db, eventBus);
-  const stateService = new StateService(db, eventBus);
-  const messageService = new MessageService(db, eventBus);
-  // 与 daemon 装配一致：发件人外键要靠协调器核实，否则 SQLite 会抛外键失败。
-  messageService.agentResolver = (id) => coordinator.getAgent(id);
-  coordinator.messageService = messageService;
   const clusterNodeService = new ClusterNodeService(db, eventBus, coordinator.localNodeId);
   const handoffService = new ProjectHandoffService(db, eventBus);
   const memoryService = new ProjectMemoryService(db, eventBus);
@@ -30,12 +23,10 @@ export function createHarness() {
     db,
     eventBus,
     coordinator,
-    stateService,
-    messageService,
     clusterNodeService,
     handoffService,
     memoryService,
-    mcp: (toolName, args) => handleMcpTool(toolName, args, { coordinator, stateService, messageService, memoryService }),
+    mcp: (toolName, args) => handleMcpTool(toolName, args, { coordinator, memoryService }),
     close: () => db.close()
   };
 }

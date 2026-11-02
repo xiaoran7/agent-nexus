@@ -107,10 +107,6 @@ test('驾驶舱的等待队列与排他锁分类来自真实数据', async (t) =
   assert.equal(cockpit.lockContention.resourceLocks.length, 1);
   assert.equal(cockpit.lockContention.resourceLocks[0].claim_target, 'tests');
   assert.equal(cockpit.metrics.activeLocks, 2);
-
-  // 拓扑只返回一份，避免同一次响应里把上百个节点的 JSON 发两遍。
-  assert.ok(cockpit.topologySnapshot);
-  assert.equal(cockpit.topology, undefined, 'cockpit 不应再重复返回 topology');
 });
 
 test('collab 复用 dashboard 行时 total_sessions 反映整库、离席数不为假零', async (t) => {

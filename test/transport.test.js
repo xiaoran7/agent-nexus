@@ -7,9 +7,7 @@ import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { startTestDaemon } from './helpers.js';
 import {
-  installClaudeHook,
-  installCodexHook,
-  installZCodeHook
+  installClaudeHook
 } from '../src/installer/index.js';
 
 // 这一层只做一件事：起真实 HTTP/WS 栈跑端到端。之前 47 个用例全部直接调用
@@ -687,131 +685,6 @@ test('安装器把 hook 写进宿主配置', async (t) => {
     assert.throws(() => installClaudeHook(), /Cannot parse/);
     assert.equal(readFileSync(settingsPath, 'utf8'), broken, '原文件必须原样保留');
   });
-
-  await t.test('Codex 与 ZCode 配置不丢已有字段', () => {
-    const codexPath = join(fakeHome, '.agenthub', 'coordinator.json');
-    mkdirSync(join(fakeHome, '.agenthub'), { recursive: true });
-    writeFileSync(codexPath, JSON.stringify({ otherRuntime: { keepMe: true } }), 'utf8');
-
-    installCodexHook();
-
-    const codex = JSON.parse(readFileSync(codexPath, 'utf8'));
-    assert.deepEqual(codex.otherRuntime, { keepMe: true }, '合并而非整份覆盖');
-    assert.equal(codex.enabled, true);
-    assert.ok(existsSync(codex.hook_script), 'hook_script 应指向真实脚本');
-
-    const zcodePath = join(fakeHome, '.zcode', 'nexus-guard.json');
-    installZCodeHook();
-    const zcode = JSON.parse(readFileSync(zcodePath, 'utf8'));
-    assert.equal(zcode.enabled, true);
-    assert.ok(existsSync(zcode.pre_edit_hook));
-  });
-});
-
-// 状态与消息两个入口此前完全没有入参校验：缺字段会一路掉进 SQLite，
-// 变成 TypeError（绑定不了 null）或 FOREIGN KEY constraint failed。
-// 两者都映射成 500，还会把底层 schema 的错误码打进日志。
-test('状态与消息的非法输入返回 400 而非 500', async (t) => {
-  const d = await startTestDaemon();
-  t.after(() => d.close());
-
-  await t.test('前置：注册一个已知 agent', async () => {
-    const res = await d.request('/api/agents/register', {
-      method: 'POST', body: { id: 'state-1', name: 'State 1', provider: 'claude' }
-    });
-    assert.equal(res.status, 200);
-  });
-
-  await t.test('state set 缺 value 返回 400', async () => {
-    const res = await d.request('/api/state/default/k', {
-      method: 'POST', body: { updated_by: 'state-1' }
-    });
-    assert.equal(res.status, 400, '缺失 value 应报 400');
-    assert.equal(res.json.field, 'value');
-  });
-
-  await t.test('state set 缺 updated_by 返回 400', async () => {
-    const res = await d.request('/api/state/default/k', {
-      method: 'POST', body: { value: 'v' }
-    });
-    assert.equal(res.status, 400, '缺失 updated_by 应报 400');
-    assert.equal(res.json.field, 'updated_by');
-  });
-
-  await t.test('非法 ttl_seconds 返回 400', async () => {
-    const res = await d.request('/api/state/default/k', {
-      method: 'POST', body: { value: 'v', updated_by: 'state-1', ttl_seconds: -5 }
-    });
-    assert.equal(res.status, 400);
-    assert.equal(res.json.field, 'ttl_seconds');
-  });
-
-  await t.test('CAS 的 new_value 必须是字符串或 null', async () => {
-    const res = await d.request('/api/state/default/cas', {
-      method: 'POST', body: { key: 'k', expected: null, new_value: 42, updated_by: 'state-1' }
-    });
-    assert.equal(res.status, 400, '数字不能绑定到 TEXT 列，应报 400');
-    assert.equal(res.json.field, 'new_value');
-  });
-
-  await t.test('CAS 的 expected 允许 null（键不存在）', async () => {
-    const res = await d.request('/api/state/default/cas', {
-      method: 'POST', body: { key: 'fresh', expected: null, new_value: 'ok', updated_by: 'state-1' }
-    });
-    assert.equal(res.status, 200, '键不存在时 expected=null 是合法用法');
-    assert.equal(res.json.swapped, true);
-  });
-
-  await t.test('非法请求不留下脏状态', async () => {
-    const res = await d.request('/api/state/default', {});
-    const keys = res.json.map((e) => e.key);
-    assert.deepEqual(keys, ['fresh'], '只有校验通过的那次写入');
-  });
-
-  await t.test('消息发件人未注册返回 400', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', body: { from: 'ghost-agent', content: 'hi' }
-    });
-    assert.equal(res.status, 400, '未知发件人应报 400 而不是外键失败');
-    assert.equal(res.json.field, 'from');
-  });
-
-  await t.test('消息收件人未注册返回 400', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', body: { from: 'state-1', to: 'nobody', content: 'hi' }
-    });
-    assert.equal(res.status, 400);
-    assert.equal(res.json.field, 'to');
-  });
-
-  await t.test('消息缺 content 返回 400', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', body: { from: 'state-1' }
-    });
-    assert.equal(res.status, 400);
-    assert.equal(res.json.field, 'content');
-  });
-
-  await t.test('消息 importance 非法值返回 400', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', body: { from: 'state-1', content: 'hi', importance: 'ASAP' }
-    });
-    assert.equal(res.status, 400);
-    assert.equal(res.json.field, 'importance');
-  });
-
-  await t.test('合法消息仍能发出', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', body: { from: 'state-1', content: 'hello' }
-    });
-    assert.equal(res.status, 200);
-    assert.equal(res.json.from, 'state-1');
-  });
-
-  await t.test('daemon 仍健康', async () => {
-    const res = await d.request('/health');
-    assert.equal(res.status, 200);
-  });
 });
 
 // 端口冲突与数据库路径都属于"用户配置错了"，不该以未捕获异常的形式崩溃。
@@ -911,57 +784,30 @@ test('令牌缺失或无效时拒绝访问', async (t) => {
   });
 });
 
-test('令牌绑定 agent 身份与收件箱可见性', async (t) => {
+test('令牌绑定 agent 身份与越权防护', async (t) => {
   const d = await startTestDaemon();
   t.after(() => d.close());
 
   const alice = d.agentToken('alice');
-  const bob = d.agentToken('bob');
 
-  await t.test('前置：两个 agent 都已注册', async () => {
-    for (const id of ['alice', 'bob']) {
-      const res = await d.request('/api/agents/register', {
-        method: 'POST', body: { id, name: id, provider: 'claude' }
-      });
-      assert.equal(res.status, 200);
-    }
-  });
-
-  await t.test('发件人以令牌为准，伪造的 from 被拒', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', token: alice, body: { from: 'bob', content: 'spoofed' }
+  await t.test('伪造其他 agent_id 声明意图被拒', async () => {
+    const res = await d.request('/api/intents/declare', {
+      method: 'POST',
+      token: alice,
+      body: { agent_id: 'bob', summary: 'spoofed', claims: [{ type: 'file', target: 'src/a.js' }] }
     });
     assert.equal(res.status, 400, '令牌说是 alice，就不能冒用 bob');
-    assert.equal(res.json.field, 'from');
+    assert.equal(res.json.field, 'agent_id');
   });
 
-  await t.test('按令牌身份发送成功', async () => {
-    const res = await d.request('/api/messages', {
-      method: 'POST', token: alice, body: { content: 'from alice' }
+  await t.test('按令牌身份声明意图成功', async () => {
+    const res = await d.request('/api/intents/declare', {
+      method: 'POST',
+      token: alice,
+      body: { summary: 'from alice', claims: [{ type: 'file', target: 'src/alice.js' }] }
     });
     assert.equal(res.status, 200);
-    assert.equal(res.json.from, 'alice');
-  });
-
-  await t.test('定向消息只能由目标收件人读到', async () => {
-    await d.request('/api/messages', {
-      method: 'POST', token: alice, body: { to: 'bob', content: 'for bob only' }
-    });
-    const bobInbox = await d.request('/api/messages?to=bob', { token: bob });
-    assert.ok(bobInbox.json.some((m) => m.content === 'for bob only'));
-
-    const aliceInbox = await d.request('/api/messages?to=bob', { token: alice });
-    assert.equal(aliceInbox.status, 403, 'alice 不该读 bob 的收件箱');
-  });
-
-  await t.test('agent 令牌不能靠无参列举绕过隔离', async () => {
-    const res = await d.request('/api/messages', { token: alice });
-    assert.equal(res.status, 403, '无参列举是全局流水，绑定 agent 的令牌不许用');
-  });
-
-  await t.test('agent 令牌读自己的收件箱', async () => {
-    const res = await d.request('/api/messages?to=alice', { token: alice });
-    assert.equal(res.status, 200);
+    assert.equal(res.json.status, 'GRANTED');
   });
 });
 
@@ -1005,27 +851,17 @@ test('签发令牌时顺带登记 agent', async (t) => {
   const d = await startTestDaemon();
   t.after(() => d.close());
 
-  await t.test('刚拿到的令牌就能发消息', async () => {
+  await t.test('刚拿到的令牌就能声明意图并查询状态', async () => {
     const minted = await d.request('/api/tokens', { method: 'POST', body: { agent_id: 'newbie' } });
     assert.equal(minted.status, 201);
 
-    const res = await d.request('/api/messages', {
-      method: 'POST', token: minted.json.token, body: { content: 'hello' }
+    const res = await d.request('/api/intents/declare', {
+      method: 'POST',
+      token: minted.json.token,
+      body: { summary: 'hello', claims: [{ type: 'file', target: 'src/newbie.js' }] }
     });
-    assert.equal(res.status, 200, '有令牌却发不出消息，对第一次用的人是死胡同');
-    assert.equal(res.json.from, 'newbie');
-  });
-
-  await t.test('重新签发不会重置已登记的 agent', async () => {
-    await d.request('/api/messages', {
-      method: 'POST', token: d.operatorToken, body: { from: 'newbie', content: 'first' }
-    });
-    const again = await d.request('/api/tokens', { method: 'POST', body: { agent_id: 'newbie' } });
-
-    const res = await d.request('/api/messages', {
-      method: 'POST', token: again.json.token, body: { content: 'second' }
-    });
-    assert.equal(res.status, 200, '轮换令牌不该要求重新注册');
+    assert.equal(res.status, 200);
+    assert.equal(res.json.status, 'GRANTED');
   });
 });
 

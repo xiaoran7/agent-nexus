@@ -2,7 +2,7 @@
 import { appendFileSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { startEdgeBridge, pushRemoteSessionsOnce } from './daemon/bridge.js';
-import { installAll, installClaudeHook, installCodexHook, installZCodeHook, installProjectMcp } from './installer/index.js';
+import { installClaudeHook } from './installer/index.js';
 import { resolveProject, getLocalNodeId } from './domain/project.js';
 import { startMcpStdio } from './mcp/stdio.js';
 import { readSessionToken, writeRemoteConfig, clearRemoteConfig, resolveNexusEndpoint } from './transport/auth.js';
@@ -20,12 +20,6 @@ import {
 } from './probe/index.js';
 
 const cmd = process.argv[2];
-
-const hooks = {
-  '--claude': installClaudeHook,
-  '--codex': installCodexHook,
-  '--zcode': installZCodeHook
-};
 
 if (cmd === 'start') {
   runDaemon({ managed: false });
@@ -54,13 +48,9 @@ if (cmd === 'start') {
 } else if (cmd === 'project') {
   showProjectInfo(process.argv[3]);
 } else if (cmd === 'hook:install') {
-  const target = process.argv[3];
-  (hooks[target] || installAll)();
+  installClaudeHook();
 } else if (cmd === 'mcp') {
   runMcpStdio();
-} else if (cmd === 'mcp:install') {
-  const targetDir = process.argv[3] || process.cwd();
-  installProjectMcp(targetDir);
 } else if (cmd === 'help' || cmd === '--help' || cmd === '-h' || !cmd) {
   printHelp();
 } else {
@@ -69,9 +59,6 @@ if (cmd === 'start') {
   process.exit(1);
 }
 
-// 探针是无人值守进程：日志不能指望启动器（cmd/VBS）重定向——
-// 实测 detached 启动时 `>>` 会静默丢输出。这里由进程自己接管 stdout/stderr，
-// 保证崩溃与启动失败在 probe.log 里一定留痕。
 function redirectProbeOutput() {
   const logPath = getProbeLogPath();
   try {
@@ -96,7 +83,6 @@ function runDaemon({ managed }) {
   if (managed) redirectProbeOutput();
   const opts = managed ? parseDaemonArgs() : {};
 
-  // edge 探针：不监听端口、不建本地库，只把本机会话快照推给中心 Hub。
   if (opts.edge) {
     runEdgeProbe(opts);
     return;
@@ -131,13 +117,10 @@ function runDaemon({ managed }) {
 
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
-        // 兜底：任何走到退出（含未捕获异常触发的 process.exit）的路径都清掉 PID 文件。
-        // 否则被强杀/崩溃后残留的 PID 会一路带到下次升级，probe:stop 只认文件时就会空转。
         process.on('exit', () => {
           if (!managed) return;
           try {
             const state = readProbeState();
-            // 只清自己写的那份：防止后来者（新探针）的 PID 被旧进程的退出钩子误删。
             if (!state || state.pid === process.pid) clearProbeState();
           } catch {}
         });
@@ -507,12 +490,8 @@ Agent-Nexus CLI:
   nexus token <agent-id>         向运行中的 daemon 签发该 agent 的令牌
   nexus projects                 查看当前 daemon 登记的所有项目列表
   nexus project [dir]            解析指定目录所属的项目根与 Project ID
-  nexus mcp [--project <path>]   以 stdio JSON-RPC 模式运行项目级 MCP 服务
-  nexus mcp:install [dir]        为指定项目注入/合并 .mcp.json 配置（对齐 AOCI 模式）
-  nexus hook:install [--all]     安装全部物理拦截 Hook (Fail-Closed)
-  nexus hook:install --claude    仅安装 Claude Code Hook
-  nexus hook:install --codex     仅配置 Codex / AgentHub
-  nexus hook:install --zcode     仅配置 ZCode
+  nexus hook:install             安装 Claude Code 全局 PreToolUse / PostToolUse 协同拦截钩子
+  nexus mcp [--project <path>]   以 stdio JSON-RPC 模式运行核心协调与记忆 MCP 服务
 
 认证：/api/* 与 WebSocket 需要令牌。daemon 启动时自动将当前活动令牌写入
 ~/.agent-nexus/session.token，本地 CLI、Hook 与 MCP 客户端均可无感通信；

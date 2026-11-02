@@ -1,38 +1,10 @@
-import { ProjectLead } from './project-lead.js';
-import { NullAdapter, AnthropicAdapter, GatewayRouterAdapter, parseLlmConfig } from './llm-adapter.js';
-import { GatewayRouter } from './gateway-router.js';
 import { resolveProjectDisplayName, getLocalNodeId, normalizeNodeId, isSameNode } from './project.js';
 import { computeAgentLifecycleState } from '../daemon/coordinator.js';
 
 export class ProjectRegistry {
-  constructor(db, coordinator, eventBus, llmAdapterFactory = null, memoryService = null) {
+  constructor(db, coordinator = null) {
     this.db = db;
     this.coordinator = coordinator;
-    this.eventBus = eventBus;
-    this.memoryService = memoryService;
-    this.llmConfig = parseLlmConfig();
-
-    // 初始化全局 GatewayRouter
-    this.gatewayRouter = new GatewayRouter({
-      strategy: this.llmConfig.strategy || 'smart',
-      eventBus: this.eventBus
-    });
-
-    if (this.llmConfig.enabled && Array.isArray(this.llmConfig.candidates)) {
-      for (const cand of this.llmConfig.candidates) {
-        this.gatewayRouter.addCandidate(cand);
-      }
-    }
-
-    this.llmAdapterFactory = llmAdapterFactory || (() => {
-      if (this.llmConfig.enabled && this.gatewayRouter.candidates.length > 0) {
-        return new GatewayRouterAdapter(this.gatewayRouter);
-      }
-      return new NullAdapter();
-    });
-    this.leads = new Map(); // projectId -> ProjectLead
-
-    // 历史数据库平滑回填：将存量 "Project <hash>" 迁移为真实可读名称
     this.backfillProjectDisplayNames();
   }
 
@@ -51,10 +23,8 @@ export class ProjectRegistry {
 
   backfillProjectDisplayNames() {
     try {
-      // 1. 清除历史测试遗留的虚拟全景 'all' 脏记录与空 id 脏记录
       this.db.prepare("DELETE FROM projects WHERE id = 'all' OR id = ''").run();
 
-      // 2. 迁移并清理旧版残留的幽灵项目 (如直接将项目名当作 id 且 root_path 为空的脏记录)
       const phantomRows = this.db.prepare(`
         SELECT p1.id as phantom_id, p2.id as target_id
         FROM projects p1
@@ -70,7 +40,6 @@ export class ProjectRegistry {
         } catch {}
       }
 
-      // 3. 对同名空路径项目做去重清理
       this.db.prepare(`
         DELETE FROM projects
         WHERE (root_path = '' OR root_path IS NULL)
@@ -125,10 +94,8 @@ export class ProjectRegistry {
   }
 
   listProjects() {
-    // 强制排除保留的虚拟全景 'all' 与空 id，确保下拉选单主权清晰且无冲突
     const projects = this._stmt("SELECT * FROM projects WHERE id != 'all' AND id != '' ORDER BY last_activity DESC").all();
 
-    // 轻量窄列统计当前各个项目的在线助手数量与远端节点标识（避免重跑整份 getDashboardSnapshot 全景快照）
     const onlineMap = new Map();
     const projectHostMap = new Map();
     const localNodeId = this.coordinator?.localNodeId || getLocalNodeId();
@@ -152,7 +119,7 @@ export class ProjectRegistry {
     } catch {}
 
     const result = [];
-    const seenDisplayNames = new Map(); // dedupeKey -> index in result
+    const seenDisplayNames = new Map();
 
     for (const p of projects) {
       let baseDisplayName = p.display_name;
@@ -161,7 +128,6 @@ export class ProjectRegistry {
       }
       const hostId = normalizeNodeId(projectHostMap.get(p.id) || p.host_id || localNodeId);
       const isRemote = !isSameNode(hostId, localNodeId);
-      // 远端工作区工程自动携带节点标识（如 "Agent-Nexus [us-zenix]"），既避免与本机同名工程混淆，又防止被幽灵去重逻辑吞并
       const displayName = (isRemote && !baseDisplayName.includes(`[${hostId}]`))
         ? `${baseDisplayName} [${hostId}]`
         : baseDisplayName;
@@ -174,7 +140,6 @@ export class ProjectRegistry {
         online_agents_count: onlineCount
       };
 
-      // 仅对“其中一方无真实路径”的历史幽灵工程去重；两个拥有不同真实 root_path 的独立工作区全部保留
       if (seenDisplayNames.has(displayName)) {
         const existingIdx = seenDisplayNames.get(displayName);
         const existing = result[existingIdx];
@@ -182,7 +147,6 @@ export class ProjectRegistry {
         const existingHasRoot = Boolean(existing.root_path && existing.root_path !== '');
 
         if (pHasRoot && existingHasRoot && p.root_path !== existing.root_path) {
-          // 同节点下不同物理路径的同名仓库：补充短 ID 区分，绝不互相吞并
           const disambiguated = {
             ...item,
             display_name: `${displayName} (${p.id.slice(0, 6)})`
@@ -200,7 +164,6 @@ export class ProjectRegistry {
       }
     }
 
-    // 优先按在线助手数量降序，再按最近活跃时间降序
     result.sort((a, b) => {
       const diffOnline = (b.online_agents_count || 0) - (a.online_agents_count || 0);
       if (diffOnline !== 0) return diffOnline;
@@ -208,22 +171,5 @@ export class ProjectRegistry {
     });
 
     return result;
-  }
-
-  getOrCreateLead(projectId) {
-    const finalId = projectId || 'default';
-    if (!this.leads.has(finalId)) {
-      if (finalId !== 'all') {
-        this.ensureProject(finalId);
-      }
-      const adapter = this.llmAdapterFactory(finalId);
-      const lead = new ProjectLead(finalId, this.coordinator, this.eventBus, adapter, this.memoryService);
-      this.leads.set(finalId, lead);
-    }
-    return this.leads.get(finalId);
-  }
-
-  removeLead(projectId) {
-    return this.leads.delete(projectId);
   }
 }

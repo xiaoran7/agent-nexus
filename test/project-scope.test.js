@@ -2,20 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDatabase } from '../src/storage/database.js';
 import { Coordinator } from '../src/daemon/coordinator.js';
-import { StateService } from '../src/domain/state.js';
-import { MessageService } from '../src/domain/messages.js';
+import { ProjectMemoryService } from '../src/domain/memory.js';
 import { EventEmitter } from 'node:events';
 
 test('项目级作用域与隔离验证 (Project Scoping)', async (t) => {
-  let db, bus, coordinator, stateService, messageService;
+  let db, bus, coordinator, memoryService;
 
   t.beforeEach(() => {
     db = createDatabase(':memory:');
     bus = new EventEmitter();
     coordinator = new Coordinator(db, bus);
-    stateService = new StateService(db, bus);
-    messageService = new MessageService(db, bus);
-    messageService.agentResolver = (id) => Boolean(coordinator.getAgent(id));
+    memoryService = new ProjectMemoryService(db, bus);
 
     coordinator.registerAgent({ id: 'agent-p1', name: 'Agent 1', provider: 'test', sessionId: 's1', projectId: 'proj-1' });
     coordinator.registerAgent({ id: 'agent-p2', name: 'Agent 2', provider: 'test', sessionId: 's2', projectId: 'proj-2' });
@@ -82,28 +79,15 @@ test('项目级作用域与隔离验证 (Project Scoping)', async (t) => {
     assert.equal(res2.status, 'GRANTED');
   });
 
-  await t.test('共享状态按 project_id 严格隔离', () => {
-    stateService.set('default', 'version', '1.0.0', 'agent-p1', null, 'proj-1');
-    stateService.set('default', 'version', '2.0.0', 'agent-p2', null, 'proj-2');
+  await t.test('全局工程记忆按 project_id 严格隔离', () => {
+    memoryService.set('proj-1', { category: 'rule', key: 'version', content: '1.0.0', sourceAgentId: 'agent-p1' });
+    memoryService.set('proj-2', { category: 'rule', key: 'version', content: '2.0.0', sourceAgentId: 'agent-p2' });
 
-    const v1 = stateService.get('default', 'version', 'proj-1');
-    const v2 = stateService.get('default', 'version', 'proj-2');
+    const v1 = memoryService.get('proj-1', 'version', 'rule');
+    const v2 = memoryService.get('proj-2', 'version', 'rule');
 
-    assert.equal(v1.value, '1.0.0');
-    assert.equal(v2.value, '2.0.0');
-  });
-
-  await t.test('消息收件箱按 project_id 过滤', () => {
-    messageService.send({ from: 'agent-p1', to: 'agent-p1', content: 'Msg in P1', projectId: 'proj-1' });
-    messageService.send({ from: 'agent-p2', to: 'agent-p2', content: 'Msg in P2', projectId: 'proj-2' });
-
-    const inboxP1 = messageService.inbox('agent-p1', 10, 'proj-1');
-    const inboxP2 = messageService.inbox('agent-p2', 10, 'proj-2');
-
-    assert.equal(inboxP1.length, 1);
-    assert.equal(inboxP1[0].content, 'Msg in P1');
-    assert.equal(inboxP2.length, 1);
-    assert.equal(inboxP2[0].content, 'Msg in P2');
+    assert.equal(v1.content, '1.0.0');
+    assert.equal(v2.content, '2.0.0');
   });
 
   await t.test('Hook 快速判冲通道支持 project_id', () => {

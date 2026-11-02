@@ -47,12 +47,6 @@
         </svg>
         <span>会话与防撞</span>
       </button>
-      <button class="seg-btn" data-view="timeline" id="tab-timeline">
-        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-        </svg>
-        <span>动态与日志</span>
-      </button>
       <button class="seg-btn" data-view="routing" id="tab-routing">
         <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="18" cy="5" r="3"></circle>
@@ -77,13 +71,6 @@
         <option value="all">全景工程 (跨项目)</option>
         <option value="default" selected>Default Project</option>
       </select>
-
-      <button id="btn-broadcast-toggle" class="icon-btn" title="发起全员调度广播" aria-label="发起全员调度广播">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-        </svg>
-      </button>
 
       <button id="theme-toggle-btn" class="icon-btn" title="切换暗色/亮色外观" aria-label="切换外观">
         <svg class="theme-icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -132,69 +119,6 @@
 
     <!-- 跨机集群算力拓扑带 (Cluster Nodes Ribbon) -->
     <div class="cluster-nodes-bar" id="cluster-nodes-bar" title="跨机算力节点与探针拓扑"></div>
-
-    <!-- 架构师状态 Ticker 胶囊 -->
-    <div class="lead-ticker-wrap">
-      <button id="lead-status-chip" class="lead-ticker-btn chip-silent" title="点击查看架构师协同避障详情">
-        <svg class="lead-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-        </svg>
-        <span id="lead-ticker-text">Tech Lead: 静默保驾</span>
-      </button>
-    </div>
-  </div>
-
-  <!-- 快捷广播浮动气泡 (点击喇叭展开) -->
-  <div id="broadcast-popover" class="broadcast-popover" hidden>
-    <div class="popover-head">
-      <div class="popover-title-group">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-        </svg>
-        <span>全员调度广播</span>
-      </div>
-      <button id="btn-broadcast-close" class="close-icon-btn" aria-label="关闭" title="关闭">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    </div>
-    <div class="popover-body">
-      <input type="text" id="master-broadcast-input" class="popover-input" placeholder="输入调度指令，一键下发全员信箱..." />
-      <div class="popover-footer">
-        <label class="urgent-label">
-          <input type="checkbox" id="master-broadcast-urgent" />
-          <span>紧急插话</span>
-        </label>
-        <button id="master-broadcast-btn" class="btn-primary">发送广播</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 架构师建议弹出卡片 -->
-  <div id="lead-advice-popover" class="lead-popover" hidden>
-    <div class="popover-head">
-      <div class="popover-title-group">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-        </svg>
-        <span>常驻架构师 (Tech Lead) 协同避障</span>
-      </div>
-      <button id="btn-lead-close" class="close-icon-btn" aria-label="关闭" title="关闭">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    </div>
-    <div class="popover-body">
-      <div id="lead-advice-container" class="lead-text-box">
-        [Nexus 架构师静默保驾] 当前无多会话写冲突，架构师保持静默。当检测到并发修改同文件或排队时，将实时唤醒并提供避让重排与交接路线。
-      </div>
-      <div id="lead-awakened-detail" class="lead-awakened-detail" style="display: none;"></div>
-    </div>
   </div>
 
   <!-- 主体工作区 Main Body -->
@@ -216,7 +140,7 @@
               <span class="panel-meta" id="agents-meta">0 个在线</span>
             </div>
             <div class="scroll-container" id="agents-container">
-              <div class="empty-hint">暂无在线会话，当 Claude Code / Codex 启动时将自动感知接入</div>
+              <div class="empty-hint">暂无在线会话，当 Claude Code 启动时将自动感知接入</div>
             </div>
           </section>
 
@@ -266,54 +190,18 @@
       </div>
     </div>
 
-    <!-- VIEW 2: 动态与日志 (Dialogue & Milestones) -->
-    <div id="view-timeline" class="view-panel">
-      <div class="split-v-layout" id="timeline-split-v-layout">
-        <!-- 上部: 跨会话对话网络 -->
-        <section class="panel-card flex-dialogue" id="section-dialogue">
-          <div class="panel-head">
-            <div class="panel-title-wrap">
-              <span class="panel-title">跨会话对话与调度记录</span>
-            </div>
-            <span class="panel-meta" id="dialogue-counter">0 条记录</span>
-          </div>
-          <div class="scroll-container dialogue-container" id="dialogue-stream">
-            <div class="empty-hint">暂无跨会话对答，当助手之间发送协作消息时将在此实时聚合</div>
-          </div>
-        </section>
-
-        <!-- 对话与里程碑垂直拖拽调整条 -->
-        <div class="split-resizer resizer-row" id="resizer-dialogue-milestones" title="上下拖动调整对话网络与里程碑高度 (双击重置)">
-          <div class="resizer-handle-bar"></div>
-        </div>
-
-        <!-- 下部: 演进里程碑历史 -->
-        <section class="panel-card flex-milestones" id="section-milestones">
-          <div class="panel-head">
-            <div class="panel-title-wrap">
-              <span class="panel-title">工程演进里程碑 (Milestones)</span>
-            </div>
-            <span class="panel-meta" id="milestones-counter">0 项闭环产出</span>
-          </div>
-          <div class="scroll-container milestone-container" id="milestones-container">
-            <div class="empty-hint">暂无里程碑记录，当调用 nexus_report_milestone 或任务闭环释放时沉淀于此</div>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <!-- VIEW 3: 协同路由图 (Session Routing & Conflict Map) -->
+    <!-- VIEW 2: 协同路由图 (Session Routing & Active Locks) -->
     <div id="view-routing" class="view-panel">
       <section class="panel-card routing-panel-card">
         <div class="panel-head routing-head">
           <div class="routing-title-group">
-            <span class="panel-title">会话路由与资源走廊<span class="panel-title-en"> (Session Routing & Resource Map)</span></span>
+            <span class="panel-title">会话路由与独占锁拓扑<span class="panel-title-en"> (Session Routing & Active Locks)</span></span>
             <span class="panel-meta" id="routing-summary-meta">0 个在席会话 · 0 项独占锁 · 0 处冲突</span>
           </div>
           <div class="routing-actions-wrap">
             <span class="routing-mode-tag">
               <span class="pulse-dot-sm"></span>
-              动态防撞路由网关
+              实时并发防撞中枢
             </span>
           </div>
         </div>
@@ -350,7 +238,7 @@
                       </div>
                       <div class="hub-sub-row">
                         <span class="hub-status-pill" title="127.0.0.1:4300">127.0.0.1:4300</span>
-                        <span class="hub-sub">零碰撞防撞网关</span>
+                        <span class="hub-sub">确定性防撞仲裁中枢</span>
                       </div>
                     </div>
                   </div>
@@ -361,21 +249,21 @@
                     </div>
                   </div>
                   <div class="hub-card-footer">
-                    <span class="hub-mode-badge">抢占式并发仲裁</span>
+                    <span class="hub-mode-badge">文件/资源租约互斥</span>
                     <span class="hub-hook-badge">PostToolUse 极速解禁</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Lane 3: 施工目标与走廊 (Target Files & Corridors) -->
+            <!-- Lane 3: 独占文件与排他锁 (Active Locks & Wait Queue) -->
             <div class="routing-lane lane-targets" id="lane-targets">
               <div class="lane-header">
-                <span class="lane-title">施工目标与走廊 (Files & Corridors)</span>
+                <span class="lane-title">独占文件与排他锁 (Active Locks)</span>
                 <span class="lane-badge" id="badge-targets-count">0</span>
               </div>
               <div class="lane-content scroll-container" id="routing-targets-container">
-                <div class="empty-hint">暂无独占文件或锁</div>
+                <div class="empty-hint">暂无活跃独占文件或排他锁</div>
               </div>
             </div>
           </div>
@@ -419,7 +307,7 @@
       </section>
     </div>
 
-    <!-- VIEW 4: 跨机接力与工程记忆 (Cross-Machine Handoffs & Memories) -->
+    <!-- VIEW 3: 跨机接力与工程记忆 (Cross-Machine Handoffs & Memories) -->
     <div id="view-memory" class="view-panel">
       <div class="split-layout" id="memory-split-layout">
         <!-- 左栏 50%: 跨机工作交接流 (Active & Historical Handoffs) -->
@@ -437,7 +325,7 @@
                 <span class="panel-title">跨机接力工单<span class="panel-title-en"> (Work Handoffs)</span></span>
               </div>
               <div class="panel-actions">
-                <button id="btn-create-handoff-open" class="btn-primary btn-sm">+ 新建接力</button>
+                <button id="btn-create-handoff-open" class="btn-primary-sm">+ 新建接力</button>
               </div>
             </div>
             <div class="scroll-container" id="handoffs-container">
@@ -462,7 +350,7 @@
                 <span class="panel-title">工程记忆与规约<span class="panel-title-en"> (Memories & Gotchas)</span></span>
               </div>
               <div class="panel-actions">
-                <button id="btn-create-memory-open" class="btn-primary btn-sm">+ 沉淀经验</button>
+                <button id="btn-create-memory-open" class="btn-primary-sm">+ 沉淀经验</button>
               </div>
             </div>
             <div class="memory-toolbar">

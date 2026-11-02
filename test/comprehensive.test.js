@@ -3,90 +3,6 @@ import assert from 'node:assert/strict';
 import { NEXUS_TOOLS } from '../src/mcp/server.js';
 import { createHarness, capture } from './helpers.js';
 
-test('共享状态与 CAS', async (t) => {
-  const h = createHarness();
-  t.after(() => h.close());
-  const { stateService } = h;
-
-  const changed = capture(h.eventBus, 'state:changed');
-  t.after(() => changed.stop());
-
-  await t.test('set 后可读回', () => {
-    stateService.set('locks', 'playwright-port', '8080', 'agent-1', 60);
-
-    const row = stateService.get('locks', 'playwright-port');
-    assert.equal(row.value, '8080');
-    assert.equal(row.updated_by, 'agent-1');
-  });
-
-  await t.test('CAS 期望值匹配时换值成功', () => {
-    const res = stateService.compareAndSwap('locks', 'playwright-port', '8080', '8081', 'agent-2');
-
-    assert.equal(res.swapped, true);
-    assert.equal(stateService.get('locks', 'playwright-port').value, '8081');
-  });
-
-  await t.test('CAS 期望值过期时不改动并回报当前值', () => {
-    const res = stateService.compareAndSwap('locks', 'playwright-port', '8080', '9999', 'agent-3');
-
-    assert.equal(res.swapped, false);
-    assert.equal(res.current.value, '8081', '失败时应回报真实当前值');
-    assert.equal(stateService.get('locks', 'playwright-port').value, '8081', '值不应被覆盖');
-  });
-
-  await t.test('按命名空间隔离', () => {
-    stateService.set('other', 'playwright-port', '7000', 'agent-4');
-
-    assert.equal(stateService.get('other', 'playwright-port').value, '7000');
-    assert.equal(stateService.get('locks', 'playwright-port').value, '8081');
-  });
-
-  await t.test('每次写入广播 state:changed', () => {
-    // 三次写入：初始 set、CAS 换值、命名空间隔离用的 set。
-    assert.equal(changed.events.length, 3, '三次 set 各广播一次');
-  });
-});
-
-test('消息总线', async (t) => {
-  const h = createHarness();
-  t.after(() => h.close());
-  const { coordinator, messageService } = h;
-
-  coordinator.registerAgent({ id: 'codex-1', name: 'Codex 1', provider: 'codex', sessionId: 's1' });
-  coordinator.registerAgent({ id: 'claude-2', name: 'Claude 2', provider: 'claude', sessionId: 's2' });
-
-  const sent = capture(h.eventBus, 'message:sent');
-  t.after(() => sent.stop());
-
-  await t.test('定向消息只进收件人信箱', () => {
-    messageService.send({
-      from: 'codex-1',
-      to: 'claude-2',
-      content: 'InteractionResolver refactoring completed. Please rebase.',
-      importance: 'urgent'
-    });
-
-    const inbox = messageService.inbox('claude-2');
-    assert.equal(inbox.length, 1);
-    assert.equal(inbox[0].importance, 'urgent');
-    assert.equal(inbox[0].from_agent, 'codex-1');
-    assert.equal(inbox[0].content, 'InteractionResolver refactoring completed. Please rebase.');
-
-    assert.equal(messageService.inbox('codex-1').length, 0, '发件人自己不应收到定向消息');
-  });
-
-  await t.test('广播消息对所有 agent 可见', () => {
-    messageService.send({ from: 'codex-1', content: 'Rebasing window opens in 5 minutes.' });
-
-    assert.equal(messageService.inbox('claude-2').length, 2, '收件人应看到定向 + 广播');
-    assert.equal(messageService.inbox('codex-1').length, 1, '广播应回到发件人');
-  });
-
-  await t.test('发送广播 message:sent', () => {
-    assert.equal(sent.events.length, 2);
-  });
-});
-
 test('agent 列表查询', async (t) => {
   const h = createHarness();
   t.after(() => h.close());
@@ -128,8 +44,8 @@ test('MCP 工具定义与分发', async (t) => {
   t.after(() => h.close());
   const { mcp, coordinator } = h;
 
-  await t.test('暴露 5 个工具，声明 schema 完整', () => {
-    assert.equal(NEXUS_TOOLS.length, 5);
+  await t.test('暴露 7 个核心工具，声明 schema 完整', () => {
+    assert.equal(NEXUS_TOOLS.length, 7);
 
     const declare = NEXUS_TOOLS.find((tool) => tool.name === 'nexus_declare_intent');
     assert.ok(declare, '应有 nexus_declare_intent');
@@ -160,13 +76,6 @@ test('MCP 工具定义与分发', async (t) => {
     assert.ok(res.agents.length >= 1);
     assert.ok(Array.isArray(res.activeClaims));
     assert.ok(Array.isArray(res.timeline));
-  });
-
-  await t.test('nexus_state 走同一套共享状态', () => {
-    mcp('nexus_state', { action: 'set', namespace: 'locks', key: 'port', value: '4300' });
-
-    const res = mcp('nexus_state', { action: 'get', namespace: 'locks', key: 'port' });
-    assert.equal(res.value, '4300');
   });
 
   await t.test('未知工具抛错而不是静默返回', () => {
@@ -361,18 +270,11 @@ test('唤醒队列按可用性复核并按 claim 宽窄重排', async (t) => {
     t.after(() => h2.close());
     const co = h2.coordinator;
 
-    // holder 占住 src，让下面两个（都在 src 之下）都进队列。
-    // 不能用 '.'：claim 目标解析到工作目录会被 assertClaimTarget 拒掉。
     const holder = co.declareIntent({
       agentId: 'H', intentSummary: 'H', claims: [{ type: 'module', target: 'src' }]
     });
     assert.equal(holder.status, 'GRANTED');
 
-    // 两条路径让"字符长度"与"路径段数"给出相反的顺序：
-    //   src/a/b   → 42 字符， 7 段（深 = 范围窄）
-    //   src/zzz…  → 69 字符， 6 段（浅 = 几乎和 src 一样宽）
-    // 浅的那条字符更长、段数却更少，所以按长度升序会选错，按段数降序才对。
-    // deep 先入队，shallow 后入队，只有排序真的生效才会选对。
     const deep = co.declareIntent({
       agentId: 'D', intentSummary: 'D', claims: [{ type: 'module', target: 'src/a/b' }]
     });
@@ -383,15 +285,10 @@ test('唤醒队列按可用性复核并按 claim 宽窄重排', async (t) => {
     assert.equal(deep.status, 'WAITING');
     assert.equal(shallow.status, 'WAITING');
 
-    // 断言可观察行为而不是重述排序 SQL：释放后谁被唤醒，就是排在前面的那个。
-    // 宽度按路径段数降序算：段数多 = 钻得深 = 要的范围小，窄的先过。
-    // claim 存的是归一化后的绝对路径，长度被工作目录前缀和目录名长度主导，
-    // 与"要的范围有多大"无关——src/zzz… 只是个名字很长的浅目录。
     const res = co.releaseLease(holder.leaseId, 'H');
     assert.equal(res.notifiedWaiter.agent_id, 'D',
       'src/a/b 只占两个叶子目录，应先于那条名字更长却同样宽的浅目录被唤醒');
 
-    // 宽的仍在队列里，等待下一轮（被唤醒者只是出队，并没有真的拿到租约）
     const stillQueued = h2.db.prepare('SELECT agent_id FROM wait_queue').all().map((r) => r.agent_id);
     assert.deepEqual(stillQueued, ['S']);
   });
@@ -421,7 +318,7 @@ test('唤醒队列按可用性复核并按 claim 宽窄重排', async (t) => {
 test('核心状态机闭环与门禁防御增强', async (t) => {
   const h = createHarness();
   t.after(() => h.close());
-  const { coordinator, mcp, eventBus } = h;
+  const { coordinator, eventBus } = h;
 
   await t.test('fastCheckAndAutoClaim 遇到模块锁时严格拦截而非放行', () => {
     coordinator.registerAgent({ id: 'mod-holder', name: 'Module Holder', provider: 'test', sessionId: 's1' });
@@ -453,7 +350,7 @@ test('核心状态机闭环与门禁防御增强', async (t) => {
       agentId: 'agent-exp',
       intentSummary: 'Hold file',
       claims: [{ type: 'file', target: 'src/timeout.js' }],
-      ttlSeconds: 1 // 1 秒过期
+      ttlSeconds: 1
     });
     assert.equal(dec1.status, 'GRANTED');
 
@@ -505,11 +402,5 @@ test('核心状态机闭环与门禁防御增强', async (t) => {
     // 释放租约 B
     coordinator.releaseLease(decB.leaseId, 'multi-agent');
     assert.equal(coordinator.getAgent('multi-agent').status, 'idle', '所有租约释放后状态应转为 idle');
-  });
-
-  await t.test('MCP nexus_state 传入未知 action 时抛出 ValidationError', () => {
-    assert.throws(() => {
-      mcp('nexus_state', { action: 'invalid_action' });
-    }, /Unsupported action/);
   });
 });

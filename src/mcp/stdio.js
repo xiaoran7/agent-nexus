@@ -8,7 +8,7 @@ import { resolveProject } from '../domain/project.js';
 import { ALL_NEXUS_TOOLS, handleMcpTool } from './server.js';
 import { readSessionToken, readRemoteConfig, resolveNexusEndpoint } from '../transport/auth.js';
 
-let MCP_VERSION = '0.2.17';
+let MCP_VERSION = '0.2.31';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) MCP_VERSION = pkg.version;
@@ -44,14 +44,13 @@ export function startMcpStdio(options = {}) {
 
   const input = options.input || process.stdin;
   const output = options.output || process.stdout;
-
   const inProcessContext = options.inProcessContext || null;
 
   const defaultAgentId = options.agentId ||
     process.env.NEXUS_AGENT_ID ||
-    (process.env.CLAUDE_CODE_SESSION_ID ? `claude-${process.env.CLAUDE_CODE_SESSION_ID}` :
-      (process.env.CODEX_SESSION_ID ? `codex-${process.env.CODEX_SESSION_ID}` :
-        (endpoint.isRemoteHub ? `agent-${nodeId}-${process.pid}` : `agent-${process.pid}`)));
+    (process.env.CLAUDE_CODE_SESSION_ID
+      ? `claude-${process.env.CLAUDE_CODE_SESSION_ID}`
+      : (endpoint.isRemoteHub ? `agent-${nodeId}-${process.pid}` : `agent-${process.pid}`));
 
   function send(msg) {
     output.write(JSON.stringify(msg) + '\n');
@@ -62,7 +61,7 @@ export function startMcpStdio(options = {}) {
     if (!args.project_id) args.project_id = projectId;
     if (!args.agent_id) args.agent_id = defaultAgentId;
 
-    const apiFetch = async (endpoint, method = 'GET', body = null, isRetry = false) => {
+    const apiFetch = async (path, method = 'GET', body = null, isRetry = false) => {
       const currentToken = getActiveToken(isRetry);
       const headers = {
         'Content-Type': 'application/json',
@@ -71,7 +70,7 @@ export function startMcpStdio(options = {}) {
 
       let res;
       try {
-        res = await fetch(`${baseUrl}${endpoint}`, {
+        res = await fetch(`${baseUrl}${path}`, {
           method,
           headers,
           body: body ? JSON.stringify(body) : undefined
@@ -83,11 +82,10 @@ export function startMcpStdio(options = {}) {
         );
       }
 
-      // 如果遇到 401 且未重试过，强制从磁盘重新读取 session.token 热重试一次
       if (res.status === 401 && !isRetry) {
         const refreshedToken = getActiveToken(true);
         if (refreshedToken) {
-          return apiFetch(endpoint, method, body, true);
+          return apiFetch(path, method, body, true);
         }
       }
 
@@ -104,27 +102,6 @@ export function startMcpStdio(options = {}) {
     };
 
     switch (name) {
-      case 'nexus_onboard':
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/onboard`, 'POST', {
-          agent_id: args.agent_id,
-          planned_work: args.planned_work || [],
-          capabilities: args.capabilities || []
-        });
-
-      case 'nexus_advise_plan':
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/advise`, 'POST', {
-          agent_id: args.agent_id,
-          planned_work: args.planned_work || []
-        });
-
-      case 'nexus_report_milestone':
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/milestone`, 'POST', {
-          agent_id: args.agent_id,
-          description: args.description,
-          lease_id_to_release: args.lease_id_to_release,
-          memory: args.memory
-        });
-
       case 'nexus_declare_intent':
         return apiFetch('/api/intents/declare', 'POST', {
           agent_id: args.agent_id,
@@ -137,6 +114,22 @@ export function startMcpStdio(options = {}) {
       case 'nexus_release_lease':
         return apiFetch(`/api/leases/${encodeURIComponent(args.lease_id)}/release`, 'POST', {
           agent_id: args.agent_id
+        });
+
+      case 'nexus_lock_resource':
+        return apiFetch('/api/resources/lock', 'POST', {
+          agent_id: args.agent_id,
+          resource_name: args.resource_name,
+          ttl_seconds: args.ttl_seconds,
+          reason: args.reason,
+          project_id: args.project_id
+        });
+
+      case 'nexus_unlock_resource':
+        return apiFetch('/api/resources/unlock', 'POST', {
+          agent_id: args.agent_id,
+          resource_name: args.resource_name,
+          project_id: args.project_id
         });
 
       case 'nexus_search_memory': {
@@ -156,104 +149,8 @@ export function startMcpStdio(options = {}) {
           source_agent_id: args.agent_id
         });
 
-      case 'nexus_broadcast':
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/broadcast`, 'POST', {
-          from: args.from || defaultAgentId,
-          content: args.content,
-          importance: args.importance || 'normal'
-        });
-
       case 'nexus_status':
         return apiFetch(`/api/dashboard?project_id=${encodeURIComponent(args.project_id)}`, 'GET');
-
-      case 'nexus_state': {
-        const ns = encodeURIComponent(args.namespace || 'default');
-        const key = args.key ? encodeURIComponent(args.key) : '';
-        const pid = encodeURIComponent(args.project_id);
-
-        if (args.action === 'get') {
-          return apiFetch(`/api/state/${ns}/${key}?project_id=${pid}`, 'GET');
-        }
-        if (args.action === 'list') {
-          const prefix = args.prefix ? `&prefix=${encodeURIComponent(args.prefix)}` : '';
-          return apiFetch(`/api/state/${ns}?project_id=${pid}${prefix}`, 'GET');
-        }
-        if (args.action === 'set') {
-          return apiFetch(`/api/state/${ns}/${key}`, 'POST', {
-            value: args.value,
-            updated_by: args.agent_id,
-            ttl_seconds: args.ttl_seconds,
-            project_id: args.project_id
-          });
-        }
-        if (args.action === 'cas') {
-          return apiFetch(`/api/state/${ns}/cas`, 'POST', {
-            key: args.key,
-            expected: args.expected,
-            new_value: args.new_value,
-            updated_by: args.agent_id,
-            ttl_seconds: args.ttl_seconds,
-            project_id: args.project_id
-          });
-        }
-        if (args.action === 'delete') {
-          return apiFetch(`/api/state/${ns}/${key}?project_id=${pid}`, 'DELETE');
-        }
-        throw new Error(`Unsupported state action: ${args.action}`);
-      }
-
-      case 'nexus_lock_resource':
-        return apiFetch('/api/resources/lock', 'POST', {
-          agent_id: args.agent_id,
-          resource_name: args.resource_name,
-          // 未显式指定时交给 daemon 的 LEASE_POLICY 决定，客户端不固化 300s
-          ttl_seconds: args.ttl_seconds,
-          reason: args.reason,
-          project_id: args.project_id
-        });
-
-      case 'nexus_unlock_resource':
-        return apiFetch('/api/resources/unlock', 'POST', {
-          agent_id: args.agent_id,
-          resource_name: args.resource_name,
-          project_id: args.project_id
-        });
-
-      case 'nexus_report_progress':
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/progress`, 'POST', {
-          agent_id: args.agent_id,
-          summary: args.summary
-        });
-
-      case 'nexus_dialogue_send':
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/dialogue`, 'POST', {
-          from: args.from || defaultAgentId,
-          to: args.to || null,
-          content: args.content,
-          thread_id: args.thread_id || null,
-          reply_to_id: args.reply_to_id || null,
-          dialogue_type: args.dialogue_type || 'chat',
-          importance: args.importance || 'normal'
-        });
-
-      case 'nexus_dialogue_read': {
-        const params = new URLSearchParams();
-        params.set('agent_id', args.agent_id);
-        if (args.thread_id) params.set('thread_id', args.thread_id);
-        if (args.unread_only) params.set('unread_only', 'true');
-        if (args.mark_as_read !== undefined) params.set('mark_as_read', String(args.mark_as_read));
-        if (args.limit) params.set('limit', String(args.limit));
-        return apiFetch(`/api/projects/${encodeURIComponent(args.project_id)}/dialogue?${params.toString()}`, 'GET');
-      }
-
-      case 'nexus_message':
-        return apiFetch('/api/messages', 'POST', {
-          from: args.from || defaultAgentId,
-          to: args.to || null,
-          content: args.content,
-          importance: args.importance || 'normal',
-          project_id: args.project_id
-        });
 
       default:
         throw new Error(`Unknown Nexus tool: ${name}`);
@@ -281,7 +178,6 @@ export function startMcpStdio(options = {}) {
     try {
       req = JSON.parse(trimmed);
     } catch {
-      // 忽略非 JSON 数据
       return;
     }
 
@@ -307,7 +203,6 @@ export function startMcpStdio(options = {}) {
     }
 
     if (method === 'notifications/initialized') {
-      // 客户端初始化确认通知，无需回复
       return;
     }
 
@@ -363,7 +258,6 @@ export function startMcpStdio(options = {}) {
       return;
     }
 
-    // 未知方法
     if (id !== undefined) {
       send({
         jsonrpc: '2.0',

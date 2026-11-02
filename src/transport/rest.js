@@ -3,16 +3,13 @@ import { dirname, join } from 'node:path';
 import { ValidationError, LEASE_POLICY } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.2.26';
+let APP_VERSION = '0.2.31';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;
 } catch {}
 
-// 只放行探活与面板静态资源。dashboard / cockpit 里是全部会话名、工作目录与文件锁，
-// 而 daemon 可以用 NEXUS_HOST=0.0.0.0 对外监听——把它们列成公开端点等于把团队工作区
-// 目录树暴露给任何能连上端口的进程。文档与 test/transport.test.js 的口径一直是
-// 「/api/* 都要令牌」，这里对齐。
+// 只放行探活与面板静态资源；/api/* 全部校验令牌。
 const PUBLIC_PATHS = new Set(['/health', '/api/status', '/', '/index.html', '/style.css', '/app.js']);
 
 let allowedOriginsCache = { raw: null, list: [] };
@@ -48,7 +45,12 @@ function applyCors(req, res) {
   return false;
 }
 
-export function createRestRouter(coordinator, stateService, messageService, uiPath, tokenStore, projectRegistry = null, memoryService = null, topologyService = null, handoffService = null, clusterNodeService = null) {
+export function createRestRouter(
+  coordinator,
+  uiPath,
+  tokenStore,
+  { projectRegistry = null, memoryService = null, handoffService = null, clusterNodeService = null } = {}
+) {
   const staticCache = new Map();
 
   return async function handleRest(req, res) {
@@ -103,16 +105,11 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
     };
 
     try {
-      // 1. Health
+      // 1. Health & Tray Status
       if (url.pathname === '/health') {
         return sendJson(200, { status: 'healthy', service: 'agent-nexus', version: APP_VERSION });
       }
 
-      // 1.01 Status API (供桌面端托盘与状态轮询)
-      // 桌面端每 3 秒调一次，只要几个计数。过去这里跑完整的 getDashboardSnapshot('all')
-      // 并序列化整份快照，再把 99% 的字段丢掉——300 会话规模下等于每 3 秒白烧 5ms CPU。
-      // 托盘还读 active_leases / waiting_intents 两个字段，旧实现从未返回过，
-      // 于是「协同施工中 / 冲突等待中」的提示永远是「待命就绪」。
       if (url.pathname === '/api/status' && req.method === 'GET') {
         const counts = coordinator.getLiveAgentCounts();
         return sendJson(200, {
@@ -147,9 +144,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         };
 
         const events = [
-          'timeline:event', 'agent:woken', 'resource:freed', 'state:changed', 'message:sent',
-          'project:onboarded', 'milestone:reached', 'lead:broadcast', 'lead:awakened',
-          'agent:progress', 'messages:read', 'memory:saved', 'memory:deleted',
+          'timeline:event', 'agent:woken', 'agent:telemetry', 'agent:status',
+          'resource:freed', 'memory:saved', 'memory:deleted',
           'handoff:created', 'handoff:consumed', 'node:status'
         ];
         const handlers = new Map();
@@ -175,79 +171,41 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return;
       }
 
-      // 1.2 Projects 路由 (GET /api/projects, POST /api/projects/:id/onboard, etc.)
+      // 1.2 Projects 路由 (项目列表、项目长期记忆与项目级交接工单)
       if (url.pathname === '/api/projects' && req.method === 'GET') {
         if (!projectRegistry) return sendJson(200, []);
         return sendJson(200, projectRegistry.listProjects());
       }
 
       if (url.pathname.startsWith('/api/projects/')) {
-        const parts = url.pathname.split('/').slice(3); // /api/projects/:id/:action
-        const projectId = parts[0];
+        const parts = url.pathname.split('/').slice(3);
+        const projectId = decodeURIComponent(parts[0] || '');
         const action = parts[1];
 
-        if (projectRegistry && projectId) {
-          const lead = projectRegistry.getOrCreateLead(projectId);
-
+        if (projectId) {
           if (!action && req.method === 'GET') {
+            if (!projectRegistry) return sendJson(404, { error: 'Not Found' });
             const project = projectRegistry.getProject(projectId);
-            const context = lead.getProjectContext();
-            return sendJson(200, { ...project, context });
-          }
-
-          if (action === 'onboard' && req.method === 'POST') {
-            const data = await readJson();
-            const result = await lead.onboard({
-              agentId: data.agent_id,
-              plannedWork: data.planned_work || [],
-              capabilities: data.capabilities || []
-            });
-            return sendJson(200, result);
-          }
-
-          if (action === 'advise' && req.method === 'POST') {
-            const data = await readJson();
-            const result = await lead.advisePlan({
-              agentId: data.agent_id,
-              plannedWork: data.planned_work || []
-            });
-            return sendJson(200, result);
-          }
-
-          if (action === 'depart' && req.method === 'POST') {
-            const data = await readJson();
-            const result = lead.depart(data.agent_id);
-            return sendJson(200, result);
-          }
-
-          if (action === 'milestone' && req.method === 'POST') {
-            const data = await readJson();
-            const result = lead.reportMilestone({
-              agentId: data.agent_id,
-              description: data.description,
-              leaseIdToRelease: data.lease_id_to_release,
-              memory: data.memory
-            });
-            return sendJson(200, result);
+            return project ? sendJson(200, project) : sendJson(404, { error: 'Not Found' });
           }
 
           if (action === 'memories') {
-            const memSvc = memoryService || lead.memoryService;
-            if (!memSvc) return sendJson(200, []);
+            if (!memoryService) return sendJson(200, []);
 
             if (req.method === 'GET') {
               const query = url.searchParams.get('q') || url.searchParams.get('query');
               const category = url.searchParams.get('category') || null;
               const limit = parseInt(url.searchParams.get('limit') || '50', 10);
               if (query) {
-                return sendJson(200, memSvc.search(projectId, query, { category, limit }));
+                return sendJson(200, memoryService.search(projectId, query, { category, limit }));
               }
-              return sendJson(200, memSvc.list(projectId, { category, limit }));
+              return sendJson(200, memoryService.list(projectId, { category, limit }));
             }
 
             if (req.method === 'POST') {
+              projectRegistry?.ensureProject(projectId);
               const body = await readJson();
-              const saved = memSvc.set(projectId, {
+              const saved = memoryService.set(projectId, {
                 category: body.category,
                 key: body.key,
                 content: body.content,
@@ -267,8 +225,8 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
               if (!identifier) {
                 return sendJson(400, { error: 'Missing memory identifier (id or key)', field: 'id' });
               }
-              const res = memSvc.delete(projectId, identifier);
-              return sendJson(200, res);
+              const delRes = memoryService.delete(projectId, identifier);
+              return sendJson(200, delRes);
             }
           }
 
@@ -283,6 +241,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
             }
 
             if (req.method === 'POST') {
+              projectRegistry?.ensureProject(projectId);
               const body = await readJson();
               const saved = hSvc.createHandoff(projectId, {
                 sourceHostId: body.source_host_id || body.sourceHostId || 'local',
@@ -298,160 +257,16 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
               return sendJson(201, saved);
             }
           }
-
-          if (action === 'progress' && req.method === 'POST') {
-            const data = await readJson();
-            const result = messageService.reportProgress(data.agent_id, data.summary, projectId);
-            return sendJson(200, result);
-          }
-
-          if (action === 'dialogue') {
-            if (req.method === 'GET') {
-              const agentId = url.searchParams.get('agent_id');
-              const threadId = url.searchParams.get('thread_id') || null;
-              const unreadOnly = url.searchParams.get('unread_only') === 'true';
-              const markAsRead = url.searchParams.get('mark_as_read') !== 'false';
-              const limit = parseInt(url.searchParams.get('limit') || '50', 10);
-
-              if (!agentId) {
-                // 若未指定 agentId，则返回该项目下的会话流或特定线程
-                if (threadId) {
-                  return sendJson(200, messageService.getThread(threadId, projectId));
-                }
-                return sendJson(200, messageService.list(limit, projectId));
-              }
-
-              if (token && token.agent_id && token.agent_id !== agentId) {
-                return sendJson(403, { error: 'This token cannot read another agent\'s dialogue' });
-              }
-
-              const result = messageService.readDialogue(agentId, {
-                threadId,
-                unreadOnly,
-                markAsRead,
-                limit,
-                projectId
-              });
-              return sendJson(200, result);
-            }
-
-            if (req.method === 'POST') {
-              const data = await readJson();
-              const msg = messageService.send({
-                from: data.from,
-                to: data.to || null,
-                content: data.content,
-                threadId: data.thread_id || null,
-                replyToId: data.reply_to_id || null,
-                dialogueType: data.dialogue_type || 'chat',
-                importance: data.importance || 'normal',
-                projectId
-              }, token);
-              return sendJson(200, msg);
-            }
-          }
-
-          if (action === 'broadcast' && req.method === 'POST') {
-            const body = await readJson();
-            if (!body.content || typeof body.content !== 'string' || !body.content.trim()) {
-              return sendJson(400, { error: '"content" is required and must be a non-empty string', field: 'content' });
-            }
-
-            const senderId = body.from || token?.agent_id || 'sensei';
-            const result = lead.broadcast({
-              from: senderId,
-              content: body.content,
-              importance: body.importance,
-              messageService,
-              token
-            });
-
-            return sendJson(200, result);
-          }
         }
       }
 
-      // 1.3 Gateway Router 运维与代理路由
-      if (url.pathname.startsWith('/api/gateway')) {
-        const gwRouter = projectRegistry?.gatewayRouter;
-        if (!gwRouter) {
-          return sendJson(503, { error: 'Gateway router is not available' });
-        }
-
-        // GET /api/gateway/route 或 /api/gateway/status
-        if ((url.pathname === '/api/gateway/route' || url.pathname === '/api/gateway/status') && req.method === 'GET') {
-          return sendJson(200, {
-            strategy: gwRouter.strategy,
-            candidateCount: gwRouter.candidates.length,
-            candidates: gwRouter.getCandidates()
-          });
-        }
-
-        // POST /api/gateway/chat
-        if (url.pathname === '/api/gateway/chat' && req.method === 'POST') {
-          const body = await readJson();
-          const { system_prompt, user_message, affinity_key, strategy } = body;
-          if (!user_message || typeof user_message !== 'string') {
-            return sendJson(400, { error: '"user_message" is required and must be a string', field: 'user_message' });
-          }
-          const result = await gwRouter.routeAndExecute(system_prompt || '', user_message, {
-            affinityKey: affinity_key || null,
-            strategy: strategy || null
-          });
-          if (!result) {
-            return sendJson(503, { error: 'All gateway candidates failed or resting' });
-          }
-          return sendJson(200, result);
-        }
-
-        // POST /api/gateway/reset
-        if (url.pathname === '/api/gateway/reset' && req.method === 'POST') {
-          let body = {};
-          try { body = await readJson(); } catch {}
-          if (body.id) {
-            const ok = gwRouter.resetCandidate(body.id);
-            return sendJson(200, { success: ok, resetId: body.id });
-          } else {
-            const count = gwRouter.resetAll();
-            return sendJson(200, { success: true, resetCount: count });
-          }
-        }
-
-        // POST /api/gateway/strategy
-        if (url.pathname === '/api/gateway/strategy' && req.method === 'POST') {
-          const body = await readJson();
-          const validStrategies = ['smart', 'ordered', 'rotate', 'least-used'];
-          if (!body.strategy || !validStrategies.includes(body.strategy)) {
-            return sendJson(400, {
-              error: `Invalid strategy "${body.strategy}". Allowed: ${validStrategies.join(', ')}`,
-              field: 'strategy'
-            });
-          }
-          gwRouter.strategy = body.strategy;
-          return sendJson(200, { success: true, strategy: gwRouter.strategy });
-        }
-      }
-
-      // 1.4 Topology (演进拓扑图数据查询)
-      if (url.pathname === '/api/topology' && req.method === 'GET') {
-        const topoSvc = topologyService || coordinator?.topologyService;
-        if (!topoSvc) {
-          return sendJson(503, { error: 'Topology service is not available' });
-        }
-        const projectId = url.searchParams.get('project_id') || 'default';
-        const limit = Math.min(200, parseInt(url.searchParams.get('limit') || '100', 10));
-        const since = parseInt(url.searchParams.get('since') || '0', 10);
-        const graph = topoSvc.getTopologyGraph(projectId, { limit, since });
-        return sendJson(200, graph);
-      }
-
-      // 1.5 Real-time Collaboration Graph (多 Session 实时协同图谱)
+      // 1.3 Real-time Collaboration Graph (多 Session 实时协同图谱)
       if (url.pathname === '/api/collaboration-graph' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
         return sendJson(200, coordinator.getCollaborationGraph(pid));
       }
 
-      // 2. Agents
+      // 2. Agents & Remote Edge Sync
       if (url.pathname === '/api/agents' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
         return sendJson(200, coordinator.listAgents(pid));
@@ -461,7 +276,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         const agent = coordinator.registerAgent(data);
         return sendJson(200, { success: true, agent });
       }
-      // 2.1 远端工作区（如 us-zenix）会话注册表实时汇聚端点
       if (url.pathname === '/api/agents/sync-remote' && req.method === 'POST') {
         const data = await readJson();
         const hostId = data.host_id || data.hostId || data.node_id || 'remote';
@@ -477,7 +291,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, { success: true, host_id: hostId, ...syncRes });
       }
 
-      // 2.2 跨机集群算力节点拓扑查询与心跳
+      // 2.1 跨机集群算力节点拓扑查询与心跳
       if (url.pathname === '/api/cluster/nodes' && req.method === 'GET') {
         const nodeSvc = clusterNodeService || coordinator.clusterNodeService;
         const projectId = url.searchParams.get('project_id') || null;
@@ -497,7 +311,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, { success: true, ok: true, node: record });
       }
 
-      // 2.3 跨机会话工作交接 (PowerContext Work Handoffs)
+      // 2.2 跨机会话工作交接 (PowerContext Work Handoffs)
       if (url.pathname === '/api/handoffs' && req.method === 'GET') {
         const hSvc = handoffService || coordinator.handoffService;
         const projectId = url.searchParams.get('project_id') || 'all';
@@ -561,8 +375,13 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       // 4. Intents (Coordinator Core)
       if (url.pathname === '/api/intents/declare' && req.method === 'POST') {
         const data = await readJson();
+        const rawAgentId = data.agent_id || data.agentId;
+        if (token?.agent_id && rawAgentId && rawAgentId !== token.agent_id) {
+          throw new ValidationError(`agent_id "${rawAgentId}" does not match token identity "${token.agent_id}"`, 'agent_id');
+        }
+        const effectiveAgentId = rawAgentId || token?.agent_id;
         const result = coordinator.declareIntent({
-          agentId: data.agent_id || data.agentId,
+          agentId: effectiveAgentId,
           intentSummary: data.summary || data.intent_summary || data.intentSummary || 'Work intent',
           claims: data.claims || [],
           ttlSeconds: data.ttl_seconds || data.ttlSeconds || 300,
@@ -580,7 +399,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(result.success ? 200 : 404, result);
       }
 
-      // 5.1 Batch Release Leases by Agent (生命周期与 git commit/push 零感释放)
       if ((url.pathname === '/api/leases/release-agent' || url.pathname === '/api/hook/git-release') && req.method === 'POST') {
         const data = await readJson();
         const agentId = data.agent_id || token?.agent_id;
@@ -602,7 +420,7 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, result);
       }
 
-      // 6. Universal Hook fast check (支持文件冲突与命名资源锁检查 + 远端会话顺带捎带)
+      // 6. Universal Hook fast check & telemetry
       if (url.pathname === '/api/hook/check' && req.method === 'POST') {
         const data = await readJson();
         if (data.host_id && Array.isArray(data.peer_sessions)) {
@@ -636,7 +454,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, checkResult);
       }
 
-      // 6.01 Tool Telemetry 实时工具调用与活跃态势上报
       if (url.pathname === '/api/hook/telemetry' && req.method === 'POST') {
         const data = await readJson();
         if (data.host_id && Array.isArray(data.peer_sessions)) {
@@ -684,7 +501,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         });
         return sendJson(200, result);
       }
-      // 6.2 资源锁释放通道 (支持显式 /api/resources/unlock 与 Hook /api/hook/resource-release)
       if ((url.pathname === '/api/resources/unlock' || url.pathname === '/api/hook/resource-release') && req.method === 'POST') {
         const body = await readJson();
         const agentId = body.agent_id || token?.agent_id;
@@ -705,70 +521,12 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
         return sendJson(200, result);
       }
 
-      // 7. State & CAS
-      if (url.pathname.startsWith('/api/state')) {
-        const parts = url.pathname.split('/').slice(3); // /api/state/:ns/:key
-        const namespace = parts[0] || url.searchParams.get('namespace') || 'default';
-        const projectId = url.searchParams.get('project_id') || 'default';
-        const RESERVED = new Set(['cas']);
-        const key = parts[1] && !RESERVED.has(parts[1]) ? parts[1] : null;
-
-        if (req.method === 'GET') {
-          if (key) {
-            const entry = stateService.get(namespace, key, projectId);
-            return entry ? sendJson(200, entry) : sendJson(404, { error: 'Not Found' });
-          } else {
-            const prefix = url.searchParams.get('prefix') || '';
-            return sendJson(200, stateService.list(namespace, prefix, projectId));
-          }
-        }
-        if (req.method === 'POST') {
-          const body = await readJson();
-          const targetPid = body.project_id || projectId;
-          if (parts[parts.length - 1] === 'cas') {
-            const casKey = key || body.key || null;
-            const result = stateService.compareAndSwap(namespace, casKey, body.expected, body.new_value, body.updated_by, body.ttl_seconds, targetPid);
-            return sendJson(200, result);
-          }
-          const entry = stateService.set(namespace, key, body.value, body.updated_by, body.ttl_seconds, targetPid);
-          return sendJson(200, entry);
-        }
-        if (req.method === 'DELETE' && key) {
-          const ok = stateService.delete(namespace, key, projectId);
-          return sendJson(200, { success: ok });
-        }
-      }
-
-      // 8. Messages
-      if (url.pathname === '/api/messages') {
-        const pid = url.searchParams.get('project_id');
-        if (req.method === 'GET') {
-          const toAgent = url.searchParams.get('to');
-          if (toAgent) {
-            if (token && token.agent_id && token.agent_id !== toAgent) {
-              return sendJson(403, { error: 'This token cannot read another agent\'s inbox' });
-            }
-            return sendJson(200, messageService.inbox(toAgent, 50, pid || 'default'));
-          }
-          if (token && token.agent_id) {
-            return sendJson(403, { error: 'Use ?to=<your agent id> to read your inbox' });
-          }
-          return sendJson(200, messageService.list(50, pid));
-        }
-        if (req.method === 'POST') {
-          const body = await readJson();
-          const msg = messageService.send(body, token);
-          return sendJson(200, msg);
-        }
-      }
-
-      // 9. Dashboard Snapshot & 综合全览聚合数据
+      // 7. Dashboard Snapshot & Unified Cockpit
       if (url.pathname === '/api/dashboard' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
         return sendJson(200, coordinator.getDashboardSnapshot(pid));
       }
 
-      // 9.0 Unified Cockpit (综合全览聚合视图数据)
       if (url.pathname === '/api/cockpit' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id') || null;
         return sendJson(200, coordinator.getUnifiedCockpit(pid));
@@ -798,7 +556,6 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
           }
           let outBuffer = cached.buffer;
           if (target.name === 'index.html') {
-            // 对本机回环与 Tailscale 虚拟专网请求自动注入会话令牌，无感认证且绝不向公网未授权访客泄漏令牌
             const remoteAddr = req.socket?.remoteAddress || '';
             const isLoopback = remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
             const cleanIp = remoteAddr.replace(/^::ffff:/, '');

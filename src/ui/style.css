@@ -556,109 +556,6 @@ body {
 .pill-locks .pill-dot { background: var(--status-locks); }
 .pill-locks .pill-num { color: var(--status-locks); }
 
-.lead-ticker-wrap {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  flex-shrink: 1;
-}
-
-.lead-ticker-btn {
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  padding: 3px 10px;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  transition: all 0.2s var(--ease-smooth);
-  max-width: 260px;
-}
-
-#lead-ticker-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lead-ticker-btn .lead-icon {
-  background: transparent;
-  flex-shrink: 0;
-}
-
-.lead-ticker-btn:hover {
-  border-color: var(--border-accent);
-  color: var(--sky-primary);
-  background: var(--capsule-hover);
-  transform: translateY(-1px);
-}
-
-.lead-ticker-btn:active {
-  transform: scale(0.97);
-}
-
-.lead-ticker-btn.chip-active {
-  background: var(--status-waiting-bg);
-  border-color: var(--status-waiting-border);
-  color: var(--status-waiting);
-}
-
-/* =============================================================================
-   Popovers (Broadcast & Tech Lead)
-   ============================================================================= */
-.broadcast-popover,
-.lead-popover {
-  position: absolute;
-  top: 48px;
-  right: 14px;
-  width: 360px;
-  max-width: calc(100vw - 28px);
-  background: var(--popover-bg);
-  border: 1px solid var(--popover-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--popover-shadow);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: popoverFadeIn 0.18s var(--ease-smooth);
-}
-
-.broadcast-popover[hidden],
-.lead-popover[hidden] {
-  display: none !important;
-}
-
-@keyframes popoverFadeIn {
-  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.popover-head {
-  padding: 10px 14px;
-  background: var(--card-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-title);
-}
-
-.popover-title-group {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
 .close-icon-btn {
   background: transparent;
   border: none;
@@ -685,93 +582,6 @@ body {
 
 .close-icon-btn:active {
   transform: scale(0.92);
-}
-
-.popover-body {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.popover-input {
-  width: 100%;
-  background: var(--input-bg);
-  border: 1px solid var(--input-border);
-  color: var(--input-text);
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
-  outline: none;
-  transition: all 0.2s var(--ease-smooth);
-}
-
-.popover-input:focus {
-  border-color: var(--sky-primary);
-  box-shadow: 0 0 0 3px var(--sky-glow);
-}
-
-.popover-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.urgent-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.lead-text-box {
-  background: var(--card-nested);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.55;
-  max-height: 170px;
-  overflow-y: auto;
-}
-
-.lead-peer-title {
-  font-weight: 700;
-  color: var(--sky-primary);
-  margin: 8px 0 5px 0;
-  font-size: 12px;
-}
-
-.lead-peer-item {
-  padding: 6px 9px;
-  background: var(--card-nested);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  margin-bottom: 4px;
-  font-size: 11.5px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.lead-peer-name {
-  font-weight: 600;
-  color: var(--text-title);
-}
-
-.lead-peer-intent {
-  color: var(--text-muted);
-  flex: 1;
-  min-width: 0;
-}
-
-.lead-peer-locks {
-  font-family: var(--font-mono);
-  color: var(--sky-primary);
 }
 
 /* =============================================================================
@@ -1351,113 +1161,7 @@ body.resizing-row {
 }
 
 /* =============================================================================
-   View 2: Timeline & Logs (Dialogue & Milestones - 可拖拽自适应上下栏)
-   ============================================================================= */
-.split-v-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  width: 100%;
-  height: 100%;
-  padding: 8px 10px;
-  min-height: 0;
-  min-width: 0;
-}
-
-.flex-dialogue {
-  height: var(--dialogue-section-height, 50%);
-  min-height: 110px;
-  max-height: calc(100% - 110px);
-}
-
-.flex-milestones {
-  flex: 1;
-  min-height: 110px;
-}
-
-.dialogue-item {
-  background: var(--card-nested);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 8px 11px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: all 0.2s var(--ease-smooth);
-}
-
-.dialogue-item:hover {
-  background: var(--card-hover);
-  border-color: var(--border-hover);
-  transform: translateY(-1px);
-}
-
-.dialogue-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--text-faint);
-}
-
-.dialogue-actors {
-  font-weight: 600;
-  color: var(--sky-primary);
-}
-
-.dialogue-content {
-  font-size: 12px;
-  color: var(--text-main);
-  line-height: 1.45;
-}
-
-.milestone-item {
-  background: var(--card-nested);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 8px 11px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  transition: all 0.2s var(--ease-smooth);
-}
-
-.milestone-item:hover {
-  background: var(--card-hover);
-  border-color: var(--border-hover);
-  transform: translateY(-1px);
-}
-
-.milestone-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--sky-primary);
-  margin-top: 6px;
-  flex-shrink: 0;
-  box-shadow: 0 0 6px var(--sky-glow);
-}
-
-.milestone-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.milestone-desc {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-title);
-  line-height: 1.4;
-}
-
-.milestone-time {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  margin-top: 2px;
-}
-
-/* =============================================================================
-   View 3: Routing Topology & Conflict Map (会话路由与走廊网关)
+   View 2: Routing Topology & Active Locks (会话路由与独占锁拓扑)
    ============================================================================= */
 .routing-panel-card {
   width: 100%;
@@ -1607,11 +1311,12 @@ body.resizing-row {
   animation: none;
 }
 
-.route-path.route-target-line.route-corridor {
-  stroke: var(--status-running);
-  stroke-width: 1.2px;
-  stroke-dasharray: 4 3;
-  opacity: 0.38;
+.route-path.route-target-line.route-waiting {
+  stroke: var(--status-waiting);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 4;
+  opacity: 0.65;
+  animation: flowDashReverse 1.4s linear infinite;
 }
 
 .route-path.route-target-line.route-idle {
@@ -2157,9 +1862,9 @@ body.resizing-row {
   border-left: 3px solid var(--status-locks);
 }
 
-.target-route-card.type-corridor {
-  border-left: 3px solid var(--status-running);
-  background: var(--status-running-bg);
+.target-route-card.type-waiting {
+  border-left: 3px solid var(--status-waiting);
+  background: var(--status-waiting-bg);
 }
 
 .target-card-header {
@@ -2191,10 +1896,10 @@ body.resizing-row {
   border: 1px solid var(--status-locks-border);
 }
 
-.target-icon-wrap.corridor-icon {
-  color: var(--status-running);
-  background: var(--status-running-bg);
-  border: 1px solid var(--status-running-border);
+.target-icon-wrap.waiting-icon {
+  color: var(--status-waiting);
+  background: var(--status-waiting-bg);
+  border: 1px solid var(--status-waiting-border);
 }
 
 .target-file-info {
@@ -2258,10 +1963,10 @@ body.resizing-row {
   border: 1px solid var(--status-locks-border);
 }
 
-.badge-safe {
-  color: var(--status-running);
-  background: var(--status-running-bg);
-  border: 1px solid var(--status-running-border);
+.badge-waiting-queue {
+  color: var(--status-waiting);
+  background: var(--status-waiting-bg);
+  border: 1px solid var(--status-waiting-border);
 }
 
 .target-card-meta {
@@ -2303,7 +2008,7 @@ body.resizing-row {
 
 .target-ttl-badge,
 .target-hook-badge,
-.target-free-badge {
+.target-waiting-badge {
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 600;
@@ -2321,9 +2026,9 @@ body.resizing-row {
   background: var(--status-running-bg);
 }
 
-.target-free-badge {
-  color: var(--status-running);
-  background: var(--status-running-bg);
+.target-waiting-badge {
+  color: var(--status-waiting);
+  background: var(--status-waiting-bg);
 }
 
 /* 高亮状态类 (Hover Mutual Highlighting) */

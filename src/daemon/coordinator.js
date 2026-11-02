@@ -1262,27 +1262,8 @@ export class CoordinatorEngine {
       SELECT claim_type, claim_target FROM claims WHERE intent_id = ?
     `).all(lease.intent_id).map(c => ({ type: c.claim_type, target: c.claim_target }));
 
-    const intentRow = this.db.prepare('SELECT summary FROM intents WHERE id = ?').get(lease.intent_id);
     const agentRow = this.db.prepare('SELECT name, provider FROM agents WHERE id = ?').get(agentId);
     const releasedByName = sanitizeAgentName(agentRow?.name, agentId, agentRow?.provider);
-
-    // 沉淀到演进拓扑服务
-    if (this.topologyService && releasedClaims.length > 0) {
-      try {
-        this.topologyService.recordNode({
-          projectId,
-          agentId,
-          agentName: releasedByName,
-          provider: agentRow?.provider || 'agent',
-          nodeType: 'completed',
-          title: intentRow?.summary ? `完成: ${intentRow.summary}` : `释放意图 ${lease.intent_id}`,
-          description: `任务闭环完成，释放了持有的 ${releasedClaims.length} 项资源锁`,
-          intentId: lease.intent_id,
-          claims: releasedClaims,
-          causalityType: 'sequence'
-        });
-      } catch {}
-    }
 
     this.db.prepare(`UPDATE intents SET status = 'completed', updated_at = ? WHERE id = ?`).run(now, lease.intent_id);
     this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
@@ -1464,30 +1445,6 @@ export class CoordinatorEngine {
 
       const isProcessExit = reason === 'process_exit';
       const finalStatus = isProcessExit ? 'aborted' : 'completed';
-      const nodeType = isProcessExit ? 'handoff' : 'completed';
-      const nodeTitle = isProcessExit
-        ? (intentRow?.summary ? `进程退出异常释放: ${intentRow.summary}` : `进程退出租约提前回收 (Intent ${lease.intent_id})`)
-        : (intentRow?.summary ? `提交完成: ${intentRow.summary}` : `Git 提交完工 (Intent ${lease.intent_id})`);
-      const nodeDesc = isProcessExit
-        ? `监测到进程退出 (${reason})，提前安全回收了 ${claims.length} 项资源锁并唤醒等待者`
-        : `生命周期自动感知完成 (${reason})，释放了 ${claims.length} 项资源锁`;
-
-      if (this.topologyService && claims.length > 0) {
-        try {
-          this.topologyService.recordNode({
-            projectId: finalProjectId,
-            agentId,
-            agentName: releasedByName,
-            provider: agentRow?.provider || 'agent',
-            nodeType,
-            title: nodeTitle,
-            description: nodeDesc,
-            intentId: lease.intent_id,
-            claims,
-            causalityType: 'sequence'
-          });
-        } catch {}
-      }
 
       this.db.prepare(`UPDATE intents SET status = ?, updated_at = ? WHERE id = ?`).run(finalStatus, now, lease.intent_id);
       this.db.prepare(`DELETE FROM leases WHERE id = ?`).run(lease.id);
@@ -1666,34 +1623,6 @@ export class CoordinatorEngine {
       };
 
       this.eventBus.emit('agent:woken', wokenPayload);
-
-      // 持久化通知到 messages 表中，确保通过 nexus_dialogue_read 轮询的会话可检索到
-      try {
-        if (this.messageService) {
-          const senderId = freedInfo?.releasedBy || 'nexus';
-          if (!this.getAgent(senderId)) {
-            this.registerAgent({
-              id: senderId,
-              name: freedByName || 'Nexus Coordinator',
-              provider: 'system',
-              sessionId: 'coordinator',
-              projectId: waiterProjId
-            });
-          }
-          this.messageService.send({
-            from: senderId,
-            to: nextWaiter.agent_id,
-            intentId: nextWaiter.intent_id,
-            content: `[Resource Woken] ${resumeHint}`,
-            importance: 'urgent',
-            projectId: waiterProjId,
-            dialogueType: 'handoff',
-            status: 'unread'
-          });
-        }
-      } catch (err) {
-        // 消息持久化作为辅助增强，不阻断主唤醒链路
-      }
     }
 
     return { nextWaiter, skipped };
@@ -2657,11 +2586,6 @@ export class CoordinatorEngine {
     const finalProjectId = projectId && projectId !== 'all' ? projectId : null;
     // 组合快照只刷新一次，内层两次调用共享同一轮结果。
     this._refreshTick(Date.now());
-    // 拓扑图在下面同时作为 topologySnapshot 与 topology 返回，算一次即可——
-    // 两次调用在 1500 节点规模下要白算一遍 DAG 层级与模块归类。
-    const topology = this.topologyService
-      ? this.topologyService.getTopologyGraph(finalProjectId || 'default', { limit: 30 })
-      : { nodes: [], edges: [], totalNodes: 0, modules: [] };
 
     const dashboard = this.getDashboardSnapshot(finalProjectId, { skipRefresh: true });
     // 图谱节点与 dashboard.agents 是同一批在席会话，把已算好的生命周期结果传下去，
@@ -2679,14 +2603,10 @@ export class CoordinatorEngine {
     // 活跃施工与排队中工作者
     const activeWorkers = (collab.nodes || []).filter(n => n.lifecycle_state === 'working' || n.lifecycle_state === 'waiting');
 
-    // 冲突与排他资源锁：命名锁就是 claim_type='resource' 的声明，过去这里读
-    // collab.exclusiveLocks（从未存在过），导致「排他命令与环境锁」永远为空。
-    // 拆分后 dashboard 仍返回全量 claim，驾驶舱按类型分列，计数不重不漏。
+    // 冲突与排他资源锁：dashboard 返回全量 claim，驾驶舱按类型分列，计数不重不漏。
     const allClaims = dashboard.activeClaims || [];
     const resourceLocks = allClaims.filter(c => c.claim_type === 'resource');
     const activeClaims = allClaims.filter(c => c.claim_type !== 'resource');
-    // 等待队列过去从未被 dashboard 返回（dashboard.waitQueue 恒为 undefined），
-    // 界面上的「N 处冲突等待」因此永远是 0。现在由快照如实带出。
     const waitQueue = dashboard.waitQueue || [];
 
     const metrics = {
@@ -2694,8 +2614,7 @@ export class CoordinatorEngine {
       waitingAgents: waitingSessions.length,
       idleAgents: idleSessions.length,
       totalOnline: onlineAgents.length,
-      activeLocks: allClaims.length,
-      topologyNodes: topology.totalNodes || topology.nodes?.length || 0
+      activeLocks: allClaims.length
     };
 
     return {
@@ -2703,7 +2622,6 @@ export class CoordinatorEngine {
       timestamp: Date.now(),
       metrics,
       activeWorkers,
-      topologySnapshot: topology,
       lockContention: {
         activeClaims,
         resourceLocks,
@@ -2714,8 +2632,7 @@ export class CoordinatorEngine {
         workingCount: workingSessions.length,
         waitingCount: waitingSessions.length,
         idleCount: idleSessions.length,
-        activeLocksCount: allClaims.length,
-        topologyNodesCount: topology.totalNodes || topology.nodes?.length || 0
+        activeLocksCount: allClaims.length
       },
       dashboard,
       collab

@@ -740,9 +740,9 @@ function readProcessCmdline(pid) {
   try {
     if (IS_WIN) {
       const out = execFileSync('powershell', [
-        '-NoProfile', '-Command',
+        '-NoProfile', '-NonInteractive', '-Command',
         `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
-      ], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+      ], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
       return out.trim() ? out : null;
     }
     try {

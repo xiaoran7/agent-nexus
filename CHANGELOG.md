@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-02 全量功能合理性审计与冗余子系统深度瘦身
+
+全面审视 `Agent-Nexus` 在真实多机多会话（Claude Code + CPA 路由 + Hub/Edge 探针 + 全局 Hook）工作流中的存在合理性，彻底移除伪功能、空壳模块、污染业务仓库的命令与历史遗留死代码，使核心聚焦于**多会话并发防撞裁决、无状态多机探针汇聚与跨机阶段工程记忆接力**三大不可替代能力。
+
+### 删减与重构了什么
+
+- **移除冗余领域模块与空壳数据库表 (`src/domain/`, `src/storage/database.js`)**：
+  - 删除 `src/domain/gateway-router.js` 与 `src/domain/llm-adapter.js`（AI 模型路由与代理已由外部 `cliproxyapi` 统一承担，移除 `/api/gateway/*` 与无持久化的内存统计）；
+  - 删除 `src/domain/project-lead.js`（移除虚构的 AI Tech Lead 角色扮演包装层、硬编码安全走廊话术与 `/api/projects/:id/{onboard,advise,depart,milestone,broadcast}`）；
+  - 删除 `src/domain/topology.js`、`src/domain/state.js` 与 `src/domain/messages.js`（移除无真实消费方的 `topology_nodes`、`state`、`messages` 三张死表及对应 `/api/topology`、`/api/state/*`、`/api/messages`、`/api/projects/:id/{dialogue,progress}` 路由）；
+  - `src/storage/database.js` 启动时自动 `DROP TABLE IF EXISTS` 清理历史数据库中的 `state`、`messages`、`topology_nodes` 冗余表。
+- **收敛 MCP 工具面与 CLI 安装器 (`src/mcp/`, `src/installer/index.js`, `src/cli.js`)**：
+  - Stdio MCP 从 17 个膨胀工具精简为 **7 个高价值核心工具**（`nexus_declare_intent`、`nexus_release_lease`、`nexus_lock_resource`、`nexus_unlock_resource`、`nexus_search_memory`、`nexus_save_memory`、`nexus_status`）；
+  - 移除会向业务仓库写入 `.mcp.json` 的 `nexus mcp:install`（`installProjectMcp`）以及虚构的 `installCodexHook`、`installZCodeHook`，严格兑现“业务项目 0 改动、0 文件、0 污染”原则。
+- **前端面板聚焦三视图与真实锁路由 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - 顶栏导航从 4 栏收敛为 **3 个高密度核心视图**：`会话与防撞`、`协同路由`、`接力与记忆`；移除 `动态与日志` 冗余页签、顶栏虚拟架构师胶囊与全员广播弹窗；
+  - `协同路由`（`renderRoutingDiagram`）彻底移除硬编码的假“安全走廊”（`src/ui/`、`docs/`、`test/`），右泳道直接绑定真实 `activeClaims`（文件/模块/符号锁）、`resourceLocks`（`tests`/`dev-server`/`build` 排他锁）与 `waitQueue`（冲突排队会话）。
+- **清理失效脚本、冗余文档与对应测试 (`scripts/`, `docs/`, `test/`)**：
+  - 删除包含硬编码历史路径与测试 Token 的 `scripts/capture.js`、`scripts/preview-capture.mjs`、`test/test-ai-lead-live.mjs`、`test/test-parallel-live.mjs` 及已移除模块的对应单测与过期宣发草稿。
+
+---
+
 ## 2026-11-02 修复跨机接力上下文注入盲区、Git 远端指纹识别与跨系统同文件互斥
 
 围绕 Windows 主力机 Hub 与远端 Linux 工作机（如 `us-zenix`）跨机接力链路，补齐从提交采集、同源工程识别、异构路径锁互斥到大模型上下文窗口注入的完整闭环。
