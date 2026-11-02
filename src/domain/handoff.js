@@ -101,9 +101,9 @@ export class ProjectHandoffService {
 
     let sql = `
       SELECT * FROM project_handoffs
-      WHERE project_id = ? AND status = 'pending'
+      WHERE (project_id = ? OR project_id = 'default' OR ? = 'default') AND status = 'pending'
     `;
-    const params = [pid];
+    const params = [pid, pid];
 
     if (excludeAgentId) {
       sql += ` AND source_agent_id != ?`;

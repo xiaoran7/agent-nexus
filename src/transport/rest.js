@@ -559,11 +559,11 @@ export function createRestRouter(coordinator, stateService, messageService, uiPa
       if (url.pathname === '/api/intents/declare' && req.method === 'POST') {
         const data = await readJson();
         const result = coordinator.declareIntent({
-          agentId: data.agent_id,
-          intentSummary: data.summary,
+          agentId: data.agent_id || data.agentId,
+          intentSummary: data.summary || data.intent_summary || data.intentSummary || 'Work intent',
           claims: data.claims || [],
-          ttlSeconds: data.ttl_seconds || 300,
-          projectId: data.project_id || 'default'
+          ttlSeconds: data.ttl_seconds || data.ttlSeconds || 300,
+          projectId: data.project_id || data.projectId || 'default'
         });
         return sendJson(200, result);
       }

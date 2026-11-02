@@ -982,7 +982,18 @@ export class CoordinatorEngine {
     // 而一旦停止活动，租约自然到期快速释放给后排。
     const touchResult = this.touchAgentLeases(agentId, finalProjectId || agent?.project_id || null);
 
-    return { success: true, touchedCount: touchResult.touchedCount };
+    let pendingHandoff = null;
+    if (this.handoffService) {
+      try {
+        pendingHandoff = this.handoffService.getPendingHandoff(finalProjectId || agent?.project_id || 'default', { excludeAgentId: agentId });
+      } catch {}
+    }
+
+    return {
+      success: true,
+      touchedCount: touchResult.touchedCount,
+      ...(pendingHandoff ? { pendingHandoff } : {})
+    };
   }
 
   getAgent(id, projectId = null) {

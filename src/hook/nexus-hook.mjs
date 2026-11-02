@@ -5,8 +5,8 @@
 
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { basename, isAbsolute, join, posix, relative } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveProject } from '../domain/project.js';
 import { resolveNexusEndpoint } from '../transport/auth.js';
@@ -385,6 +385,37 @@ function notifyResourceRelease(payload) {
   });
 }
 
+function printPendingHandoff(h, sessionId = 'global') {
+  if (!h || !h.id) return;
+  const cachePath = join(homedir(), '.agent-nexus', '.notified-handoffs.json');
+  try {
+    let notified = {};
+    if (existsSync(cachePath)) {
+      notified = JSON.parse(readFileSync(cachePath, 'utf8'));
+    }
+    const cacheKey = `${sessionId}:${h.id}`;
+    if (notified[cacheKey]) return;
+
+    notified[cacheKey] = Date.now();
+    const keys = Object.keys(notified);
+    if (keys.length > 50) {
+      for (const k of keys.slice(0, keys.length - 50)) delete notified[k];
+    }
+    const dir = dirname(cachePath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(cachePath, JSON.stringify(notified), 'utf8');
+  } catch {}
+
+  const fromHost = h.source_host_id ? `[${h.source_host_id}] ` : '';
+  console.error(`\n[Agent-Nexus] 跨机接力上下文：检测到上游节点 ${fromHost}提交的阶段任务 "${h.objective}"`);
+  if (h.modified_files && h.modified_files.length > 0) {
+    console.error(`  - 已改动文件: ${h.modified_files.slice(0, 3).join(', ')}${h.modified_files.length > 3 ? ` 等共 ${h.modified_files.length} 个文件` : ''}`);
+  }
+  if (h.next_action) {
+    console.error(`  - 建议接力动作: ${h.next_action}\n`);
+  }
+}
+
 function reportTelemetry(payload) {
   return new Promise((resolvePromise) => {
     try {
@@ -400,12 +431,21 @@ function reportTelemetry(payload) {
           'Content-Length': Buffer.byteLength(data),
           ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
         },
-        timeout: IS_REMOTE_HUB ? 1500 : 400,
+        timeout: IS_REMOTE_HUB ? 2500 : 1500,
       }, (res) => {
-        res.resume();
-        resolvePromise(true);
+        let buf = '';
+        res.on('data', (c) => buf += c);
+        res.on('end', () => {
+          try {
+            resolvePromise(JSON.parse(buf));
+          } catch {
+            resolvePromise({ success: true });
+          }
+        });
       });
-      req.on('error', () => resolvePromise(false));
+      req.on('error', () => {
+        resolvePromise(false);
+      });
       req.on('timeout', () => {
         req.destroy();
         resolvePromise(false);
@@ -536,7 +576,7 @@ async function main() {
 
   if (toolName) {
     try {
-      await reportTelemetry({
+      const telRes = await reportTelemetry({
         agent_id: identity.agentId,
         host_id: NODE_ID,
         provider: identity.provider,
@@ -552,6 +592,9 @@ async function main() {
         liveness_verified: identity.livenessVerified,
         ...(peerSessions ? { peer_sessions: peerSessions } : {})
       });
+      if (telRes && telRes.pendingHandoff) {
+        printPendingHandoff(telRes.pendingHandoff, identity.sessionId);
+      }
     } catch {}
   }
 
@@ -605,6 +648,10 @@ async function main() {
       }
       process.exit(2);
     }
+
+    if (resourceRes.pendingHandoff) {
+      printPendingHandoff(resourceRes.pendingHandoff, identity.sessionId);
+    }
   }
 
   // 3. 检查文件改写与文件锁冲突 (支持跨 Worktree 相对化对齐与 #anchor 细粒度锁)
@@ -651,15 +698,7 @@ async function main() {
   }
 
   if (res.pendingHandoff) {
-    const h = res.pendingHandoff;
-    const fromHost = h.source_host_id ? `[${h.source_host_id}] ` : '';
-    console.error(`[Agent-Nexus] 跨机接力上下文：检测到上游节点 ${fromHost}提交的阶段任务 "${h.objective}"`);
-    if (h.modified_files && h.modified_files.length > 0) {
-      console.error(`  - 已改动文件: ${h.modified_files.slice(0, 3).join(', ')}${h.modified_files.length > 3 ? ` 等共 ${h.modified_files.length} 个文件` : ''}`);
-    }
-    if (h.next_action) {
-      console.error(`  - 建议接力动作: ${h.next_action}`);
-    }
+    printPendingHandoff(res.pendingHandoff, identity.sessionId);
   }
 
   process.exit(0);
