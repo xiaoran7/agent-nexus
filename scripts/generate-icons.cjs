@@ -39,69 +39,76 @@ function fetchJson(url) {
 }
 
 function createSvgMarkup(type = 'app') {
-  let bgGradient = `
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0284c7" />
-      <stop offset="100%" stop-color="#38bdf8" />
-    </linearGradient>
-  `;
-  let strokeColor = '#ffffff';
-  let dotColor = '#38bdf8';
+  let primaryStart = '#38bdf8';
+  let primaryEnd = '#2563eb';
+  let nodeGlow = '#60a5fa';
+  let accentDot = '#ffffff';
 
   if (type === 'tray-active') {
-    bgGradient = `
-      <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#059669" />
-        <stop offset="100%" stop-color="#10b981" />
-      </linearGradient>
-    `;
-    dotColor = '#34d399';
+    primaryStart = '#34d399';
+    primaryEnd = '#059669';
+    nodeGlow = '#10b981';
   } else if (type === 'tray-busy') {
-    bgGradient = `
-      <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#d97706" />
-        <stop offset="100%" stop-color="#f59e0b" />
-      </linearGradient>
-    `;
-    dotColor = '#fbbf24';
+    primaryStart = '#fbbf24';
+    primaryEnd = '#d97706';
+    nodeGlow = '#f59e0b';
   } else if (type === 'tray-idle') {
-    bgGradient = `
-      <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#0369a1" />
-        <stop offset="100%" stop-color="#0ea5e9" />
-      </linearGradient>
-    `;
-    dotColor = '#7dd3fc';
+    primaryStart = '#38bdf8';
+    primaryEnd = '#0284c7';
+    nodeGlow = '#0ea5e9';
   }
 
   return `
-    <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 256 256">
+    <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 256 256" fill="none">
       <defs>
-        ${bgGradient}
-        <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-          <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.3" />
-        </filter>
-        <filter id="symbolGlow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.25" />
-        </filter>
+        <linearGradient id="nexusMeshGrad" x1="32" y1="36" x2="224" y2="208" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="${primaryStart}" />
+          <stop offset="50%" stop-color="${nodeGlow}" />
+          <stop offset="100%" stop-color="${primaryEnd}" />
+        </linearGradient>
+        <linearGradient id="nexusMeshFill" x1="44" y1="36" x2="212" y2="184" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="${primaryStart}" stop-opacity="0.25" />
+          <stop offset="100%" stop-color="${primaryEnd}" stop-opacity="0.08" />
+        </linearGradient>
+        <linearGradient id="nexusCoreGrad" x1="96" y1="92" x2="160" y2="164" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="${primaryStart}" />
+          <stop offset="100%" stop-color="${primaryEnd}" />
+        </linearGradient>
       </defs>
 
-      <!-- App Icon Background Squircle with Soft Drop Shadow -->
-      <rect x="16" y="16" width="224" height="224" rx="52" fill="url(#bgGrad)" filter="url(#shadow)" />
+      <!-- Coordination Mesh Outer Frame (Rounded Equilateral Triangle) -->
+      <polygon points="128,36 212,184 44,184"
+               stroke="url(#nexusMeshGrad)"
+               stroke-width="10"
+               stroke-linejoin="round"
+               stroke-linecap="round"
+               fill="url(#nexusMeshFill)" />
 
-      <!-- Subtle Glossy Inner Highlight Border -->
-      <rect x="17.5" y="17.5" width="221" height="221" rx="50.5" fill="none" stroke="rgba(255, 255, 255, 0.4)" stroke-width="3" />
+      <!-- Internal Radial Coordination Vectors -->
+      <line x1="128" y1="128" x2="128" y2="36" stroke="url(#nexusMeshGrad)" stroke-width="8" stroke-linecap="round" />
+      <line x1="128" y1="128" x2="44" y2="184" stroke="url(#nexusMeshGrad)" stroke-width="8" stroke-linecap="round" />
+      <line x1="128" y1="128" x2="212" y2="184" stroke="url(#nexusMeshGrad)" stroke-width="8" stroke-linecap="round" />
 
-      <!-- Center Logo Mark: 3-Layered Isometric Diamond -->
-      <g transform="translate(48, 48) scale(6.666)" filter="url(#symbolGlow)">
-        <path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="${strokeColor}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="M2 17l10 5 10-5" fill="none" stroke="${strokeColor}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-        <path d="M2 12l10 5 10-5" fill="none" stroke="${strokeColor}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-      </g>
+      <!-- Central Arbiter Core (Faceted Hexagon) -->
+      <polygon points="128,92 160,110 160,146 128,164 96,146 96,110"
+               fill="url(#nexusCoreGrad)"
+               stroke="#ffffff"
+               stroke-width="4"
+               stroke-linejoin="round" />
+      <circle cx="128" cy="128" r="12" fill="${accentDot}" />
 
-      <!-- Micro geometric decoration (Aozora UI signature) -->
-      <circle cx="204" cy="52" r="7" fill="#ffffff" opacity="0.85" />
-      <circle cx="204" cy="52" r="3.5" fill="${dotColor}" />
+      <!-- Satellite Agent Nodes (High-contrast, Transparent-safe) -->
+      <!-- Top Satellite Node -->
+      <circle cx="128" cy="36" r="18" fill="#0b0f17" stroke="${primaryStart}" stroke-width="7" />
+      <circle cx="128" cy="36" r="8" fill="${primaryStart}" />
+
+      <!-- Left Satellite Node -->
+      <circle cx="44" cy="184" r="18" fill="#0b0f17" stroke="${nodeGlow}" stroke-width="7" />
+      <circle cx="44" cy="184" r="8" fill="${nodeGlow}" />
+
+      <!-- Right Satellite Node -->
+      <circle cx="212" cy="184" r="18" fill="#0b0f17" stroke="${primaryEnd}" stroke-width="7" />
+      <circle cx="212" cy="184" r="8" fill="${primaryEnd}" />
     </svg>
   `;
 }

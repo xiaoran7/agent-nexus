@@ -34,7 +34,7 @@ function showTokenPrompt(reason = 'missing') {
       <div class="nexus-modal-card">
         <div class="nexus-modal-header">
           <span class="nexus-modal-title">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
             </svg>
@@ -237,6 +237,9 @@ const dom = {
   statWorking: document.getElementById('stat-working'),
   statWaiting: document.getElementById('stat-waiting'),
   statLocks: document.getElementById('stat-locks'),
+  statSpawns: document.getElementById('stat-spawns'),
+  statSpawnsPill: document.getElementById('stat-spawns-pill'),
+  tabSpawnsBadge: document.getElementById('tab-spawns-badge'),
   statGateway: document.getElementById('stat-gateway'),
   gatewayDot: document.getElementById('gateway-dot'),
   statGatewayPill: document.getElementById('stat-gateway-pill'),
@@ -381,6 +384,21 @@ function switchView(viewName) {
   }
 }
 window.switchView = switchView;
+
+function switchToSpawnsView(sessionId) {
+  switchView('agents');
+  if (sessionId) {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-session="${CSS.escape(sessionId)}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.add('highlight-target');
+        setTimeout(() => el.classList.remove('highlight-target'), 2500);
+      }
+    }, 80);
+  }
+}
+window.switchToSpawnsView = switchToSpawnsView;
 
 dom.segBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -548,14 +566,26 @@ function renderDashboardSnapshot(data) {
   const workingCount = agentViews.filter(a => a.uiState === 'working').length;
   const waitingCount = agentViews.filter(a => a.uiState === 'waiting').length;
 
+  const allSpawnNodes = (data.agentSpawns || []).flatMap(t => (Array.isArray(t.roots) ? t.roots : []));
+  const totalSpawns = countSpawnNodes(allSpawnNodes, () => true);
+
   if (dom.statWorking) dom.statWorking.textContent = workingCount;
   if (dom.statWaiting) dom.statWaiting.textContent = waitingCount;
   if (dom.statLocks) dom.statLocks.textContent = activeClaims.length;
+  if (dom.statSpawns) dom.statSpawns.textContent = totalSpawns;
+  if (dom.tabSpawnsBadge) {
+    if (totalSpawns > 0) {
+      dom.tabSpawnsBadge.textContent = totalSpawns;
+      dom.tabSpawnsBadge.style.display = 'inline-flex';
+    } else {
+      dom.tabSpawnsBadge.style.display = 'none';
+    }
+  }
 
+  renderAgentSpawns(data.agentSpawns || []);
   renderActiveAgents(agentViews);
   renderActiveLocks(activeClaims, agents);
   renderLiveTimeline(timeline);
-  renderAgentSpawns(data.agentSpawns || []);
 
   if (data.clusterNodes) renderClusterNodes(data.clusterNodes);
   renderHandoffAlertBanner(data.activeHandoffs || []);
@@ -577,6 +607,30 @@ function buildAgentViews(agents, claims) {
   return views;
 }
 
+function makeEmptyHint(iconType, text, subtext = '') {
+  let glyph = '';
+  if (iconType === 'agent') {
+    glyph = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18"/></svg>';
+  } else if (iconType === 'lock') {
+    glyph = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+  } else if (iconType === 'stream') {
+    glyph = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>';
+  } else if (iconType === 'handoff') {
+    glyph = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/><path d="M12 13v2"/></svg>';
+  } else if (iconType === 'memory') {
+    glyph = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
+  } else if (iconType === 'spawn') {
+    glyph = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1.5"/><rect x="2" y="17" width="6" height="5" rx="1.5"/><rect x="16" y="17" width="6" height="5" rx="1.5"/><path d="M12 7v4M5 17v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>';
+  }
+  return `
+    <div class="empty-hint">
+      <div class="empty-hint-icon">${glyph}</div>
+      <div class="empty-hint-text">${escapeHtml(text)}</div>
+      ${subtext ? `<div class="empty-hint-sub">${escapeHtml(subtext)}</div>` : ''}
+    </div>
+  `;
+}
+
 let lastAgentsHtml = null;
 let lastAgentsMetaHtml = null;
 
@@ -595,7 +649,7 @@ function renderActiveAgents(validAgents) {
   }
 
   if (validAgents.length === 0) {
-    const emptyHtml = '<div class="empty-hint">尚无会话上报</div>';
+    const emptyHtml = makeEmptyHint('agent', '尚无活跃会话', '运行中的 Claude 会话将自动接入中枢');
     if (emptyHtml !== lastAgentsHtml) {
       dom.agentsContainer.innerHTML = emptyHtml;
       lastAgentsHtml = emptyHtml;
@@ -618,23 +672,39 @@ function renderActiveAgents(validAgents) {
     const showProj = (currentProjectId === 'all' || !currentProjectId) && projSafe;
     const hostSafe = a.is_remote && a.host_id ? escapeHtml(a.host_id) : '';
     const showHost = Boolean(hostSafe) && (!showProj || !projName.includes(`[${a.host_id}]`));
+    const spawnTree = (currentAgentSpawns || []).find(t => t.session_id === a.id || t.agent_id === a.id || t.session_name === a.name);
+    const spawnCount = spawnTree && Array.isArray(spawnTree.roots) ? countSpawnNodes(spawnTree.roots, () => true) : 0;
+    const spawnBtn = spawnCount > 0 ? `
+      <button class="agent-spawns-link-btn" onclick="switchToSpawnsView('${escapeHtml(spawnTree.session_id || a.id)}')" title="查看该会话的子代理派发树">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="2" width="6" height="5" rx="1.5"></rect>
+          <rect x="2" y="17" width="6" height="5" rx="1.5"></rect>
+          <rect x="16" y="17" width="6" height="5" rx="1.5"></rect>
+          <path d="M12 7v4M5 17v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span>派发树 ${spawnCount}</span>
+      </button>
+    ` : '';
 
     return `
       <div class="agent-card-item is-${a.uiState}">
         <div class="agent-card-header">
           <div class="agent-name-group">
-            <span class="agent-status-badge badge-${a.uiState}">${a.badgeText}</span>
+            <span class="agent-status-badge badge-${a.uiState}"><i class="status-badge-dot"></i>${a.badgeText}</span>
             <span class="agent-title" title="${nameSafe}">${nameSafe}</span>
             ${showHost ? `<span class="agent-host-badge" title="节点 ${hostSafe}">${hostSafe}</span>` : ''}
             ${showProj ? `<span class="agent-project-badge" title="工程 ${projSafe}">${projSafe}</span>` : ''}
+            ${spawnBtn}
           </div>
           <span class="agent-runtime-tag">${providerSafe}</span>
         </div>
 
-        <div class="agent-intent-line" title="${intentSafe}">
-          ${toolSafe ? `<span class="agent-claim-target">${toolSafe} ${targetSafe || ''}</span>` : ''}
-          ${toolSafe && intentSafe ? ' ' : ''}${intentSafe}
-        </div>
+        ${toolSafe || intentSafe ? `
+          <div class="agent-intent-line" title="${intentSafe || toolSafe}">
+            ${toolSafe ? `<span class="agent-claim-target">${toolSafe}${targetSafe ? ' ' + targetSafe : ''}</span>` : ''}
+            ${toolSafe && intentSafe ? ' ' : ''}${intentSafe}
+          </div>
+        ` : ''}
 
         ${claims.length > 0 ? `
           <div class="agent-card-footer">
@@ -664,7 +734,7 @@ function renderActiveLocks(claims, agents) {
       const waiterName = escapeHtml(formatAgentDisplayName(waiter.name, waiter.id));
       const reason = escapeHtml(waiter.blocked_reason || '等待租约释放');
       dom.conflictAlert.innerHTML = `
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
         <span><strong>${waiterName}</strong> 等待中：${reason}</span>
@@ -675,7 +745,7 @@ function renderActiveLocks(claims, agents) {
   }
 
   if (!claims || claims.length === 0) {
-    dom.locksContainer.innerHTML = '<div class="empty-hint">当前没有生效的租约</div>';
+    dom.locksContainer.innerHTML = makeEmptyHint('lock', '当前没有生效的租约', '会话编辑代码时自动声明文件锁');
     return;
   }
 
@@ -728,7 +798,7 @@ function renderLiveTimeline(timeline) {
   }
 
   if (filtered.length === 0) {
-    dom.timelineContainer.innerHTML = '<div class="empty-hint">暂无事件</div>';
+    dom.timelineContainer.innerHTML = makeEmptyHint('stream', '暂无协调事件', '冲突拦截与租约释放流水将在此流式展现');
     return;
   }
 
@@ -750,7 +820,13 @@ function renderLiveTimeline(timeline) {
     }
 
     const actor = escapeHtml(formatAgentDisplayName(item.agent_name, item.agent_id));
-    const desc = escapeHtml(item.description);
+    let rawDesc = item.description || '';
+    if (item.agent_name && rawDesc.endsWith(': ' + item.agent_name)) {
+      rawDesc = rawDesc.slice(0, rawDesc.length - (item.agent_name.length + 2));
+    } else if (actor && rawDesc.endsWith(': ' + actor)) {
+      rawDesc = rawDesc.slice(0, rawDesc.length - (actor.length + 2));
+    }
+    const desc = escapeHtml(rawDesc);
 
     return `
       <div class="stream-item">
@@ -807,10 +883,10 @@ function spawnStatusLabel(status) {
 }
 
 const AGENT_TYPE_ICON = {
-  Explore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>',
-  Plan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"></path><rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 11h8M8 15h5"></path></svg>',
-  'general-purpose': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>',
-  default: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7.5 12 12l9-4.5L12 3z"></path><path d="M3 16.5 12 21l9-4.5"></path></svg>'
+  Explore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>',
+  Plan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"></path><rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 11h8M8 15h5"></path></svg>',
+  'general-purpose': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>',
+  default: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3z"></path><path d="M3 16.5 12 21l9-4.5"></path></svg>'
 };
 
 function agentTypeIcon(agentType) {
@@ -820,13 +896,13 @@ function agentTypeIcon(agentType) {
 function toolIcon(tool) {
   const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
   switch (tool) {
-    case 'Read': return `<svg ${common}><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"></path><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"></path></svg>`;
-    case 'Grep': return `<svg ${common}><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-4-4"></path></svg>`;
-    case 'Glob': return `<svg ${common}><path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg>`;
-    case 'Bash': return `<svg ${common}><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>`;
-    case 'Edit': case 'Write': case 'MultiEdit': return `<svg ${common}><path d="M4 20h4l10-10a2.8 2.8 0 1 0-4-4L4 16z"></path></svg>`;
-    case 'WebFetch': case 'WebSearch': return `<svg ${common}><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16M12 4a14 14 0 0 1 0 16 14 14 0 0 1 0-16z"></path></svg>`;
-    default: return `<svg ${common}><path d="M14.5 5.5 18.5 9.5 8 20H4v-4z"></path></svg>`;
+    case 'Read': return `<svg ${common} aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"></path><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"></path></svg>`;
+    case 'Grep': return `<svg ${common} aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-4-4"></path></svg>`;
+    case 'Glob': return `<svg ${common} aria-hidden="true"><path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg>`;
+    case 'Bash': return `<svg ${common} aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>`;
+    case 'Edit': case 'Write': case 'MultiEdit': return `<svg ${common} aria-hidden="true"><path d="M4 20h4l10-10a2.8 2.8 0 1 0-4-4L4 16z"></path></svg>`;
+    case 'WebFetch': case 'WebSearch': return `<svg ${common} aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16M12 4a14 14 0 0 1 0 16 14 14 0 0 1 0-16z"></path></svg>`;
+    default: return `<svg ${common} aria-hidden="true"><path d="M14.5 5.5 18.5 9.5 8 20H4v-4z"></path></svg>`;
   }
 }
 
@@ -906,7 +982,7 @@ function renderAgentSpawns(trees) {
   }
 
   if (currentAgentSpawns.length === 0) {
-    dom.spawnContainer.innerHTML = '<div class="empty-hint" id="spawn-empty">暂无子代理派发记录</div>';
+    dom.spawnContainer.innerHTML = makeEmptyHint('spawn', '暂无子代理派发记录', 'SubagentStart / SubagentStop 触发时在此自动构建派发树');
     seenSpawnIds = new Set();
     return;
   }
@@ -925,9 +1001,12 @@ function renderAgentSpawns(trees) {
 
   dom.spawnContainer.innerHTML = currentAgentSpawns.map((tree) => {
     const sessionKey = String(tree.session_id || '');
+    const cleanSessionDisplay = sessionKey.length <= 28
+      ? sessionKey
+      : (sessionKey.startsWith('claude-') ? sessionKey.replace('claude-', '').slice(0, 12) : sessionKey.slice(0, 16));
     const sessionName = tree.session_name
       ? tree.session_name
-      : (tree.agent_id ? resolveAgentName(tree.agent_id, null) : `会话 ${sessionKey.slice(0, 8)}`);
+      : (tree.agent_id ? resolveAgentName(tree.agent_id, null) : `会话 ${cleanSessionDisplay}`);
     const roots = Array.isArray(tree.roots) ? tree.roots : [];
     const rootCount = countSpawnNodes(roots, () => true);
     const liveTag = tree.is_live ? '' : '<span class="spawn-session-flag">会话已离席</span>';
@@ -1161,7 +1240,7 @@ async function fetchHandoffs() {
 function renderHandoffs(list) {
   if (!dom.handoffsContainer) return;
   if (!Array.isArray(list) || list.length === 0) {
-    dom.handoffsContainer.innerHTML = '<div class="empty-hint">提交 Git 时自动生成</div>';
+    dom.handoffsContainer.innerHTML = makeEmptyHint('handoff', '暂无跨主机交接记录', '提交 Git 或通过 MCP 移交上下文时自动生成');
     return;
   }
 
@@ -1256,7 +1335,7 @@ async function fetchMemories(query = '', category = currentMemoryCategory) {
 function renderMemories(list) {
   if (!dom.memoriesContainer) return;
   if (!Array.isArray(list) || list.length === 0) {
-    dom.memoriesContainer.innerHTML = '<div class="empty-hint">暂无记忆</div>';
+    dom.memoriesContainer.innerHTML = makeEmptyHint('memory', '暂无沉淀记忆', '通过 MCP save_memory 沉淀架构规则与决策');
     return;
   }
 
@@ -1503,7 +1582,7 @@ function renderRoutingDiagram(cockpitData) {
   // 会话列
   if (dom.routingSessionsContainer) {
     if (validAgents.length === 0) {
-      dom.routingSessionsContainer.innerHTML = '<div class="empty-hint">无会话</div>';
+      dom.routingSessionsContainer.innerHTML = makeEmptyHint('agent', '无在线会话', '当前没有已接入的会话');
     } else {
       dom.routingSessionsContainer.innerHTML = validAgents.map(a => {
         const idSafe = escapeHtml(a.id);
@@ -1539,7 +1618,7 @@ function renderRoutingDiagram(cockpitData) {
             </div>
             ${intentSafe ? `
             <div class="route-card-intent" title="${intentSafe}">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 20h9"></path>
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
               </svg>
@@ -1578,7 +1657,7 @@ function renderRoutingDiagram(cockpitData) {
           <div class="target-route-card type-file" data-target-id="${resKey}" data-holder-id="${agentSafe}">
             <div class="target-card-header">
               <div class="target-icon-wrap file-icon">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                   <polyline points="13 2 13 9 20 9"></polyline>
                 </svg>
@@ -1611,7 +1690,7 @@ function renderRoutingDiagram(cockpitData) {
           <div class="target-route-card type-lock" data-target-id="${resKey}" data-holder-id="${agentSafe}">
             <div class="target-card-header">
               <div class="target-icon-wrap lock-icon">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
@@ -1644,7 +1723,7 @@ function renderRoutingDiagram(cockpitData) {
           <div class="target-route-card type-waiting" data-target-id="${resKey}" data-holder-id="${agentSafe}">
             <div class="target-card-header">
               <div class="target-icon-wrap waiting-icon">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="10"></circle>
                   <polyline points="12 6 12 12 16 14"></polyline>
                 </svg>
@@ -1665,7 +1744,7 @@ function renderRoutingDiagram(cockpitData) {
     }
 
     if (!targetsHtml) {
-      targetsHtml = '<div class="empty-hint">无租约</div>';
+      targetsHtml = makeEmptyHint('lock', '暂无活跃租约', '当前没有资源被锁定或等待');
     }
     dom.routingTargetsContainer.innerHTML = targetsHtml;
   }
@@ -1893,7 +1972,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
   if (dom.decisionsCountBadge) dom.decisionsCountBadge.textContent = String(filtered.length);
 
   if (filtered.length === 0) {
-    dom.routingDecisionsStream.innerHTML = '<div class="empty-hint">暂无裁决</div>';
+    dom.routingDecisionsStream.innerHTML = makeEmptyHint('stream', '暂无裁决记录', '冲突拦截与授权释放流水将在此留痕');
     return;
   }
 

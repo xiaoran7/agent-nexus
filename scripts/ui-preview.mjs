@@ -17,6 +17,23 @@ const daemon = await startDaemon({
 
 console.log(`[preview] open http://127.0.0.1:${port}/?token=nexus-preview-token`);
 
+// 注册一个持有子代理派发的活跃演示会话，使首页与派发树形成闭环联动
+const keepPreviewAgentAlive = () => {
+  daemon.coordinator.registerAgent({
+    id: 'claude-desktop-preview',
+    name: '子代理架构演进 (实时派发演示)',
+    projectId: 'Agent-Nexus',
+    provider: 'claude',
+    sessionId: 'preview-session-0001',
+    pid: process.pid,
+    livenessVerified: true,
+    lastTool: 'SubagentStart'
+  });
+  daemon.coordinator.updateAgentStatus('claude-desktop-preview', 'running');
+};
+keepPreviewAgentAlive();
+const previewAgentTimer = setInterval(keepPreviewAgentAlive, 20_000);
+
 // 预览专用的派发树样例：让界面在有真实形状的数据上被核对一次。
 // 只写进内存库，不落盘；生产环境的数据只来自 SubagentStart / SubagentStop。
 const now = Date.now();
@@ -36,6 +53,7 @@ daemon.coordinator.touchAgentSpawn({ agentId: 'a1f4c2e9', sessionId: 'preview-se
 daemon.coordinator.touchAgentSpawn({ agentId: 'd8e2b470', sessionId: 'preview-session-0001', toolName: 'Bash', toolTarget: 'npm test' });
 
 const stop = async () => {
+  clearInterval(previewAgentTimer);
   await daemon.db.close?.();
   process.exit(0);
 };

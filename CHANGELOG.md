@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-03 品牌图标重构、派发树连续拓扑与 UI 视觉规范重构 (UI Refactor & Brand Icon)
+
+按现代极简设计原则与 `ui-design` 规范（含骨架屏微光与连续几何准则）对 Agent-Nexus 全栈视觉系统与控制台排版进行重构：从零设计纯透明底座的矢量协同网状图标（Nexus Vector Mark），重塑 Favicon、托盘图标与桌面图标体系；全面升级控制台布局留白、信息层级、卡片质感与各面板矢量空状态体验；打通首页会话到派发树跨视图联动，重塑连续无断点树形几何拓扑。
+
+### 改了什么
+
+- **全新纯透明矢量品牌图标与多端输出 (`src/ui/favicon.svg`, `scripts/generate-icons.cjs`, `desktop/assets/*`)**：
+  - 设计以 Nexus 仲裁棱镜核心（Hex Arbiter Core）、三节点协同网格（Mesh Frame）与径向通讯射线为主体的现代几何图标，根节点 `fill="none"` 零底色，彻底杜绝不透明硬白矩形底座；
+  - 编写基于无头 Chromium / Edge CDP 的纯透明离线渲染管线（`Emulation.setDefaultBackgroundColorOverride` RGBA 0,0,0,0），生成 16/32/48/64/128/256px 多尺寸 RGBA PNG 与 Windows 32 位真彩色 `.ico`，在暗色壁纸与任务栏下自然通透；
+  - 同步重构桌面托盘状态图标（`tray-idle`, `tray-active`, `tray-busy`）。
+- **静态路由与公开静态资源放行 (`src/transport/rest.js`)**：
+  - 在 `PUBLIC_PATHS` 与静态文件表中新增 `/favicon.svg`、`/favicon.ico` 与 `/icon.png` 路由放行，确保浏览器无鉴权拉取 Favicon 时返回 200 与正确 MIME 类型。
+- **子代理派发树连续几何拓扑与跨视图路由联动 (`src/ui/app.js`, `src/ui/style.css`, `src/ui/index.html`)**：
+  - **连续 2px 垂直导轨与平滑圆角接线**：彻底解决旧版 45px 孤立短接线导致的长卡片脱节断点痛点，以全高连续贯穿轴（`top: 0; bottom: -12px`）覆盖所有兄弟节点，配合 8px 圆弧弯头（`spawn-elbow`）、8px 状态关节点（`spawn-joint`）与子代垂直落线（`spawn-children::before`），树形拓扑一目了然；
+  - **双向跨视图直达联动**：首页会话卡片实时感知子代理派发状态，动态浮现 `[ 派发树 N ]` 快捷跳转按钮；顶栏分段导航更名为更直观的"派发树"并携带实时计数胶囊；状态胶囊带新增派发树快捷筛选；实现全局 `switchToSpawnsView(sessionId)` 跨视图平滑滚动与高亮呼吸动效。
+- **引入 UI-Design 规范之骨架屏微光标准 (`src/ui/style.css`)**：
+  - 引入 `--shimmer-base` 与 `--shimmer-high` 线性三段式扫光设计令牌，实现 `@keyframes skeleton-shift` 1.6s 舒缓位移微光与 1:1 CLS 锁死骨架；
+  - 增加 `@keyframes pulse-dot` 状态呼吸微动效、卡片 Hover 抬升（`translateY(-2px)`）与 Active 挤压弹性反馈（`scale(0.98)`）。
+- **控制台排版布局与设计令牌深度重构 (`src/ui/style.css`, `src/ui/index.html`)**：
+  - 全面去除 Emoji 与低对比度装饰，清理所有冗余代码注释，字阶与字重严格约束（纯 400 与 500 字重，最小 11px 字号，0.5px 发丝级微边框）；
+  - 顶栏精细化（54px 紧凑高度、品牌徽标微倾角悬停动画、版本胶囊 pill、高质感分段导航切换器）；
+  - 状态胶囊带对齐与间距重塑（42px 舒展留白、节点状态微点高亮与悬停层次）；
+  - 面板卡片间距与标题字阶优化，消除紧绷压迫感，活动状态徽章引入微动效呼吸点（`status-badge-dot`）。
+- **全面板丰富结构化空状态 (`src/ui/app.js`, `src/ui/style.css`)**：
+  - 抽象统一 `makeEmptyHint(iconType, text, subtext)` 矢量空状态组件，覆盖会话、租约、流水事件、派发树、接力工单与工程记忆全部 6 大主容器；
+  - 消除会话名称过早截断问题（保留长至 28 字符完整标识，平滑去除 `claude-` 冗余前缀）；
+  - 去除事件流中标题与描述重复拼接的冗余文本。
+
 ## 2026-11-03 子代理派发树 (Agent Spawn Tree) 与事件驱动生命周期上报 (v0.3.2)
 
 参考 Flo (@flohoeller) "Agent tree component" 交互范式，基于 Claude Code 原生 `SubagentStart` / `SubagentStop` 钩子事件与 `.meta.json` 元数据构建子代理派发树，替代低效轮询。严格遵循事实陈述准则：不臆造会话父子关系（会话平级，父节点仅限于上级子代理），不估算不存在的 Token 费用，不猜测成功/失败（仅陈述"运行中"、"已完成"与"失联"）。

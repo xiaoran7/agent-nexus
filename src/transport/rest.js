@@ -10,7 +10,17 @@ try {
 } catch {}
 
 // 只放行探活与面板静态资源；/api/* 全部校验令牌。
-const PUBLIC_PATHS = new Set(['/health', '/api/status', '/', '/index.html', '/style.css', '/app.js']);
+const PUBLIC_PATHS = new Set([
+  '/health',
+  '/api/status',
+  '/',
+  '/index.html',
+  '/style.css',
+  '/app.js',
+  '/favicon.svg',
+  '/favicon.ico',
+  '/icon.png'
+]);
 
 let allowedOriginsCache = { raw: null, list: [] };
 
@@ -644,7 +654,10 @@ export function createRestRouter(
         '/': { name: 'index.html', mime: 'text/html; charset=utf-8' },
         '/index.html': { name: 'index.html', mime: 'text/html; charset=utf-8' },
         '/style.css': { name: 'style.css', mime: 'text/css; charset=utf-8' },
-        '/app.js': { name: 'app.js', mime: 'application/javascript; charset=utf-8' }
+        '/app.js': { name: 'app.js', mime: 'application/javascript; charset=utf-8' },
+        '/favicon.svg': { name: 'favicon.svg', mime: 'image/svg+xml' },
+        '/favicon.ico': { name: 'favicon.ico', mime: 'image/x-icon' },
+        '/icon.png': { name: 'icon.png', mime: 'image/png' }
       };
 
       if (staticFiles[url.pathname]) {
