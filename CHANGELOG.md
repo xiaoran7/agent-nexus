@@ -4,7 +4,21 @@
 
 ---
 
-## 2026-11-03 品牌图标重构、派发树连续拓扑与 UI 视觉规范重构 (UI Refactor & Brand Icon)
+## 2026-11-03 全新花朵书法品牌图标与纯透明跨端资产 (v0.3.3)
+
+按用户定制视觉语言与 `ui-design` 规范准则 9（图标底部纯透明底座），上线全新青蓝花朵轮廓与琥珀金花蕊的草书“N”字标，全面替换 Web 控制台与桌面端图标体系。
+
+### 改了什么
+
+- **纯透明 Alpha 通道提取与全自动化离线生成 (`scripts/generate-icons.cjs`, `desktop/assets/*`, `src/ui/*`)**：
+  - 基于高精母图建立无头 Chromium 离线渲染管道，通过数学反解算法精准剔除白色背景底板，保留丝滑平滑的边缘抗锯齿与青蓝/琥珀金丰富笔触细节；
+  - 导出全套 256/128/64/48/32/16px 多分辨率 RGBA PNG、Windows 32 位真彩色多分辨率 `.ico`（同时服务于桌面客户端与 Web 端 `favicon.ico`）；
+  - 输出适配深色与浅色任务栏的三态托盘图标（`tray-idle`, `tray-active`, `tray-busy`）；
+  - 输出全端自适应高质量矢量包装图标 [src/ui/favicon.svg](src/ui/favicon.svg)；
+  - 归档离线母图至 [desktop/assets/master-icon.jpg](desktop/assets/master-icon.jpg)。
+- **Web 控制台顶栏品牌徽标全面升级 (`src/ui/index.html`, `src/ui/style.css`)**：
+  - [src/ui/index.html](src/ui/index.html) 顶栏品牌图标升级为全新花朵字标，尺寸从 22px 舒展升级至 26px，遵循 `ui-design` 规范 6（增大组件与视线舒适度）；
+  - 增加青蓝渐变呼吸辉光与 Hover 动态微倾角反馈，深浅模式下均实现自然通透、零白边瑕疵。
 
 按现代极简设计原则与 `ui-design` 规范（含骨架屏微光与连续几何准则）对 Agent-Nexus 全栈视觉系统与控制台排版进行重构：从零设计纯透明底座的矢量协同网状图标（Nexus Vector Mark），重塑 Favicon、托盘图标与桌面图标体系；全面升级控制台布局留白、信息层级、卡片质感与各面板矢量空状态体验；打通首页会话到派发树跨视图联动，重塑连续无断点树形几何拓扑。
 
