@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { ValidationError, LEASE_POLICY } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.3.0';
+let APP_VERSION = '0.3.1';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;
@@ -49,7 +49,7 @@ export function createRestRouter(
   coordinator,
   uiPath,
   tokenStore,
-  { projectRegistry = null, memoryService = null, handoffService = null, clusterNodeService = null } = {}
+  { projectRegistry = null, memoryService = null, handoffService = null, clusterNodeService = null, cpaGatewayService = null } = {}
 ) {
   const staticCache = new Map();
 
@@ -288,6 +288,22 @@ export function createRestRouter(
           fullSnapshot,
           platform
         });
+        // 随快照上报的 CPA 网关事实，落到节点元数据供面板与集群视图展示。
+        if (data.gateway && typeof data.gateway === 'object') {
+          const nodeSvc = clusterNodeService || coordinator.clusterNodeService;
+          if (nodeSvc) {
+            try {
+              nodeSvc.recordHeartbeat(hostId, {
+                role: 'edge',
+                platform: platform || undefined,
+                metadata: {
+                  gateway: data.gateway,
+                  gateway_observed_at: data.gateway.observedAt || Date.now()
+                }
+              });
+            } catch {}
+          }
+        }
         return sendJson(200, { success: true, host_id: hostId, ...syncRes });
       }
 
@@ -525,6 +541,43 @@ export function createRestRouter(
       if (url.pathname === '/api/dashboard' && req.method === 'GET') {
         const pid = url.searchParams.get('project_id');
         return sendJson(200, coordinator.getDashboardSnapshot(pid));
+      }
+
+      // 7.1 CPA 网关只读观测（本节点真实管理接口，不写入不重启）
+      // 返回本机观测结果，外加各边缘探针随心跳上报的同名字段，便于面板看清"谁连着什么"。
+      if (url.pathname === '/api/gateway' && req.method === 'GET') {
+        const local = cpaGatewayService
+          ? await cpaGatewayService.getStatus({ force: url.searchParams.get('refresh') === '1' })
+          : { reachable: false, auth: null, config: null, note: 'gateway observer disabled' };
+
+        const nodeSvc = clusterNodeService || coordinator.clusterNodeService;
+        let peers = [];
+        if (nodeSvc) {
+          try {
+            peers = nodeSvc.listNodes(null)
+              .filter(n => n.role !== 'hub')
+              .map(n => {
+                const gw = n.metadata?.gateway || null;
+                return {
+                  node_id: n.id,
+                  display_name: n.display_name || n.id,
+                  status: n.status,
+                  last_seen_sec: n.last_seen_sec,
+                  gateway: gw ? {
+                    reachable: gw.reachable === true,
+                    unauthorized: gw.unauthorized === true,
+                    totalAccounts: gw.totalAccounts ?? null,
+                    enabledAccounts: gw.enabledAccounts ?? null,
+                    coolingAccounts: gw.coolingAccounts ?? null,
+                    providers: Array.isArray(gw.providers) ? gw.providers.slice(0, 4) : [],
+                    observedAt: gw.observedAt || n.metadata?.gateway_observed_at || null
+                  } : null
+                };
+              });
+          } catch {}
+        }
+
+        return sendJson(200, { ...local, peers });
       }
 
       if (url.pathname === '/api/cockpit' && req.method === 'GET') {

@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Agent-Nexus 协同控制台</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
   <script>
     // 立即执行以防止切换主题时的闪烁 (Anti-FOUC)，并支持 ?theme=light/dark 调试
@@ -20,353 +17,315 @@
   </script>
 </head>
 <body>
-  <!-- 顶栏 Topbar (46px) -->
   <header class="topbar">
     <div class="topbar-left">
       <div class="brand">
-        <div class="brand-icon-wrap">
-          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-          </svg>
-        </div>
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3L3 7.5l9 4.5 9-4.5L12 3z" />
+          <path d="M3 16.5L12 21l9-4.5" />
+          <path d="M3 12L12 16.5 21 12" />
+        </svg>
         <span class="brand-name">Nexus</span>
       </div>
-      <div class="status-capsule" title="Nexus 协同守护进程状态">
+      <div class="status-capsule" title="协调服务连接状态">
         <span class="pulse-dot" id="live-dot"></span>
-        <span id="daemon-status" class="daemon-text">守护就绪</span>
+        <span id="daemon-status" class="daemon-text">连接中</span>
       </div>
     </div>
 
-    <!-- 核心视图切换 Segmented Tabs -->
     <nav class="nav-segmented" id="nav-segmented" aria-label="视图切换">
       <button class="seg-btn active" data-view="sessions" id="tab-sessions">
-        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-          <line x1="8" y1="21" x2="16" y2="21"></line>
-          <line x1="12" y1="17" x2="12" y2="21"></line>
+        <svg class="seg-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+          <path d="M9 3v18"></path>
         </svg>
-        <span>会话与防撞</span>
+        <span>会话</span>
       </button>
       <button class="seg-btn" data-view="routing" id="tab-routing">
-        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="seg-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="18" cy="5" r="3"></circle>
           <circle cx="6" cy="12" r="3"></circle>
           <circle cx="18" cy="19" r="3"></circle>
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"></path>
         </svg>
-        <span>协同路由</span>
+        <span>路由</span>
       </button>
       <button class="seg-btn" data-view="memory" id="tab-memory">
-        <svg class="seg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="seg-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
         </svg>
-        <span>接力与记忆</span>
+        <span>接力</span>
       </button>
     </nav>
 
     <div class="topbar-right">
-      <select id="project-selector" class="proj-select" title="切换工作区工程">
-        <option value="all">全景工程 (跨项目)</option>
-        <option value="default" selected>Default Project</option>
+      <select id="project-selector" class="proj-select" title="切换工程" aria-label="切换工程">
+        <option value="all">全部工程</option>
       </select>
 
-      <button id="theme-toggle-btn" class="icon-btn" title="切换暗色/亮色外观" aria-label="切换外观">
-        <svg class="theme-icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="5"></circle>
-          <line x1="12" y1="1" x2="12" y2="3"></line>
-          <line x1="12" y1="21" x2="12" y2="23"></line>
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-          <line x1="1" y1="12" x2="3" y2="12"></line>
-          <line x1="21" y1="12" x2="23" y2="12"></line>
+      <button id="theme-toggle-btn" class="icon-btn" title="切换外观" aria-label="切换外观">
+        <svg class="theme-icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
         </svg>
-        <svg class="theme-icon icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        <svg class="theme-icon icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path>
         </svg>
       </button>
 
-      <button id="btn-refresh" class="icon-btn" title="立即同步快照" aria-label="立即同步">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M23 4v6h-6"></path>
-          <path d="M1 20v-6h6"></path>
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+      <button id="btn-refresh" class="icon-btn" title="刷新数据" aria-label="刷新数据">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 11a8 8 0 1 0-2.3 5.7"></path>
+          <path d="M20 4v7h-7"></path>
         </svg>
       </button>
     </div>
   </header>
 
-  <!-- 状态条 (34px) -->
   <div class="status-ribbon">
     <div class="ribbon-stats">
-      <div class="stat-pill pill-working" title="正在修改代码文件的活跃助手">
+      <div class="stat-pill pill-working" title="持有租约、正在改文件的会话">
         <span class="pill-dot"></span>
         <span class="pill-label">施工</span>
         <b id="stat-working" class="pill-num">0</b>
       </div>
-      <div class="stat-pill pill-waiting" title="遭遇资源冲突排队避让中">
+      <div class="stat-pill pill-waiting" title="因冲突正在排队的会话">
         <span class="pill-dot"></span>
         <span class="pill-label">排队</span>
         <b id="stat-waiting" class="pill-num">0</b>
       </div>
-      <div class="stat-pill pill-locks" title="当前独占持有的文件与命令锁">
+      <div class="stat-pill pill-locks" title="当前生效的文件与资源租约">
         <span class="pill-dot"></span>
-        <span class="pill-label">独占锁</span>
+        <span class="pill-label">租约</span>
         <b id="stat-locks" class="pill-num">0</b>
+      </div>
+      <div class="stat-pill pill-gateway" id="stat-gateway-pill" title="本机 CPA 网关（只读观测）">
+        <span class="pill-dot" id="gateway-dot"></span>
+        <span class="pill-label">网关</span>
+        <b id="stat-gateway" class="pill-num">—</b>
       </div>
     </div>
 
-    <!-- 跨机集群算力拓扑带 (Cluster Nodes Ribbon) -->
-    <div class="cluster-nodes-bar" id="cluster-nodes-bar" title="跨机算力节点与探针拓扑"></div>
+    <div class="cluster-nodes-bar" id="cluster-nodes-bar" title="已上报的探针节点"></div>
   </div>
 
-  <!-- 主体工作区 Main Body -->
   <main class="main-body">
-    <!-- VIEW 1: 会话与防撞 (Sessions & Collision Prevention) -->
+    <!-- VIEW 1: 会话与租约 -->
     <div id="view-sessions" class="view-panel active">
       <div class="split-layout" id="sessions-split-layout">
-        <!-- 左栏 56%: 活跃会话与锁看板 -->
         <div class="pane-left" id="pane-sessions-left">
-          <!-- 跨机接力待认领浮动卡片 (Active Handoff Banner) -->
-          <div id="handoff-alert-banner" class="handoff-pipeline-card" style="display: none;"></div>
+          <div id="handoff-alert-banner" class="handoff-banner" style="display: none;"></div>
 
-          <!-- 活跃会话卡片 -->
           <section class="panel-card flex-agents" id="section-agents">
             <div class="panel-head">
-              <div class="panel-title-wrap">
-                <span class="panel-title">在席助手 (Active Agents)</span>
-              </div>
-              <span class="panel-meta" id="agents-meta">0 个在线</span>
+              <span class="panel-title">会话</span>
+              <span class="panel-meta" id="agents-meta">0 个</span>
             </div>
             <div class="scroll-container" id="agents-container">
-              <div class="empty-hint">暂无在线会话，当 Claude Code 启动时将自动感知接入</div>
+              <div class="empty-hint">尚无会话上报</div>
             </div>
           </section>
 
-          <!-- 助手与锁面板垂直拖拽调整条 -->
-          <div class="split-resizer resizer-row" id="resizer-agents-locks" title="上下拖动调整在席助手与锁面板高度 (双击重置)">
+          <div class="split-resizer resizer-row" id="resizer-agents-locks" title="拖动调整高度，双击复位">
             <div class="resizer-handle-bar"></div>
           </div>
 
-          <!-- 锁定文件与资源 -->
           <section class="panel-card flex-locks" id="section-locks">
             <div class="panel-head">
-              <div class="panel-title-wrap">
-                <span class="panel-title">锁定资源与文件 (Locks & Claims)</span>
-              </div>
-              <span class="panel-meta" id="locks-meta">0 项锁定</span>
+              <span class="panel-title">租约</span>
+              <span class="panel-meta" id="locks-meta">0 项</span>
             </div>
             <div id="conflict-alert" class="conflict-banner" style="display: none;"></div>
             <div class="scroll-container" id="locks-container">
-              <div class="empty-hint">当前无活跃独占锁，所有写入与命令均可畅行</div>
+              <div class="empty-hint">当前没有生效的租约</div>
             </div>
           </section>
         </div>
 
-        <!-- 左右栏水平拖拽调整条 -->
-        <div class="split-resizer resizer-col" id="resizer-sessions-split" title="左右拖动调整两栏宽度 (双击重置)">
+        <div class="split-resizer resizer-col" id="resizer-sessions-split" title="拖动调整宽度，双击复位">
           <div class="resizer-handle-bar"></div>
         </div>
 
-        <!-- 右栏 44%: 实时协同与防撞流水 -->
         <div class="pane-right" id="pane-sessions-right">
           <section class="panel-card flex-stream">
             <div class="panel-head">
-              <div class="panel-title-wrap">
-                <span class="panel-title">协同防撞动态 (Live Stream)</span>
-              </div>
+              <span class="panel-title">事件</span>
               <div class="stream-filters">
                 <button class="filter-pill active" data-filter="all">全部</button>
-                <button class="filter-pill" data-filter="conflict">仅拦截</button>
+                <button class="filter-pill" data-filter="conflict">拦截</button>
                 <button class="filter-pill" data-filter="release">释放</button>
               </div>
             </div>
             <div class="scroll-container stream-container" id="timeline-container">
-              <div class="empty-hint">等待协同事件发生...</div>
+              <div class="empty-hint">暂无事件</div>
+            </div>
+          </section>
+
+          <section class="panel-card gateway-panel" id="gateway-card">
+            <div class="panel-head">
+              <span class="panel-title">网关</span>
+              <span class="panel-meta" id="gateway-badge">—</span>
+            </div>
+            <div class="gateway-body">
+              <div class="gateway-endpoint-row">
+                <span class="gateway-label">管理接口</span>
+                <span class="gateway-endpoint" id="gateway-endpoint">—</span>
+              </div>
+              <div class="gateway-stats">
+                <div class="gateway-stat"><b id="gateway-accounts">—</b><span>账号</span></div>
+                <div class="gateway-stat"><b id="gateway-enabled">—</b><span>可用</span></div>
+                <div class="gateway-stat"><b id="gateway-cooling">—</b><span>冷却</span></div>
+              </div>
+              <div class="gateway-providers" id="gateway-providers"></div>
+              <div class="gateway-peers" id="gateway-peers"></div>
+              <div class="gateway-note" id="gateway-note">只读观测，Nexus 不转发模型流量</div>
             </div>
           </section>
         </div>
       </div>
     </div>
 
-    <!-- VIEW 2: 协同路由图 (Session Routing & Active Locks) -->
+    <!-- VIEW 2: 路由 -->
     <div id="view-routing" class="view-panel">
       <section class="panel-card routing-panel-card">
         <div class="panel-head routing-head">
-          <div class="routing-title-group">
-            <span class="panel-title">会话路由与独占锁拓扑<span class="panel-title-en"> (Session Routing & Active Locks)</span></span>
-            <span class="panel-meta" id="routing-summary-meta">0 个在席会话 · 0 项独占锁 · 0 处冲突</span>
-          </div>
-          <div class="routing-actions-wrap">
-            <span class="routing-mode-tag">
-              <span class="pulse-dot-sm"></span>
-              实时并发防撞中枢
-            </span>
-          </div>
+          <span class="panel-title">会话与租约路由</span>
+          <span class="panel-meta" id="routing-summary-meta">0 会话 · 0 租约 · 0 等待</span>
         </div>
 
-        <!-- 3-Column Routing Canvas with SVG Connector Layer -->
         <div class="routing-canvas-wrapper" id="routing-canvas-wrapper">
-          <svg class="routing-svg-layer" id="routing-svg-layer"></svg>
+          <svg class="routing-svg-layer" id="routing-svg-layer" aria-hidden="true"></svg>
 
           <div class="routing-lanes">
-            <!-- Lane 1: 活跃会话源 (Active Sessions) -->
             <div class="routing-lane lane-sessions" id="lane-sessions">
               <div class="lane-header">
-                <span class="lane-title">在席会话 (Sessions)</span>
+                <span class="lane-title">会话</span>
                 <span class="lane-badge" id="badge-sessions-count">0</span>
               </div>
               <div class="lane-content scroll-container" id="routing-sessions-container">
-                <div class="empty-hint">暂无在席会话</div>
+                <div class="empty-hint">无会话</div>
               </div>
             </div>
 
-            <!-- Lane 2: Nexus 仲裁中枢浮动节点 (Arbiter Hub Floating Node) -->
             <div class="routing-lane lane-hub" id="lane-hub">
               <div class="hub-content-wrap" id="routing-hub-container">
                 <div class="nexus-hub-card" id="nexus-hub-card">
                   <div class="hub-card-header">
                     <div class="hub-avatar">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 3L3 7.5l9 4.5 9-4.5L12 3z"></path>
+                        <path d="M3 16.5L12 21l9-4.5"></path>
+                        <path d="M3 12L12 16.5 21 12"></path>
                       </svg>
                     </div>
                     <div class="hub-info">
                       <div class="hub-title-row">
-                        <span class="hub-name">Nexus Arbiter Core</span>
+                        <span class="hub-name">Nexus Hub</span>
                       </div>
                       <div class="hub-sub-row">
-                        <span class="hub-status-pill" title="127.0.0.1:4300">127.0.0.1:4300</span>
-                        <span class="hub-sub">确定性防撞仲裁中枢</span>
+                        <span class="hub-status-pill" id="hub-endpoint">—</span>
                       </div>
                     </div>
                   </div>
                   <div class="hub-status-strip">
                     <div class="hub-status-indicator">
                       <span class="pulse-dot-sm" id="hub-status-dot"></span>
-                      <span id="hub-status-text">并发仲裁守护中 · 通道畅通</span>
+                      <span id="hub-status-text">租约仲裁</span>
                     </div>
                   </div>
                   <div class="hub-card-footer">
-                    <span class="hub-mode-badge">文件/资源租约互斥</span>
-                    <span class="hub-hook-badge">PostToolUse 极速解禁</span>
+                    <span class="hub-mode-badge">文件 / 模块 / 符号</span>
+                    <span class="hub-hook-badge">Hook 实时释放</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Lane 3: 独占文件与排他锁 (Active Locks & Wait Queue) -->
             <div class="routing-lane lane-targets" id="lane-targets">
               <div class="lane-header">
-                <span class="lane-title">独占文件与排他锁 (Active Locks)</span>
+                <span class="lane-title">租约与等待</span>
                 <span class="lane-badge" id="badge-targets-count">0</span>
               </div>
               <div class="lane-content scroll-container" id="routing-targets-container">
-                <div class="empty-hint">暂无活跃独占文件或排他锁</div>
+                <div class="empty-hint">无租约</div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 可拖拽分割条 (上下拖动调整决策面板高度，双击折叠/展开) -->
-        <div class="split-resizer resizer-row" id="resizer-routing-decisions" title="上下拖动调整决策面板高度 (双击折叠/展开)">
+        <div class="split-resizer resizer-row" id="resizer-routing-decisions" title="拖动调整高度，双击折叠">
           <div class="resizer-handle-bar"></div>
         </div>
 
-        <!-- 底部裁决决策流水 (Arbitration Decisions Log) -->
         <div class="routing-decisions-panel" id="routing-decisions-panel">
           <div class="decisions-head">
             <div class="decisions-title-wrap">
-              <button id="btn-toggle-decisions" class="btn-icon-xs toggle-decisions-btn" title="折叠/展开决策面板 (快捷键或双击分割条)" aria-label="折叠/展开">
-                <svg class="toggle-icon-glyph" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <button id="btn-toggle-decisions" class="btn-icon-xs toggle-decisions-btn" title="折叠或展开" aria-label="折叠或展开">
+                <svg class="toggle-icon-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
               </button>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-              </svg>
-              <span class="decisions-title">最近路由与裁决决策 (Arbitration Decisions)</span>
-              <span class="decisions-badge" id="decisions-count-badge">实时</span>
+              <span class="decisions-title">裁决记录</span>
+              <span class="decisions-badge" id="decisions-count-badge">0</span>
             </div>
             <div class="decisions-filters">
-              <button class="d-filter-btn active" data-filter="all">全部决策</button>
-              <button class="d-filter-btn" data-filter="grant">独占授权</button>
-              <button class="d-filter-btn" data-filter="intercept">冲突拦截</button>
-              <button class="d-filter-btn" data-filter="release">毫秒释放</button>
+              <button class="d-filter-btn active" data-filter="all">全部</button>
+              <button class="d-filter-btn" data-filter="grant">授权</button>
+              <button class="d-filter-btn" data-filter="intercept">拦截</button>
+              <button class="d-filter-btn" data-filter="release">释放</button>
             </div>
           </div>
           <div class="decisions-stream scroll-container" id="routing-decisions-stream">
-            <div class="empty-hint">暂无路由裁决记录</div>
+            <div class="empty-hint">暂无裁决</div>
           </div>
         </div>
       </section>
     </div>
 
-    <!-- VIEW 3: 跨机接力与工程记忆 (Cross-Machine Handoffs & Memories) -->
+    <!-- VIEW 3: 接力与记忆 -->
     <div id="view-memory" class="view-panel">
       <div class="split-layout" id="memory-split-layout">
-        <!-- 左栏 50%: 跨机工作交接流 (Active & Historical Handoffs) -->
         <div class="pane-left" id="pane-memory-left">
           <section class="panel-card flex-handoffs" id="section-handoffs">
             <div class="panel-head">
-              <div class="panel-title-wrap">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M16 3h5v5"></path>
-                  <path d="M4 20L21 3"></path>
-                  <path d="M21 16v5h-5"></path>
-                  <path d="M15 15l6 6"></path>
-                  <path d="M4 4l5 5"></path>
-                </svg>
-                <span class="panel-title">跨机接力工单<span class="panel-title-en"> (Work Handoffs)</span></span>
-              </div>
+              <span class="panel-title">接力工单</span>
               <div class="panel-actions">
-                <button id="btn-create-handoff-open" class="btn-primary-sm">+ 新建接力</button>
+                <button id="btn-create-handoff-open" class="btn-primary-sm">新建</button>
               </div>
             </div>
             <div class="scroll-container" id="handoffs-container">
-              <div class="empty-hint">暂无交接记录，当本地或远端会话提交 Git / 阶段完工时将自动生成</div>
+              <div class="empty-hint">提交 Git 时自动生成</div>
             </div>
           </section>
         </div>
 
-        <div class="split-resizer resizer-col" id="resizer-memory-split" title="左右拖动调整两栏宽度 (双击重置)">
+        <div class="split-resizer resizer-col" id="resizer-memory-split" title="拖动调整宽度，双击复位">
           <div class="resizer-handle-bar"></div>
         </div>
 
-        <!-- 右栏 50%: 全局工程记忆与避坑规约 (Long-term Memories & Gotchas) -->
         <div class="pane-right" id="pane-memory-right">
           <section class="panel-card flex-memories" id="section-memories">
             <div class="panel-head">
-              <div class="panel-title-wrap">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                </svg>
-                <span class="panel-title">工程记忆与规约<span class="panel-title-en"> (Memories & Gotchas)</span></span>
-              </div>
+              <span class="panel-title">工程记忆</span>
               <div class="panel-actions">
-                <button id="btn-create-memory-open" class="btn-primary-sm">+ 沉淀经验</button>
+                <button id="btn-create-memory-open" class="btn-primary-sm">新建</button>
               </div>
             </div>
             <div class="memory-toolbar">
               <div class="memory-filter-pills">
                 <button class="filter-pill active" data-category="all">全部</button>
-                <button class="filter-pill" data-category="gotcha">避坑 (Gotcha)</button>
-                <button class="filter-pill" data-category="rule">规约 (Rule)</button>
-                <button class="filter-pill" data-category="architecture">架构 (Arch)</button>
+                <button class="filter-pill" data-category="gotcha">避坑</button>
+                <button class="filter-pill" data-category="rule">规约</button>
+                <button class="filter-pill" data-category="architecture">架构</button>
                 <button class="filter-pill" data-category="milestone">里程碑</button>
               </div>
               <div class="memory-search-wrap">
-                <input type="text" id="memory-search-input" class="memory-search-input" placeholder="搜索架构决议、规约、避坑经验..." />
+                <input type="text" id="memory-search-input" class="memory-search-input" placeholder="搜索" aria-label="搜索工程记忆" />
               </div>
             </div>
             <div class="scroll-container" id="memories-container">
-              <div class="empty-hint">暂无沉淀记录，使用 nexus_save_memory 或在此沉淀跨机共享经验</div>
+              <div class="empty-hint">暂无记忆</div>
             </div>
           </section>
         </div>
@@ -374,60 +333,58 @@
     </div>
   </main>
 
-  <!-- 创建交接模态框 -->
   <div id="modal-handoff" class="modal-backdrop" hidden>
-    <div class="modal-dialog">
+    <div class="modal-dialog" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <span class="modal-title">发起跨机工作交接 (New Handoff)</span>
+        <span class="modal-title">新建接力工单</span>
         <button id="btn-modal-handoff-close" class="close-icon-btn" aria-label="关闭">&times;</button>
       </div>
       <div class="modal-body">
-        <label class="modal-label">阶段任务目标 (Objective):</label>
-        <input type="text" id="modal-handoff-objective" class="modal-input" placeholder="例如：重构状态机与单测验证完毕" />
-        <label class="modal-label">当前现场与进展 (State Summary):</label>
-        <textarea id="modal-handoff-state" class="modal-textarea" rows="3" placeholder="例如：已在 Windows 下跑通单测，涉及核心调度文件修改"></textarea>
-        <label class="modal-label">修改文件列表 (以逗号分隔):</label>
+        <label class="modal-label" for="modal-handoff-objective">目标</label>
+        <input type="text" id="modal-handoff-objective" class="modal-input" placeholder="这一段要完成什么" />
+        <label class="modal-label" for="modal-handoff-state">当前进展</label>
+        <textarea id="modal-handoff-state" class="modal-textarea" rows="3" placeholder="已完成什么，卡在哪里"></textarea>
+        <label class="modal-label" for="modal-handoff-files">涉及文件</label>
         <input type="text" id="modal-handoff-files" class="modal-input" placeholder="src/daemon/coordinator.js, test/runner.test.js" />
-        <label class="modal-label">建议接力动作 (Next Action):</label>
-        <input type="text" id="modal-handoff-next" class="modal-input" placeholder="例如：在远端 Linux 下执行 make test 并打包 Docker 镜像" />
+        <label class="modal-label" for="modal-handoff-next">下一步</label>
+        <input type="text" id="modal-handoff-next" class="modal-input" placeholder="接手续做什么" />
       </div>
       <div class="modal-footer">
         <button id="btn-modal-handoff-cancel" class="btn-secondary">取消</button>
-        <button id="btn-modal-handoff-submit" class="btn-primary">生成交接工单</button>
+        <button id="btn-modal-handoff-submit" class="btn-primary">创建</button>
       </div>
     </div>
   </div>
 
-  <!-- 创建记忆模态框 -->
   <div id="modal-memory" class="modal-backdrop" hidden>
-    <div class="modal-dialog">
+    <div class="modal-dialog" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <span class="modal-title">沉淀工程长期记忆 (Save Memory)</span>
+        <span class="modal-title">新建工程记忆</span>
         <button id="btn-modal-memory-close" class="close-icon-btn" aria-label="关闭">&times;</button>
       </div>
       <div class="modal-body">
         <div class="modal-row">
           <div class="modal-col">
-            <label class="modal-label">分类 (Category):</label>
+            <label class="modal-label" for="modal-memory-cat">分类</label>
             <select id="modal-memory-cat" class="modal-select">
-              <option value="gotcha">避坑经验 (Gotcha)</option>
-              <option value="rule">开发规约 (Rule)</option>
-              <option value="architecture">架构决议 (Architecture)</option>
-              <option value="milestone">里程碑 (Milestone)</option>
-              <option value="general">常规知识 (General)</option>
+              <option value="gotcha">避坑</option>
+              <option value="rule">规约</option>
+              <option value="architecture">架构</option>
+              <option value="milestone">里程碑</option>
+              <option value="general">常规</option>
             </select>
           </div>
           <div class="modal-col">
-            <label class="modal-label">唯一标识符 Key Slug:</label>
-            <input type="text" id="modal-memory-key" class="modal-input" placeholder="如: linux_glibc_build" />
+            <label class="modal-label" for="modal-memory-key">标识</label>
+            <input type="text" id="modal-memory-key" class="modal-input" placeholder="linux_glibc_build" />
           </div>
         </div>
-        <label class="modal-label">记忆详细内容 (Markdown 支持):</label>
-        <textarea id="modal-memory-content" class="modal-textarea" rows="4" placeholder="详细阐述架构决策、技术避坑经验或约束规则..."></textarea>
+        <label class="modal-label" for="modal-memory-content">内容</label>
+        <textarea id="modal-memory-content" class="modal-textarea" rows="5" placeholder="写下结论与依据"></textarea>
       </div>
       <div class="modal-footer">
         <button id="btn-modal-memory-cancel" class="btn-secondary">取消</button>
-        <button id="btn-modal-memory-submit" class="btn-primary">保存记忆</button>
+        <button id="btn-modal-memory-submit" class="btn-primary">保存</button>
       </div>
     </div>
   </div>

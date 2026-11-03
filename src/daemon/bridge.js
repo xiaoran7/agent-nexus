@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { getClaudeSessionRegistry } from './coordinator.js';
 import { resolveProject } from '../domain/project.js';
+import { CpaGatewayService } from '../domain/cpa-gateway.js';
 import { resolveNexusEndpoint } from '../transport/auth.js';
 
 export function buildLocalSessionPayload(sessionsDir = null) {
@@ -60,6 +61,25 @@ export async function pushRemoteSessionsOnce(options = {}) {
     ...(endpoint.token ? { Authorization: `Bearer ${endpoint.token}` } : {})
   };
 
+  // 本节点 CPA 网关事实随快照一并上报，中心面板据此展示真实网关健康度。
+  let gateway = null;
+  if (options.observeGateway !== false) {
+    try {
+      const svc = options.cpaGatewayService || new CpaGatewayService();
+      const status = await svc.getStatus();
+      gateway = {
+        reachable: status.reachable === true,
+        unauthorized: status.unauthorized === true,
+        baseUrl: status.baseUrl,
+        observedAt: status.observedAt,
+        totalAccounts: status.auth?.totalAccounts ?? null,
+        enabledAccounts: status.auth?.enabledAccounts ?? null,
+        coolingAccounts: status.auth?.coolingAccounts ?? null,
+        providers: status.auth?.providers || []
+      };
+    } catch {}
+  }
+
   const res = await fetch(`${endpoint.baseUrl}/api/agents/sync-remote`, {
     method: 'POST',
     headers,
@@ -67,7 +87,8 @@ export async function pushRemoteSessionsOnce(options = {}) {
       host_id: endpoint.nodeId,
       platform: process.platform,
       full_snapshot: true,
-      sessions
+      sessions,
+      gateway
     })
   });
 

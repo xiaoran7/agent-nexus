@@ -1,5 +1,6 @@
 // =============================================================================
-// Agent-Nexus Companion Console Controller (Compact 800x560 High-Density UX)
+// Agent-Nexus Console Controller
+// 只做三件事：把 Hub 上报的事实摆出来、把真实网关健康度摆出来、把操作递回 Hub。
 // =============================================================================
 
 function getNexusToken() {
@@ -10,9 +11,7 @@ function getNexusToken() {
     return fromQuery;
   }
   const stored = sessionStorage.getItem('nexusToken');
-  if (stored) {
-    return stored;
-  }
+  if (stored) return stored;
   if (typeof window !== 'undefined' && window.__NEXUS_TOKEN__) {
     try { sessionStorage.setItem('nexusToken', window.__NEXUS_TOKEN__); } catch {}
     try { localStorage.setItem('nexusToken', window.__NEXUS_TOKEN__); } catch {}
@@ -35,22 +34,20 @@ function showTokenPrompt(reason = 'missing') {
       <div class="nexus-modal-card">
         <div class="nexus-modal-header">
           <span class="nexus-modal-title">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
             </svg>
-            <span>Nexus 访问认证</span>
+            <span>访问令牌</span>
           </span>
-          <button class="nexus-modal-close" id="nexus-token-close-btn" title="关闭">&times;</button>
+          <button class="nexus-modal-close" id="nexus-token-close-btn" aria-label="关闭">&times;</button>
         </div>
-        <p class="nexus-modal-desc">
-          ${reason === 'invalid' ? '当前令牌 (Token) 校验失败 (401 Unauthorized)，请重新输入：' : '未检测到有效访问令牌。请输入 Nexus Hub Operator Token：'}
-        </p>
+        <p class="nexus-modal-desc">${reason === 'invalid' ? '令牌无效，请重新输入。' : '需要 Hub 的 Operator Token 才能读取数据。'}</p>
         <div class="nexus-modal-input-row">
-          <input type="password" id="nexus-token-input" class="nexus-modal-input" placeholder="输入 Token（或在 URL 中添加 ?token=...）" autocomplete="off" />
-          <button id="nexus-token-save-btn" class="nexus-modal-btn primary">保存并连接</button>
+          <input type="password" id="nexus-token-input" class="nexus-modal-input" placeholder="粘贴 Token" autocomplete="off" />
+          <button id="nexus-token-save-btn" class="nexus-modal-btn primary">连接</button>
         </div>
-        <div class="nexus-modal-hint">提示：Token 位于 Hub 宿主机 <code>~/.agent-nexus/session.token</code> 或 <code>hub.json</code></div>
+        <div class="nexus-modal-hint">位于 Hub 的 <code>~/.agent-nexus/session.token</code></div>
       </div>
     `;
     document.body.appendChild(modal);
@@ -72,21 +69,17 @@ function showTokenPrompt(reason = 'missing') {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handleSave();
     });
-    closeBtn.addEventListener('click', () => {
-      modal.remove();
-    });
+    closeBtn.addEventListener('click', () => modal.remove());
   } else {
     const desc = modal.querySelector('.nexus-modal-desc');
     if (desc) {
       desc.textContent = reason === 'invalid'
-        ? '当前令牌 (Token) 校验失败 (401 Unauthorized)，请重新输入：'
-        : '未检测到有效访问令牌。请输入 Nexus Hub Operator Token：';
+        ? '令牌无效，请重新输入。'
+        : '需要 Hub 的 Operator Token 才能读取数据。';
     }
   }
   const input = modal.querySelector('#nexus-token-input');
-  if (input) {
-    setTimeout(() => input.focus(), 100);
-  }
+  if (input) setTimeout(() => input.focus(), 100);
 }
 
 let currentProjectId = 'default';
@@ -115,7 +108,7 @@ const authHeaders = () => {
     : { 'Content-Type': 'application/json' };
 };
 
-// HTML 安全转义函数，杜绝存储型与反射型 XSS
+// HTML 安全转义，杜绝存储型与反射型 XSS
 function escapeHtml(str) {
   if (str == null) return '';
   return String(str)
@@ -126,7 +119,6 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-// 通用防抖函数，避免事件风暴引发网络雪崩与渲染卡顿
 function debounce(fn, delay = 250) {
   let timer = null;
   return function (...args) {
@@ -135,7 +127,7 @@ function debounce(fn, delay = 250) {
   };
 }
 
-// 判定会话名称是否为机械截断哈希、编号或系统默认占位符
+// 机械截断哈希、编号与默认占位符不当作人读名字
 function isMechanicalAgentName(name) {
   if (!name || typeof name !== 'string') return true;
   const t = name.trim();
@@ -148,14 +140,11 @@ function isMechanicalAgentName(name) {
   return false;
 }
 
-// 规范化 Agent 显示名称，剔除乱码并提供标准化身份标识
 function formatAgentDisplayName(name, agentId, provider, sessionId, intentSummary = null) {
   if (name && typeof name === 'string' && name.trim()) {
     const trimmed = name.trim();
-    if (!/[-\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed) && !/^[?\s.\-=_]+$/.test(trimmed)) {
-      if (!isMechanicalAgentName(trimmed)) {
-        return trimmed;
-      }
+    if (!/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(trimmed) && !/^[?\s.\-=_]+$/.test(trimmed)) {
+      if (!isMechanicalAgentName(trimmed)) return trimmed;
     }
   }
 
@@ -169,16 +158,16 @@ function formatAgentDisplayName(name, agentId, provider, sessionId, intentSummar
   const parts = (agentId || '').split('-');
   const prov = (provider || parts[0] || 'agent').toLowerCase();
   const provMap = {
-    'claude': 'Claude 助手',
-    'claude-fable': 'Claude Fable 助手',
-    'claude-sonnet': 'Claude Sonnet 助手',
-    'claude-opus': 'Claude Opus 助手',
-    'codex': 'Codex 助手',
-    'system': 'Nexus 协调器',
-    'nexus': 'Nexus 协调器',
-    'agent': '协同助手'
+    'claude': 'Claude',
+    'claude-fable': 'Claude Fable',
+    'claude-sonnet': 'Claude Sonnet',
+    'claude-opus': 'Claude Opus',
+    'codex': 'Codex',
+    'system': 'Nexus',
+    'nexus': 'Nexus',
+    'agent': '助手'
   };
-  return provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1) + ' 助手');
+  return provMap[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
 }
 
 const globalAgentMap = new Map();
@@ -203,11 +192,10 @@ function updateGlobalAgentRegistry(agents = [], claims = [], timeline = []) {
     if (candidateName) {
       const existing = globalAgentMap.get(c.agent_id);
       if (!existing || isMechanicalAgentName(existing.name)) {
-        const resolved = formatAgentDisplayName(candidateName, c.agent_id);
         globalAgentMap.set(c.agent_id, {
           id: c.agent_id,
           name: candidateName,
-          displayName: resolved
+          displayName: formatAgentDisplayName(candidateName, c.agent_id)
         });
       }
     }
@@ -226,14 +214,10 @@ function updateGlobalAgentRegistry(agents = [], claims = [], timeline = []) {
 }
 
 function resolveAgentName(agentId, fallbackName = null) {
-  if (!agentId || agentId === 'system' || agentId === 'nexus') {
-    return 'Nexus 协调器';
-  }
+  if (!agentId || agentId === 'system' || agentId === 'nexus') return 'Nexus';
   if (fallbackName && typeof fallbackName === 'string' && fallbackName.trim()) {
     const clean = fallbackName.trim();
-    if (!isMechanicalAgentName(clean)) {
-      return clean;
-    }
+    if (!isMechanicalAgentName(clean)) return clean;
   }
   if (globalAgentMap.has(agentId)) {
     const reg = globalAgentMap.get(agentId);
@@ -243,26 +227,24 @@ function resolveAgentName(agentId, fallbackName = null) {
   return formatAgentDisplayName(fallbackName, agentId);
 }
 
-// DOM 元素缓存
 const dom = {
-  // 顶栏与状态条
   liveDot: document.getElementById('live-dot'),
   daemonStatus: document.getElementById('daemon-status'),
   projectSelector: document.getElementById('project-selector'),
   themeToggleBtn: document.getElementById('theme-toggle-btn'),
   btnRefresh: document.getElementById('btn-refresh'),
 
-  // 统计指标
   statWorking: document.getElementById('stat-working'),
   statWaiting: document.getElementById('stat-waiting'),
   statLocks: document.getElementById('stat-locks'),
+  statGateway: document.getElementById('stat-gateway'),
+  gatewayDot: document.getElementById('gateway-dot'),
+  statGatewayPill: document.getElementById('stat-gateway-pill'),
 
-  // 导航切换
   navSegmented: document.getElementById('nav-segmented'),
   segBtns: document.querySelectorAll('.seg-btn'),
   viewPanels: document.querySelectorAll('.view-panel'),
 
-  // View 1: Sessions & Collision Prevention
   agentsMeta: document.getElementById('agents-meta'),
   agentsContainer: document.getElementById('agents-container'),
   locksMeta: document.getElementById('locks-meta'),
@@ -275,7 +257,6 @@ const dom = {
   resizerAgentsLocks: document.getElementById('resizer-agents-locks'),
   resizerSessionsSplit: document.getElementById('resizer-sessions-split'),
 
-  // View 2: Routing & Active Locks
   tabRouting: document.getElementById('tab-routing'),
   viewRouting: document.getElementById('view-routing'),
   routingSummaryMeta: document.getElementById('routing-summary-meta'),
@@ -284,6 +265,7 @@ const dom = {
   routingSessionsContainer: document.getElementById('routing-sessions-container'),
   badgeSessionsCount: document.getElementById('badge-sessions-count'),
   nexusHubCard: document.getElementById('nexus-hub-card'),
+  hubEndpoint: document.getElementById('hub-endpoint'),
   hubStatusText: document.getElementById('hub-status-text'),
   hubStatusDot: document.getElementById('hub-status-dot'),
   routingTargetsContainer: document.getElementById('routing-targets-container'),
@@ -295,11 +277,20 @@ const dom = {
   btnToggleDecisions: document.getElementById('btn-toggle-decisions'),
   resizerRoutingDecisions: document.getElementById('resizer-routing-decisions'),
 
-  // Cluster Nodes & Handoff Banner
+  // CPA 网关卡片
+  gatewayCard: document.getElementById('gateway-card'),
+  gatewayBadge: document.getElementById('gateway-badge'),
+  gatewayEndpoint: document.getElementById('gateway-endpoint'),
+  gatewayAccounts: document.getElementById('gateway-accounts'),
+  gatewayEnabled: document.getElementById('gateway-enabled'),
+  gatewayCooling: document.getElementById('gateway-cooling'),
+  gatewayProviders: document.getElementById('gateway-providers'),
+  gatewayPeers: document.getElementById('gateway-peers'),
+  gatewayNote: document.getElementById('gateway-note'),
+
   clusterNodesBar: document.getElementById('cluster-nodes-bar'),
   handoffAlertBanner: document.getElementById('handoff-alert-banner'),
 
-  // View 3: Work Handoffs & Long-Term Memories
   tabMemory: document.getElementById('tab-memory'),
   viewMemory: document.getElementById('view-memory'),
   paneMemoryLeft: document.getElementById('pane-memory-left'),
@@ -321,8 +312,16 @@ const dom = {
   memorySearchInput: document.getElementById('memory-search-input')
 };
 
+const MEMORY_CATEGORY_LABEL = {
+  gotcha: '避坑',
+  rule: '规约',
+  architecture: '架构',
+  milestone: '里程碑',
+  general: '常规'
+};
+
 // =============================================================================
-// Theme Management (暗色 / 亮色持久化与实时切换)
+// 外观
 // =============================================================================
 function getPreferredTheme() {
   const qTheme = new URLSearchParams(location.search).get('theme');
@@ -335,7 +334,7 @@ function getPreferredTheme() {
 function updateThemeUI(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   if (dom.themeToggleBtn) {
-    dom.themeToggleBtn.setAttribute('title', theme === 'dark' ? '当前暗色外观，点击切换亮色' : '当前亮色外观，点击切换暗色');
+    dom.themeToggleBtn.setAttribute('title', theme === 'dark' ? '切换为亮色' : '切换为暗色');
   }
 }
 
@@ -346,33 +345,26 @@ function toggleTheme() {
   updateThemeUI(next);
 }
 
-if (dom.themeToggleBtn) {
-  dom.themeToggleBtn.onclick = toggleTheme;
-}
+if (dom.themeToggleBtn) dom.themeToggleBtn.onclick = toggleTheme;
 
 try {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-    if (!localStorage.getItem('nexusTheme')) {
-      updateThemeUI(e.matches ? 'dark' : 'light');
-    }
+    if (!localStorage.getItem('nexusTheme')) updateThemeUI(e.matches ? 'dark' : 'light');
   });
 } catch {}
 
 updateThemeUI(getPreferredTheme());
 
 // =============================================================================
-// View Navigation (3-Tab Segmented Control)
+// 视图切换
 // =============================================================================
 function switchView(viewName) {
-  dom.segBtns.forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === viewName);
-  });
-  dom.viewPanels.forEach(panel => {
-    panel.classList.toggle('active', panel.id === `view-${viewName}`);
-  });
+  dom.segBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.view === viewName));
+  dom.viewPanels.forEach(panel => panel.classList.toggle('active', panel.id === `view-${viewName}`));
 
   if (viewName === 'routing') {
     fetchRoutingTopology();
+    fetchGateway();
     setTimeout(() => requestAnimationFrame(drawRoutingConnectors), 60);
   } else if (viewName === 'memory') {
     fetchHandoffs();
@@ -390,7 +382,6 @@ dom.segBtns.forEach(btn => {
   });
 });
 
-// 快捷键 ESC 退出模态窗
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (dom.modalHandoff) dom.modalHandoff.setAttribute('hidden', '');
@@ -399,14 +390,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// 刷新按钮
 if (dom.btnRefresh) {
   dom.btnRefresh.onclick = () => {
     loadProjects();
     fetchDashboard();
-    if (dom.viewRouting?.classList.contains('active')) {
-      fetchRoutingTopology();
-    }
+    fetchGateway({ refresh: true });
+    if (dom.viewRouting?.classList.contains('active')) fetchRoutingTopology();
     if (dom.viewMemory?.classList.contains('active')) {
       fetchHandoffs();
       fetchMemories(dom.memorySearchInput?.value || '', currentMemoryCategory);
@@ -415,23 +404,17 @@ if (dom.btnRefresh) {
 }
 
 // =============================================================================
-// Project Selection & Persistence
+// 工程选择
 // =============================================================================
 function selectProject(projectId) {
   currentProjectId = projectId;
   localStorage.setItem('nexusProjectId', currentProjectId);
-  if (dom.projectSelector) {
-    dom.projectSelector.value = currentProjectId;
-  }
+  if (dom.projectSelector) dom.projectSelector.value = currentProjectId;
   if (activeWs && activeWs.readyState === WebSocket.OPEN) {
-    try {
-      activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
-    } catch {}
+    try { activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId })); } catch {}
   }
   fetchDashboard();
-  if (dom.viewRouting?.classList.contains('active')) {
-    fetchRoutingTopology();
-  }
+  if (dom.viewRouting?.classList.contains('active')) fetchRoutingTopology();
   if (dom.viewMemory?.classList.contains('active')) {
     fetchHandoffs();
     fetchMemories(dom.memorySearchInput?.value || '', currentMemoryCategory);
@@ -449,16 +432,14 @@ function debouncedLoadProjects() {
 }
 
 if (dom.projectSelector) {
-  dom.projectSelector.onchange = () => {
-    selectProject(dom.projectSelector.value);
-  };
+  dom.projectSelector.onchange = () => selectProject(dom.projectSelector.value);
 }
 
 async function loadProjects() {
   try {
     const res = await fetch('/api/projects', { headers: authHeaders() });
     if (res.status === 401) {
-      updateConnectionIndicators(false, '令牌无效 (401)');
+      updateConnectionIndicators(false, '令牌无效');
       showTokenPrompt('invalid');
       return;
     }
@@ -477,9 +458,7 @@ async function loadProjects() {
     }
 
     globalProjectsMap.clear();
-    for (const p of uniqueProjects) {
-      globalProjectsMap.set(p.id, p);
-    }
+    for (const p of uniqueProjects) globalProjectsMap.set(p.id, p);
     totalGlobalOnlineAgents = uniqueProjects.reduce((sum, p) => sum + (p.online_agents_count || 0), 0);
 
     const qProject = new URLSearchParams(location.search).get('project') || new URLSearchParams(location.search).get('project_id');
@@ -497,34 +476,20 @@ async function loadProjects() {
     } else if (effectiveSavedId === 'all') {
       targetProject = { id: 'all' };
     } else if (effectiveSavedId) {
-      const found = uniqueProjects.find(p => p.id === effectiveSavedId);
-      if (found) {
-        targetProject = found;
-      }
+      targetProject = uniqueProjects.find(p => p.id === effectiveSavedId) || null;
+    }
+    if (!targetProject) targetProject = { id: 'all' };
+
+    currentProjectId = targetProject.id;
+    localStorage.setItem('nexusProjectId', currentProjectId);
+    if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+      try { activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId })); } catch {}
     }
 
-    if (!targetProject) {
-      targetProject = { id: 'all' };
-    }
-
-    if (targetProject) {
-      currentProjectId = targetProject.id;
-      localStorage.setItem('nexusProjectId', currentProjectId);
-      if (activeWs && activeWs.readyState === WebSocket.OPEN) {
-        try {
-          activeWs.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
-        } catch {}
-      }
-    }
-
-    const totalOnline = uniqueProjects.reduce((sum, p) => sum + (p.online_agents_count || 0), 0);
-    const allLabel = totalOnline > 0 ? `全景工程 (跨项目 · ${totalOnline} 在席)` : '全景工程 (跨项目)';
-    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>${allLabel}</option>`;
+    const allOption = `<option value="all" ${currentProjectId === 'all' ? 'selected' : ''}>全部工程</option>`;
     const projectOptions = uniqueProjects.map(p => {
       const idSafe = escapeHtml(p.id);
-      const baseName = p.display_name || p.id;
-      const countSuffix = (p.online_agents_count && p.online_agents_count > 0) ? ` (${p.online_agents_count} 在席)` : '';
-      const nameSafe = escapeHtml(baseName + countSuffix);
+      const nameSafe = escapeHtml(p.display_name || p.id);
       const selected = (p.id === currentProjectId && currentProjectId !== 'all') ? 'selected' : '';
       return `<option value="${idSafe}" ${selected}>${nameSafe}</option>`;
     }).join('');
@@ -532,9 +497,7 @@ async function loadProjects() {
     dom.projectSelector.innerHTML = allOption + projectOptions;
 
     fetchDashboard();
-    if (dom.viewRouting?.classList.contains('active')) {
-      fetchRoutingTopology();
-    }
+    if (dom.viewRouting?.classList.contains('active')) fetchRoutingTopology();
     if (dom.viewMemory?.classList.contains('active')) {
       fetchHandoffs();
       fetchMemories(dom.memorySearchInput?.value || '', currentMemoryCategory);
@@ -545,13 +508,13 @@ async function loadProjects() {
 }
 
 // =============================================================================
-// Dashboard Data & Rendering
+// 面板数据
 // =============================================================================
 async function fetchDashboard() {
   try {
     const res = await fetch(`/api/dashboard?project_id=${encodeURIComponent(currentProjectId)}`, { headers: authHeaders() });
     if (res.status === 401) {
-      updateConnectionIndicators(false, '令牌无效 (401)');
+      updateConnectionIndicators(false, '令牌无效');
       showTokenPrompt('invalid');
       return;
     }
@@ -573,77 +536,58 @@ function renderDashboardSnapshot(data) {
   updateGlobalAgentRegistry(agents, activeClaims, timeline);
   currentTimelineData = timeline;
 
-  const workingCount = agents.filter(a => a.lifecycle_state === 'working' || a.status === 'running').length;
-  const waitingCount = agents.filter(a => a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason).length;
-  const locksCount = activeClaims.length;
+  // 统计与列表共用同一份视图模型，避免"数量对不上"的假象。
+  const agentViews = buildAgentViews(agents, activeClaims);
+  const workingCount = agentViews.filter(a => a.uiState === 'working').length;
+  const waitingCount = agentViews.filter(a => a.uiState === 'waiting').length;
 
   if (dom.statWorking) dom.statWorking.textContent = workingCount;
   if (dom.statWaiting) dom.statWaiting.textContent = waitingCount;
-  if (dom.statLocks) dom.statLocks.textContent = locksCount;
+  if (dom.statLocks) dom.statLocks.textContent = activeClaims.length;
 
-  renderActiveAgents(agents, activeClaims);
+  renderActiveAgents(agentViews);
   renderActiveLocks(activeClaims, agents);
   renderLiveTimeline(timeline);
 
-  if (data.clusterNodes) {
-    renderClusterNodes(data.clusterNodes);
-  }
+  if (data.clusterNodes) renderClusterNodes(data.clusterNodes);
   renderHandoffAlertBanner(data.activeHandoffs || []);
+}
+
+// 在席会话的唯一判定入口：列表、统计、路由三处都走这里。
+function buildAgentViews(agents, claims) {
+  const claimsList = claims || [];
+  const views = [];
+  for (const a of (agents || [])) {
+    if (a.lifecycle_state === 'departed' || a.is_online === false) continue;
+    const owned = claimsList.filter(c => c.agent_id === a.id);
+    const isWorking = a.lifecycle_state === 'working' || a.status === 'running' || owned.length > 0;
+    const isWaiting = !isWorking && (a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason);
+    const uiState = isWorking ? 'working' : (isWaiting ? 'waiting' : 'idle');
+    const badgeText = uiState === 'working' ? '施工' : (uiState === 'waiting' ? '排队' : '待命');
+    views.push({ ...a, resolvedClaims: owned, uiState, badgeText });
+  }
+  return views;
 }
 
 let lastAgentsHtml = null;
 let lastAgentsMetaHtml = null;
 
-function renderActiveAgents(agents, activeClaims) {
+function renderActiveAgents(validAgents) {
   if (!dom.agentsContainer) return;
-
-  const validAgents = [];
-  const claimsList = activeClaims || [];
-
-  for (const a of (agents || [])) {
-    if (a.lifecycle_state === 'departed' || a.is_online === false) continue;
-
-    const claims = claimsList.filter(c => c.agent_id === a.id);
-    const isWorking = a.lifecycle_state === 'working' ||
-                      a.status === 'running' ||
-                      claims.length > 0;
-
-    const isWaiting = !isWorking && (
-      a.lifecycle_state === 'waiting' ||
-      a.status === 'waiting' ||
-      !!a.blocked_reason
-    );
-
-    if (isWorking) {
-      validAgents.push({ ...a, resolvedClaims: claims, uiState: 'working', badgeText: '施工中' });
-    } else if (isWaiting) {
-      validAgents.push({ ...a, resolvedClaims: claims, uiState: 'waiting', badgeText: '排队中' });
-    } else {
-      validAgents.push({ ...a, resolvedClaims: claims, uiState: 'idle', badgeText: '待命' });
-    }
-  }
 
   if (dom.agentsMeta) {
     const remoteOnlineCount = validAgents.filter(a => a.is_remote).length;
-    const remoteTag = remoteOnlineCount > 0 ? ` · 含远端 ${remoteOnlineCount}` : '';
-    let metaHtml;
-    if (currentProjectId === 'all') {
-      metaHtml = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席 · 跨项目全景${remoteTag}`;
-    } else {
-      const globalCount = totalGlobalOnlineAgents > validAgents.length ? totalGlobalOnlineAgents : validAgents.length;
-      const overviewHint = globalCount > validAgents.length
-        ? ` <span class="global-overview-hint">(全局跨项目 ${globalCount} 个会话 · <a href="javascript:void(0)" onclick="nexusSelectProject('all')" class="view-all-link">查看全景</a>)</span>`
-        : '';
-      metaHtml = `<span class="agents-count-highlight">${validAgents.length}</span> 个在席${remoteTag}${overviewHint}`;
-    }
+    const metaHtml = remoteOnlineCount > 0
+      ? `${validAgents.length} 个 · 远端 ${remoteOnlineCount}`
+      : `${validAgents.length} 个`;
     if (metaHtml !== lastAgentsMetaHtml) {
-      dom.agentsMeta.innerHTML = metaHtml;
+      dom.agentsMeta.textContent = metaHtml;
       lastAgentsMetaHtml = metaHtml;
     }
   }
 
   if (validAgents.length === 0) {
-    const emptyHtml = '<div class="empty-hint">暂无活跃会话，当 Claude Code 启动时将自动感知接入</div>';
+    const emptyHtml = '<div class="empty-hint">尚无会话上报</div>';
     if (emptyHtml !== lastAgentsHtml) {
       dom.agentsContainer.innerHTML = emptyHtml;
       lastAgentsHtml = emptyHtml;
@@ -654,8 +598,10 @@ function renderActiveAgents(agents, activeClaims) {
   const agentsHtml = validAgents.map(a => {
     const displayName = formatAgentDisplayName(a.name, a.id, a.provider, a.session_id, a.current_intent || a.current_intent_summary);
     const nameSafe = escapeHtml(displayName);
-    const providerSafe = escapeHtml((a.provider || 'Claude').toUpperCase());
-    const intentSafe = escapeHtml(a.current_intent || a.current_action || '就绪待命中');
+    const providerSafe = escapeHtml(a.provider || 'Claude');
+    const intentRaw = a.current_intent || a.current_action || '';
+    // 状态已经在徽章里说过了，就别在下一行再重复一遍。
+    const intentSafe = escapeHtml(intentRaw === a.badgeText ? '' : intentRaw);
     const toolSafe = a.last_tool ? escapeHtml(a.last_tool) : null;
     const targetSafe = a.last_target ? escapeHtml(a.last_target.split(/[\/\\]/).pop()) : null;
     const claims = a.resolvedClaims || [];
@@ -671,20 +617,20 @@ function renderActiveAgents(agents, activeClaims) {
           <div class="agent-name-group">
             <span class="agent-status-badge badge-${a.uiState}">${a.badgeText}</span>
             <span class="agent-title" title="${nameSafe}">${nameSafe}</span>
-            ${showHost ? `<span class="agent-host-badge" title="远端工作区节点: ${hostSafe}"><svg class="inline-badge-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;opacity:0.85"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>${hostSafe}</span>` : ''}
-            ${showProj ? `<span class="agent-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
+            ${showHost ? `<span class="agent-host-badge" title="节点 ${hostSafe}">${hostSafe}</span>` : ''}
+            ${showProj ? `<span class="agent-project-badge" title="工程 ${projSafe}">${projSafe}</span>` : ''}
           </div>
           <span class="agent-runtime-tag">${providerSafe}</span>
         </div>
 
         <div class="agent-intent-line" title="${intentSafe}">
-          ${toolSafe ? `<span class="agent-claim-target">[${toolSafe}] ${targetSafe || ''}</span> ` : ''}
-          ${intentSafe}
+          ${toolSafe ? `<span class="agent-claim-target">${toolSafe} ${targetSafe || ''}</span>` : ''}
+          ${toolSafe && intentSafe ? ' ' : ''}${intentSafe}
         </div>
 
         ${claims.length > 0 ? `
           <div class="agent-card-footer">
-            <span>持锁 (${claims.length}): ${claims.map(c => escapeHtml(c.claim_target.split(/[\/\\]/).pop())).join(', ')}</span>
+            租约 ${claims.length} 项：${claims.map(c => escapeHtml(c.claim_target.split(/[\/\\]/).pop())).join('，')}
           </div>
         ` : ''}
       </div>
@@ -700,9 +646,7 @@ function renderActiveAgents(agents, activeClaims) {
 function renderActiveLocks(claims, agents) {
   if (!dom.locksContainer) return;
 
-  if (dom.locksMeta) {
-    dom.locksMeta.textContent = `${(claims || []).length} 项锁定`;
-  }
+  if (dom.locksMeta) dom.locksMeta.textContent = `${(claims || []).length} 项`;
 
   const waitingAgents = (agents || []).filter(a => a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason);
   if (dom.conflictAlert) {
@@ -710,12 +654,12 @@ function renderActiveLocks(claims, agents) {
       dom.conflictAlert.style.display = 'flex';
       const waiter = waitingAgents[0];
       const waiterName = escapeHtml(formatAgentDisplayName(waiter.name, waiter.id));
-      const reason = escapeHtml(waiter.blocked_reason || '等待资源锁释放');
+      const reason = escapeHtml(waiter.blocked_reason || '等待租约释放');
       dom.conflictAlert.innerHTML = `
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
-        <span><strong>${waiterName}</strong> 避让中: ${reason}</span>
+        <span><strong>${waiterName}</strong> 等待中：${reason}</span>
       `;
     } else {
       dom.conflictAlert.style.display = 'none';
@@ -723,7 +667,7 @@ function renderActiveLocks(claims, agents) {
   }
 
   if (!claims || claims.length === 0) {
-    dom.locksContainer.innerHTML = '<div class="empty-hint">当前无活跃独占锁，所有写入与命令均可畅行</div>';
+    dom.locksContainer.innerHTML = '<div class="empty-hint">当前没有生效的租约</div>';
     return;
   }
 
@@ -742,7 +686,7 @@ function renderActiveLocks(claims, agents) {
       <div class="lock-card-item">
         <div class="lock-target-info">
           <span class="lock-target-name" title="${fullTarget}">${shortTarget}</span>
-          <span class="lock-holder-desc"><strong class="holder-name" title="完整会话标识: ${escapeHtml(c.agent_id)}">${holderName}</strong>${holderHost ? ` <span class="agent-host-badge"><svg class="inline-badge-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;opacity:0.85"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>${holderHost}</span>` : ''} · 剩余 ${remainingSec}s</span>
+          <span class="lock-holder-desc"><span class="holder-name" title="${escapeHtml(c.agent_id)}">${holderName}</span>${holderHost ? ` · ${holderHost}` : ''} · ${remainingSec}s</span>
         </div>
         <div class="lock-actions">
           ${leaseId ? `<button class="btn-release-sm" onclick="releaseLock('${leaseId}', '${escapeHtml(c.agent_id)}')">释放</button>` : ''}
@@ -759,9 +703,7 @@ window.releaseLock = async function(leaseId, agentId) {
       headers: authHeaders(),
       body: JSON.stringify({ agent_id: agentId })
     });
-    if (res.ok) {
-      fetchDashboard();
-    }
+    if (res.ok) fetchDashboard();
   } catch (err) {
     console.error('Failed to release lock:', err);
   }
@@ -778,25 +720,25 @@ function renderLiveTimeline(timeline) {
   }
 
   if (filtered.length === 0) {
-    dom.timelineContainer.innerHTML = '<div class="empty-hint">暂无匹配的协同事件</div>';
+    dom.timelineContainer.innerHTML = '<div class="empty-hint">暂无事件</div>';
     return;
   }
 
   dom.timelineContainer.innerHTML = filtered.map(item => {
     const timeStr = escapeHtml(new Date(item.created_at).toTimeString().split(' ')[0]);
-    let badgeClass = 'badge-claim';
-    let badgeLabel = 'CLAIM';
+    let badgeClass = 'badge-grant';
+    let badgeLabel = '授权';
 
     const evt = item.event_type || '';
     if (evt.includes('blocked') || evt.includes('conflict') || evt.includes('waiting')) {
-      badgeClass = 'badge-conflict';
-      badgeLabel = 'BLOCKED';
+      badgeClass = 'badge-intercept';
+      badgeLabel = '拦截';
     } else if (evt.includes('release') || evt.includes('freed')) {
       badgeClass = 'badge-release';
-      badgeLabel = 'RELEASE';
+      badgeLabel = '释放';
     } else if (evt.includes('handoff')) {
-      badgeClass = 'badge-lead';
-      badgeLabel = 'HANDOFF';
+      badgeClass = '';
+      badgeLabel = '接力';
     }
 
     const actor = escapeHtml(formatAgentDisplayName(item.agent_name, item.agent_id));
@@ -806,11 +748,9 @@ function renderLiveTimeline(timeline) {
       <div class="stream-item">
         <div class="stream-item-top">
           <span class="stream-badge ${badgeClass}">${badgeLabel}</span>
-          <span>${timeStr}</span>
+          <span class="stream-time">${timeStr}</span>
         </div>
-        <div class="stream-item-desc">
-          <strong>${actor}</strong>: ${desc}
-        </div>
+        <div class="stream-item-desc"><strong>${actor}</strong> ${desc}</div>
       </div>
     `;
   }).join('');
@@ -826,7 +766,127 @@ dom.streamFilterBtns.forEach(btn => {
 });
 
 // =============================================================================
-// Cluster Computing Nodes Ribbon (多机节点与探针拓扑带)
+// CPA 网关（只读观测）
+// 面板只展示 Hub 与各节点探针实际观测到的事实，Nexus 不参与模型流量转发。
+// =============================================================================
+let currentGatewayStatus = null;
+
+async function fetchGateway({ refresh = false } = {}) {
+  try {
+    const url = refresh ? '/api/gateway?refresh=1' : '/api/gateway';
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) return;
+    const status = await res.json();
+    currentGatewayStatus = status;
+    renderGateway(status);
+  } catch (err) {
+    console.error('Fetch gateway error:', err);
+  }
+}
+
+function gatewayAccountLabel(status) {
+  if (!status || !status.reachable) return null;
+  if (status.unauthorized) return null;
+  const auth = status.auth || null;
+  if (!auth) return null;
+  return `${auth.enabledAccounts}/${auth.totalAccounts}`;
+}
+
+function renderGateway(status) {
+  const reachable = Boolean(status?.reachable);
+  const unauthorized = Boolean(status?.unauthorized);
+  const auth = status?.auth || null;
+  const peers = Array.isArray(status?.peers) ? status.peers : [];
+  const peersUp = peers.filter(p => p.gateway?.reachable && !p.gateway?.unauthorized && p.gateway?.enabledAccounts != null);
+
+  if (dom.statGatewayPill) {
+    dom.statGatewayPill.classList.toggle('is-up', reachable && !unauthorized && Boolean(auth));
+    dom.statGatewayPill.classList.toggle('is-unauthorized', reachable && unauthorized);
+    dom.statGatewayPill.classList.toggle('is-down', !reachable && peersUp.length === 0);
+    const titleParts = [`本机 ${reachable ? (unauthorized ? '鉴权失败' : status.baseUrl) : '未发现 CPA'}`];
+    for (const p of peers) {
+      titleParts.push(`${p.display_name}：${!p.gateway ? '无上报' : p.gateway.reachable ? (p.gateway.unauthorized ? '鉴权失败' : `可用 ${p.gateway.enabledAccounts}/${p.gateway.totalAccounts}`) : '未发现 CPA'}`);
+    }
+    dom.statGatewayPill.title = titleParts.join('\n');
+  }
+  if (dom.statGateway) {
+    if (reachable && !unauthorized && auth) {
+      dom.statGateway.textContent = `${auth.enabledAccounts}/${auth.totalAccounts}`;
+    } else if (peersUp.length > 0) {
+      dom.statGateway.textContent = `远端 ${peersUp.length}`;
+    } else if (reachable && unauthorized) {
+      dom.statGateway.textContent = '鉴权';
+    } else {
+      dom.statGateway.textContent = '离线';
+    }
+  }
+
+  if (!dom.gatewayCard) return;
+
+  if (dom.gatewayBadge) dom.gatewayBadge.textContent = !reachable ? '本机离线' : (unauthorized ? '鉴权失败' : '在线');
+  if (dom.gatewayEndpoint) {
+    dom.gatewayEndpoint.textContent = status?.baseUrl || '—';
+    dom.gatewayEndpoint.title = status?.baseUrl || '';
+  }
+
+  if (!reachable || unauthorized || !auth) {
+    if (dom.gatewayAccounts) dom.gatewayAccounts.textContent = '—';
+    if (dom.gatewayEnabled) dom.gatewayEnabled.textContent = '—';
+    if (dom.gatewayCooling) dom.gatewayCooling.textContent = '—';
+    if (dom.gatewayProviders) dom.gatewayProviders.innerHTML = '';
+  } else {
+    if (dom.gatewayAccounts) dom.gatewayAccounts.textContent = auth.totalAccounts;
+    if (dom.gatewayEnabled) dom.gatewayEnabled.textContent = auth.enabledAccounts;
+    if (dom.gatewayCooling) dom.gatewayCooling.textContent = auth.coolingAccounts;
+    if (dom.gatewayProviders) {
+      dom.gatewayProviders.innerHTML = (auth.providers || []).map(p => `
+        <span class="gateway-provider">${escapeHtml(p.name)}<b>${p.count}</b></span>
+      `).join('');
+    }
+  }
+
+  if (dom.gatewayPeers) {
+    dom.gatewayPeers.innerHTML = peers.length === 0 ? '' : peers.map(p => {
+      const gw = p.gateway;
+      const dot = !gw ? 'offline' : gw.unauthorized ? 'stale' : (gw.reachable ? 'online' : 'offline');
+      const value = !gw
+        ? '无上报'
+        : gw.unauthorized
+          ? '鉴权失败'
+          : gw.reachable
+            ? `${gw.enabledAccounts}/${gw.totalAccounts}`
+            : '未发现 CPA';
+      return `
+        <div class="gateway-peer" title="${escapeHtml(p.display_name)} · ${escapeHtml(p.status || '')}">
+          <span class="node-status-dot ${dot}"></span>
+          <span class="gateway-peer-name">${escapeHtml(p.display_name)}</span>
+          <span class="gateway-peer-value">${escapeHtml(value)}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if (dom.gatewayNote) {
+    const success = auth?.recentRequests?.success ?? 0;
+    const failed = auth?.recentRequests?.failed ?? 0;
+    const observed = status.observedAt ? new Date(status.observedAt).toLocaleTimeString() : '';
+
+    if (!reachable && peersUp.length > 0) {
+      dom.gatewayNote.textContent = `本机未发现 CPA；${peersUp.length} 个节点可观测到网关`;
+    } else if (!reachable) {
+      dom.gatewayNote.textContent = '本机未发现 CPA，探针也未上报网关';
+    } else if (unauthorized) {
+      dom.gatewayNote.textContent = '管理接口拒绝鉴权，请配置 NEXUS_CPA_MGMT_SECRET';
+    } else if (success + failed > 0) {
+      dom.gatewayNote.textContent = `近期请求 ${success} 成功 / ${failed} 失败 · ${observed}`;
+    } else {
+      dom.gatewayNote.textContent = `近期无请求记录 · ${observed}`;
+    }
+  }
+}
+
+// =============================================================================
+// 集群节点
 // =============================================================================
 function renderClusterNodes(nodes) {
   if (!dom.clusterNodesBar) return;
@@ -840,29 +900,29 @@ function renderClusterNodes(nodes) {
     const isStale = node.status === 'stale';
     const statusClass = isOnline ? 'online' : (isStale ? 'stale' : 'offline');
     const isHub = node.role === 'hub';
-    const roleClass = isHub ? 'hub' : 'edge';
     const nameSafe = escapeHtml(node.display_name || node.id);
-    const roleSafe = isHub ? 'HUB' : 'EDGE';
+    const roleSafe = isHub ? 'Hub' : 'Edge';
     const timeDiff = Math.max(0, Math.round((Date.now() - (node.last_heartbeat || Date.now())) / 1000));
-    const pingText = timeDiff < 5 ? '极速' : `${timeDiff}s前`;
 
-    const platformIcon = node.platform === 'win32'
-      ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5.5l7-1v7.5H3V5.5zm8-1.2l10-1.5v9.2h-10V4.3zM3 13.5h7v7.5l-7-1v-6.5zm8 0h10v9.2l-10-1.5v-7.7z"/></svg>`
-      : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg>`;
+    const gw = node.metadata?.gateway;
+    let gwText = '';
+    if (gw && gw.reachable && !gw.unauthorized && gw.enabledAccounts != null) {
+      gwText = `<span class="node-chip-gw" title="该节点 CPA 账号池">${gw.enabledAccounts}/${gw.totalAccounts}</span>`;
+    }
 
     return `
-      <div class="node-chip ${roleClass} ${statusClass}" title="节点 ID: ${escapeHtml(node.id)} (${escapeHtml(node.platform || 'node')}, 角色: ${roleSafe}, 心跳: ${pingText})">
+      <div class="node-chip ${statusClass}" title="节点 ${escapeHtml(node.id)} · ${escapeHtml(node.platform || 'node')} · 心跳 ${timeDiff}s 前">
         <span class="node-status-dot"></span>
-        ${platformIcon}
         <span class="node-chip-name">${nameSafe}</span>
         <span class="node-chip-role">${roleSafe}</span>
+        ${gwText}
       </div>
     `;
   }).join('');
 }
 
 // =============================================================================
-// Active Handoff Pipeline Alert Banner (跨机待认领交接浮动卡)
+// 接力横幅
 // =============================================================================
 function renderHandoffAlertBanner(handoffs) {
   if (!dom.handoffAlertBanner) return;
@@ -876,38 +936,29 @@ function renderHandoffAlertBanner(handoffs) {
   const h = pending[0];
   const objSafe = escapeHtml(h.objective);
   const nextSafe = escapeHtml(h.next_action || '');
-  const srcSafe = escapeHtml(h.source_host_id || '上游节点');
-  const tgtSafe = escapeHtml(h.target_host_id || '任意远端');
+  const srcSafe = escapeHtml(h.source_host_id || '本地');
+  const tgtSafe = escapeHtml(h.target_host_id || '任意');
   const idSafe = escapeHtml(h.id);
 
   dom.handoffAlertBanner.style.display = 'flex';
   dom.handoffAlertBanner.innerHTML = `
     <div class="handoff-banner-head">
-      <div class="handoff-banner-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M16 3h5v5"></path>
-          <path d="M4 20L21 3"></path>
-          <path d="M21 16v5h-5"></path>
-          <path d="M15 15l6 6"></path>
-          <path d="M4 4l5 5"></path>
-        </svg>
-        <span>跨机阶段接力待认领 (${pending.length} 项)</span>
-      </div>
-      <span class="handoff-route-badge">${srcSafe} &rarr; ${tgtSafe}</span>
+      <div class="handoff-banner-title">待认领接力 ${pending.length > 1 ? `· 共 ${pending.length} 项` : ''}</div>
+      <span class="handoff-route-badge">${srcSafe} → ${tgtSafe}</span>
     </div>
     <div class="handoff-banner-body">
       <div class="handoff-banner-objective">${objSafe}</div>
-      ${nextSafe ? `<div class="handoff-banner-next">&bull; 建议动作: ${nextSafe}</div>` : ''}
+      ${nextSafe ? `<div class="handoff-banner-next">下一步：${nextSafe}</div>` : ''}
     </div>
     <div class="handoff-banner-actions">
-      <button class="btn-ghost-sm" onclick="switchView('memory')">查看全部工单</button>
-      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}')">一键认领</button>
+      <button class="btn-ghost-sm" onclick="switchView('memory')">查看全部</button>
+      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}')">认领</button>
     </div>
   `;
 }
 
 // =============================================================================
-// Work Handoffs & Long-Term Memories (View 3: 接力工单与工程记忆)
+// 接力工单与工程记忆
 // =============================================================================
 let currentMemoryCategory = 'all';
 
@@ -925,7 +976,7 @@ async function fetchHandoffs() {
 function renderHandoffs(list) {
   if (!dom.handoffsContainer) return;
   if (!Array.isArray(list) || list.length === 0) {
-    dom.handoffsContainer.innerHTML = '<div class="empty-hint">暂无交接记录，当本地或远端会话提交 Git / 阶段完工时将自动生成</div>';
+    dom.handoffsContainer.innerHTML = '<div class="empty-hint">提交 Git 时自动生成</div>';
     return;
   }
 
@@ -935,8 +986,8 @@ function renderHandoffs(list) {
     const objSafe = escapeHtml(h.objective);
     const stateSafe = escapeHtml(h.state_summary || '');
     const nextSafe = escapeHtml(h.next_action || '');
-    const srcSafe = escapeHtml(h.source_host_id || 'local');
-    const tgtSafe = escapeHtml(h.target_host_id || 'all');
+    const srcSafe = escapeHtml(h.source_host_id || '本地');
+    const tgtSafe = escapeHtml(h.target_host_id || '任意');
     const statusClass = escapeHtml(h.status || 'pending');
     const statusText = statusClass === 'pending' ? '待认领' : (statusClass === 'in_progress' ? '进行中' : '已完成');
 
@@ -956,21 +1007,21 @@ function renderHandoffs(list) {
 
     const nextBox = nextSafe ? `
       <div class="handoff-next-box">
-        <span class="handoff-next-label">建议接力动作</span>
+        <span class="handoff-next-label">下一步</span>
         <span>${nextSafe}</span>
       </div>
     ` : '';
 
-    const actionBtn = statusClass === 'pending' ? `
-      <button class="btn-primary-sm" onclick="claimHandoff('${idSafe}', 'in_progress')">认领工单</button>
-    ` : (statusClass === 'in_progress' ? `
-      <button class="btn-secondary" onclick="claimHandoff('${idSafe}', 'completed')">标记闭环</button>
-    ` : `<span style="color:var(--text-faint);font-size:11px;">已由 ${escapeHtml(h.consumed_by_agent_id || '助手')} 闭环</span>`);
+    const actionBtn = statusClass === 'pending'
+      ? `<button class="btn-primary-sm" onclick="claimHandoff('${idSafe}', 'in_progress')">认领</button>`
+      : (statusClass === 'in_progress'
+        ? `<button class="btn-secondary" onclick="claimHandoff('${idSafe}', 'completed')">标记完成</button>`
+        : `<span>已由 ${escapeHtml(h.consumed_by_agent_id || '助手')} 完成</span>`);
 
     return `
       <div class="handoff-card">
         <div class="handoff-card-head">
-          <span class="handoff-route-badge">${srcSafe} &rarr; ${tgtSafe}</span>
+          <span class="handoff-route-badge">${srcSafe} → ${tgtSafe}</span>
           <span class="handoff-status-badge ${statusClass}">${statusText}</span>
         </div>
         <div class="handoff-objective">${objSafe}</div>
@@ -978,7 +1029,7 @@ function renderHandoffs(list) {
         ${filesHtml}
         ${nextBox}
         <div class="handoff-card-footer">
-          <span>创建于 ${timeStr} · 由 ${escapeHtml(h.source_agent_id || 'Agent')}</span>
+          <span>${timeStr} · ${escapeHtml(h.source_agent_id || '助手')}</span>
           ${actionBtn}
         </div>
       </div>
@@ -995,9 +1046,7 @@ async function claimHandoff(handoffId, targetStatus = null) {
     });
     if (res.ok) {
       fetchDashboard();
-      if (dom.viewMemory?.classList.contains('active')) {
-        fetchHandoffs();
-      }
+      if (dom.viewMemory?.classList.contains('active')) fetchHandoffs();
     }
   } catch (err) {
     console.error('Claim handoff error:', err);
@@ -1008,12 +1057,8 @@ window.claimHandoff = claimHandoff;
 async function fetchMemories(query = '', category = currentMemoryCategory) {
   try {
     let url = `/api/projects/${encodeURIComponent(currentProjectId)}/memories?limit=100`;
-    if (category && category !== 'all') {
-      url += `&category=${encodeURIComponent(category)}`;
-    }
-    if (query && query.trim()) {
-      url += `&query=${encodeURIComponent(query.trim())}`;
-    }
+    if (category && category !== 'all') url += `&category=${encodeURIComponent(category)}`;
+    if (query && query.trim()) url += `&query=${encodeURIComponent(query.trim())}`;
     const res = await fetch(url, { headers: authHeaders() });
     if (!res.ok) return;
     const list = await res.json();
@@ -1026,7 +1071,7 @@ async function fetchMemories(query = '', category = currentMemoryCategory) {
 function renderMemories(list) {
   if (!dom.memoriesContainer) return;
   if (!Array.isArray(list) || list.length === 0) {
-    dom.memoriesContainer.innerHTML = '<div class="empty-hint">暂无沉淀记录，使用 nexus_save_memory 或在此沉淀跨机共享经验</div>';
+    dom.memoriesContainer.innerHTML = '<div class="empty-hint">暂无记忆</div>';
     return;
   }
 
@@ -1034,19 +1079,20 @@ function renderMemories(list) {
     const timeStr = escapeHtml(new Date(m.updated_at || m.created_at || Date.now()).toLocaleDateString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
     const idSafe = escapeHtml(String(m.id || ''));
     const keySafe = escapeHtml(m.key);
-    const catSafe = escapeHtml(m.category || 'general');
+    const cat = m.category || 'general';
+    const catSafe = escapeHtml(MEMORY_CATEGORY_LABEL[cat] || cat);
     const contentSafe = escapeHtml(m.content);
-    const authorSafe = escapeHtml(m.source_agent_id || 'Team');
+    const authorSafe = escapeHtml(m.source_agent_id || '团队');
 
     return `
       <div class="memory-card">
         <div class="memory-card-head">
           <span class="memory-key">${keySafe}</span>
-          <span class="memory-cat-pill ${catSafe}">${catSafe}</span>
+          <span class="memory-cat-pill">${catSafe}</span>
         </div>
         <div class="memory-content-box">${contentSafe}</div>
         <div class="memory-card-footer">
-          <span>${authorSafe} 沉淀于 ${timeStr}</span>
+          <span>${authorSafe} · ${timeStr}</span>
           ${idSafe ? `<button class="btn-ghost-sm" onclick="deleteMemory('${idSafe}')">删除</button>` : ''}
         </div>
       </div>
@@ -1055,15 +1101,13 @@ function renderMemories(list) {
 }
 
 async function deleteMemory(id) {
-  if (!confirm('确定删除此条工程记忆吗？')) return;
+  if (!confirm('删除这条工程记忆？')) return;
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/memories?id=${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: authHeaders()
     });
-    if (res.ok) {
-      fetchMemories(dom.memorySearchInput?.value || '', currentMemoryCategory);
-    }
+    if (res.ok) fetchMemories(dom.memorySearchInput?.value || '', currentMemoryCategory);
   } catch (err) {
     console.error('Delete memory error:', err);
   }
@@ -1076,16 +1120,14 @@ if (dom.memoryCategoryPills) {
       dom.memoryCategoryPills.forEach(p => p.classList.remove('active'));
       pill.classList.add('active');
       currentMemoryCategory = pill.dataset.category || 'all';
-      const q = dom.memorySearchInput ? dom.memorySearchInput.value : '';
-      fetchMemories(q, currentMemoryCategory);
+      fetchMemories(dom.memorySearchInput ? dom.memorySearchInput.value : '', currentMemoryCategory);
     });
   });
 }
 
 if (dom.memorySearchInput) {
   dom.memorySearchInput.addEventListener('input', debounce(() => {
-    const q = dom.memorySearchInput.value;
-    fetchMemories(q, currentMemoryCategory);
+    fetchMemories(dom.memorySearchInput.value, currentMemoryCategory);
   }, 250));
 }
 
@@ -1114,7 +1156,7 @@ if (dom.btnModalHandoffSubmit) {
     const nextAction = document.getElementById('modal-handoff-next').value.trim();
 
     if (!objective) {
-      alert('请填写阶段任务目标 (Objective)');
+      alert('请填写目标');
       return;
     }
 
@@ -1139,7 +1181,7 @@ if (dom.btnModalHandoffSubmit) {
         fetchDashboard();
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || '创建交接工单失败');
+        alert(err.error || '创建失败');
       }
     } catch (err) {
       console.error('Create handoff error:', err);
@@ -1169,7 +1211,7 @@ if (dom.btnModalMemorySubmit) {
     const content = document.getElementById('modal-memory-content').value.trim();
 
     if (!key || !content) {
-      alert('请完整填写标识符 Key 和详细记忆内容');
+      alert('请填写标识和内容');
       return;
     }
 
@@ -1190,7 +1232,7 @@ if (dom.btnModalMemorySubmit) {
         fetchMemories(dom.memorySearchInput?.value || '', currentMemoryCategory);
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || '保存工程记忆失败');
+        alert(err.error || '保存失败');
       }
     } catch (err) {
       console.error('Save memory error:', err);
@@ -1199,7 +1241,7 @@ if (dom.btnModalMemorySubmit) {
 }
 
 // =============================================================================
-// Routing Topology & Active Locks (View 2: 会话路由与独占锁拓扑)
+// 路由拓扑
 // =============================================================================
 let lastRoutingData = null;
 let currentDecisionFilter = 'all';
@@ -1232,16 +1274,12 @@ function splitPathForDisplay(fullPath) {
   if (!fullPath) return { dir: '', name: '未知目标', full: '' };
   const normalized = String(fullPath).replace(/\\/g, '/');
   const lastSlash = normalized.lastIndexOf('/');
-  if (lastSlash === -1) {
-    return { dir: '', name: normalized, full: normalized };
-  }
+  if (lastSlash === -1) return { dir: '', name: normalized, full: normalized };
   const dir = normalized.slice(0, lastSlash + 1);
   const name = normalized.slice(lastSlash + 1);
   const parts = dir.split('/').filter(Boolean);
   let shortDir = dir;
-  if (parts.length > 2) {
-    shortDir = '.../' + parts.slice(-2).join('/') + '/';
-  }
+  if (parts.length > 2) shortDir = '…/' + parts.slice(-2).join('/') + '/';
   return { dir: shortDir, name, full: normalized };
 }
 
@@ -1259,56 +1297,35 @@ function renderRoutingDiagram(cockpitData) {
 
   updateGlobalAgentRegistry(rawAgents, [...activeClaims, ...resourceLocks], timeline);
 
-  const validAgents = [];
-  for (const a of rawAgents) {
-    if (a.lifecycle_state === 'departed' || a.is_online === false) continue;
-    const claims = [...activeClaims, ...resourceLocks].filter(c => c.agent_id === a.id);
-    const isWorking = a.lifecycle_state === 'working' || a.status === 'running' || claims.length > 0;
-    const isWaiting = !isWorking && (a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason);
-    const uiState = isWorking ? 'working' : (isWaiting ? 'waiting' : 'idle');
-    validAgents.push({ ...a, resolvedClaims: claims, uiState });
-  }
+  const validAgents = buildAgentViews(rawAgents, [...activeClaims, ...resourceLocks]);
 
   if (dom.routingSummaryMeta) {
-    if (currentProjectId === 'all') {
-      dom.routingSummaryMeta.innerHTML = `<span class="routing-metric-highlight">${validAgents.length}</span> 个在席会话 · ${activeClaims.length + resourceLocks.length} 项独占锁 · ${waitQueue.length} 处冲突等待 <span class="routing-scope-pill">全景跨项目</span>`;
-    } else {
-      const globalCount = totalGlobalOnlineAgents > validAgents.length ? totalGlobalOnlineAgents : validAgents.length;
-      const overviewHint = globalCount > validAgents.length
-        ? ` <span class="global-overview-hint">(跨项目共 ${globalCount} 个会话 · <a href="javascript:void(0)" onclick="nexusSelectProject('all')" class="view-all-link">查看全景</a>)</span>`
-        : '';
-      dom.routingSummaryMeta.innerHTML = `${validAgents.length} 个在席会话 · ${activeClaims.length + resourceLocks.length} 项独占锁 · ${waitQueue.length} 处冲突等待${overviewHint}`;
-    }
+    dom.routingSummaryMeta.textContent =
+      `${validAgents.length} 会话 · ${activeClaims.length + resourceLocks.length} 租约 · ${waitQueue.length} 等待`;
   }
   if (dom.badgeSessionsCount) dom.badgeSessionsCount.textContent = validAgents.length;
 
   if (dom.hubStatusText) {
     if (waitQueue.length > 0) {
-      dom.hubStatusText.textContent = `冲突排队避让中 (${waitQueue.length} 处)`;
+      dom.hubStatusText.textContent = `仲裁中 · ${waitQueue.length} 处等待`;
       dom.hubStatusDot?.classList.add('dot-waiting');
-      dom.nexusHubCard?.classList.add('hub-state-waiting');
-    } else if (activeClaims.length > 0 || resourceLocks.length > 0) {
-      dom.hubStatusText.textContent = '实时并发仲裁中 · 通道畅通';
-      dom.hubStatusDot?.classList.remove('dot-waiting');
-      dom.nexusHubCard?.classList.remove('hub-state-waiting');
     } else {
-      dom.hubStatusText.textContent = '并发仲裁就绪 · 零碰撞保驾';
+      dom.hubStatusText.textContent = '租约仲裁';
       dom.hubStatusDot?.classList.remove('dot-waiting');
-      dom.nexusHubCard?.classList.remove('hub-state-waiting');
     }
   }
 
-  // Lane 1: 会话源 (Sessions)
+  // 会话列
   if (dom.routingSessionsContainer) {
     if (validAgents.length === 0) {
-      dom.routingSessionsContainer.innerHTML = '<div class="empty-hint">暂无在席会话，当 Claude Code 接入时自动路由</div>';
+      dom.routingSessionsContainer.innerHTML = '<div class="empty-hint">无会话</div>';
     } else {
       dom.routingSessionsContainer.innerHTML = validAgents.map(a => {
         const idSafe = escapeHtml(a.id);
         const resolvedName = resolveAgentName(a.id, a.name);
         const nameSafe = escapeHtml(resolvedName);
-        const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude' : 'AI Agent'));
-        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命中 · 监听工作区变更' : '执行任务中'));
+        const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude' : 'Agent'));
+        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命' : '执行中'));
         const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'idle'));
         const claimsCount = a.resolvedClaims.length;
         const projName = getProjectDisplayName(a.project_id, a.workspace_dir);
@@ -1319,24 +1336,23 @@ function renderRoutingDiagram(cockpitData) {
 
         let statusBadge = '<span class="session-status-tag status-idle"><span class="dot"></span>待命</span>';
         if (a.uiState === 'working') {
-          statusBadge = '<span class="session-status-tag status-working"><span class="dot"></span>施工中</span>';
+          statusBadge = '<span class="session-status-tag status-working"><span class="dot"></span>施工</span>';
         } else if (a.uiState === 'waiting') {
-          statusBadge = '<span class="session-status-tag status-waiting"><span class="dot"></span>排队避让</span>';
+          statusBadge = '<span class="session-status-tag status-waiting"><span class="dot"></span>排队</span>';
         }
 
         return `
           <div class="session-route-card state-${a.uiState}" data-session-id="${idSafe}">
             <div class="route-card-header">
               <div class="route-card-identity">
-                <span class="route-agent-name" title="完整会话标识: ${idSafe}">${nameSafe}</span>
-                <span class="route-provider-badge">${providerSafe}</span>
-                ${showHost ? `<span class="route-host-badge" title="远端工作区节点: ${hostSafe}"><svg class="inline-badge-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;opacity:0.85"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>${hostSafe}</span>` : ''}
-                ${showProj ? `<span class="route-project-badge" title="所属工程: ${projSafe}">${projSafe}</span>` : ''}
+                <span class="route-agent-name" title="${idSafe}">${nameSafe}</span>
+                ${showHost ? `<span class="route-host-badge" title="节点 ${hostSafe}">${hostSafe}</span>` : ''}
+                ${showProj ? `<span class="route-project-badge" title="工程 ${projSafe}">${projSafe}</span>` : ''}
               </div>
               ${statusBadge}
             </div>
             <div class="route-card-intent" title="${intentSafe}">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 20h9"></path>
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
               </svg>
@@ -1344,7 +1360,7 @@ function renderRoutingDiagram(cockpitData) {
             </div>
             <div class="route-card-footer">
               <span class="route-action-tag"><code>${toolSafe}</code></span>
-              <span class="route-leases-tag">${claimsCount > 0 ? `独占 ${claimsCount} 项` : '无独占锁'}</span>
+              <span class="route-leases-tag">${claimsCount > 0 ? `${claimsCount} 项租约` : '无租约'}</span>
             </div>
           </div>
         `;
@@ -1352,23 +1368,20 @@ function renderRoutingDiagram(cockpitData) {
     }
   }
 
-  // Lane 3: 真实独占文件、排他命令锁与冲突排队项 (零硬编码假走廊)
   const targetsTotal = activeClaims.length + resourceLocks.length + waitQueue.length;
   if (dom.badgeTargetsCount) dom.badgeTargetsCount.textContent = targetsTotal;
 
   if (dom.routingTargetsContainer) {
     let targetsHtml = '';
 
-    // A. 独占施工文件 (File Leases)
     if (activeClaims.length > 0) {
-      targetsHtml += `<div class="target-group-label">独占施工文件 (${activeClaims.length})</div>`;
+      targetsHtml += `<div class="target-group-label">文件租约 ${activeClaims.length}</div>`;
       activeClaims.forEach(c => {
         const rawPath = c.claim_target || c.path || '';
         const pathSafe = escapeHtml(rawPath);
         const pathInfo = splitPathForDisplay(rawPath);
         const agentSafe = escapeHtml(c.agent_id);
-        const resolvedHolder = resolveAgentName(c.agent_id, c.agent_name);
-        const holderDisplay = escapeHtml(resolvedHolder);
+        const holderDisplay = escapeHtml(resolveAgentName(c.agent_id, c.agent_name));
         const now = Date.now();
         const remainingSec = c.expires_at ? Math.max(0, Math.ceil((c.expires_at - now) / 1000)) : 300;
         const resKey = `res:file:${pathSafe}`;
@@ -1377,7 +1390,7 @@ function renderRoutingDiagram(cockpitData) {
           <div class="target-route-card type-file" data-target-id="${resKey}" data-holder-id="${agentSafe}">
             <div class="target-card-header">
               <div class="target-icon-wrap file-icon">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                   <polyline points="13 2 13 9 20 9"></polyline>
                 </svg>
@@ -1386,58 +1399,55 @@ function renderRoutingDiagram(cockpitData) {
                 <span class="target-file-name">${escapeHtml(pathInfo.name)}</span>
                 ${pathInfo.dir ? `<span class="target-file-dir">${escapeHtml(pathInfo.dir)}</span>` : ''}
               </div>
-              <span class="target-status-badge badge-locked">LOCKED</span>
+              <span class="target-status-badge badge-locked">租约</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder">由 <strong class="holder-name" title="完整会话标识: ${agentSafe}">${holderDisplay}</strong> 独占</span>
-              <span class="target-ttl-badge">~${remainingSec}s TTL</span>
+              <span class="target-holder" title="${agentSafe}">${holderDisplay}</span>
+              <span class="target-ttl-badge">${remainingSec}s</span>
             </div>
           </div>
         `;
       });
     }
 
-    // B. 排他命名锁 (Named Locks)
     if (resourceLocks.length > 0) {
-      targetsHtml += `<div class="target-group-label">排他命令与环境锁 (${resourceLocks.length})</div>`;
+      targetsHtml += `<div class="target-group-label">资源锁 ${resourceLocks.length}</div>`;
       resourceLocks.forEach(l => {
         const rawName = l.claim_target || l.resource_name || l.name || 'resource';
         const nameSafe = escapeHtml(rawName);
         const agentSafe = escapeHtml(l.agent_id);
-        const resolvedHolder = resolveAgentName(l.agent_id, l.agent_name);
-        const holderDisplay = escapeHtml(resolvedHolder);
+        const holderDisplay = escapeHtml(resolveAgentName(l.agent_id, l.agent_name));
         const resKey = `res:resource:${nameSafe}`;
 
         targetsHtml += `
           <div class="target-route-card type-lock" data-target-id="${resKey}" data-holder-id="${agentSafe}">
             <div class="target-card-header">
               <div class="target-icon-wrap lock-icon">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
               </div>
               <div class="target-file-info" title="${nameSafe}">
                 <span class="target-file-name">${nameSafe}</span>
-                <span class="target-file-dir">命令排他锁</span>
+                <span class="target-file-dir">命名资源</span>
               </div>
-              <span class="target-status-badge badge-exclusive">EXCLUSIVE</span>
+              <span class="target-status-badge badge-exclusive">排他</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder">由 <strong class="holder-name" title="完整会话标识: ${agentSafe}">${holderDisplay}</strong> 持有</span>
-              <span class="target-hook-badge">PostToolUse 释放</span>
+              <span class="target-holder" title="${agentSafe}">${holderDisplay}</span>
+              <span class="target-hook-badge">Hook 释放</span>
             </div>
           </div>
         `;
       });
     }
 
-    // C. 冲突排队等待项 (Real Wait Queue)
     if (waitQueue.length > 0) {
-      targetsHtml += `<div class="target-group-label">冲突排队等待 (${waitQueue.length})</div>`;
+      targetsHtml += `<div class="target-group-label">等待队列 ${waitQueue.length}</div>`;
       waitQueue.forEach(w => {
-        const summarySafe = escapeHtml(w.summary || w.target || '等待资源锁释放');
-        const reasonSafe = escapeHtml(w.blocked_reason || '等待前序独占租约释放');
+        const summarySafe = escapeHtml(w.summary || w.target || '等待租约释放');
+        const reasonSafe = escapeHtml(w.blocked_reason || '等待前序租约释放');
         const agentSafe = escapeHtml(w.agent_id);
         const waiterDisplay = escapeHtml(resolveAgentName(w.agent_id, w.agent_name));
         const resKey = `res:wait:${escapeHtml(w.intent_id || w.agent_id)}`;
@@ -1446,7 +1456,7 @@ function renderRoutingDiagram(cockpitData) {
           <div class="target-route-card type-waiting" data-target-id="${resKey}" data-holder-id="${agentSafe}">
             <div class="target-card-header">
               <div class="target-icon-wrap waiting-icon">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="10"></circle>
                   <polyline points="12 6 12 12 16 14"></polyline>
                 </svg>
@@ -1455,10 +1465,10 @@ function renderRoutingDiagram(cockpitData) {
                 <span class="target-file-name">${summarySafe}</span>
                 <span class="target-file-dir">${reasonSafe}</span>
               </div>
-              <span class="target-status-badge badge-waiting-queue">WAITING</span>
+              <span class="target-status-badge badge-waiting-queue">等待</span>
             </div>
             <div class="target-card-meta">
-              <span class="target-holder"><strong class="holder-name" title="完整会话标识: ${agentSafe}">${waiterDisplay}</strong> 排队中</span>
+              <span class="target-holder" title="${agentSafe}">${waiterDisplay}</span>
               <span class="target-waiting-badge">释放即唤醒</span>
             </div>
           </div>
@@ -1467,7 +1477,7 @@ function renderRoutingDiagram(cockpitData) {
     }
 
     if (!targetsHtml) {
-      targetsHtml = '<div class="empty-hint">当前无活跃独占文件或排他锁，并发读写畅通</div>';
+      targetsHtml = '<div class="empty-hint">无租约</div>';
     }
     dom.routingTargetsContainer.innerHTML = targetsHtml;
   }
@@ -1521,9 +1531,7 @@ function drawRoutingConnectors() {
     if (isWorking) lineClass = 'route-path route-session-line route-active';
     else if (isWaiting) lineClass = 'route-path route-session-line route-waiting';
 
-    svgHtml += `
-      <path d="${d}" class="${lineClass}" data-from-session="${escapeHtml(sessionId)}" data-edge-type="session-hub" />
-    `;
+    svgHtml += `<path d="${d}" class="${lineClass}" data-from-session="${escapeHtml(sessionId)}" data-edge-type="session-hub" />`;
   });
 
   targetCards.forEach((card, idx) => {
@@ -1545,15 +1553,10 @@ function drawRoutingConnectors() {
     const isFileOrLock = card.classList.contains('type-file') || card.classList.contains('type-lock');
 
     let lineClass = 'route-path route-target-line route-idle';
-    if (isWaitingTarget) {
-      lineClass = 'route-path route-target-line route-waiting';
-    } else if (isFileOrLock) {
-      lineClass = 'route-path route-target-line route-active';
-    }
+    if (isWaitingTarget) lineClass = 'route-path route-target-line route-waiting';
+    else if (isFileOrLock) lineClass = 'route-path route-target-line route-active';
 
-    svgHtml += `
-      <path d="${d}" class="${lineClass}" data-to-target="${escapeHtml(targetId)}" data-holder-id="${escapeHtml(holderId)}" data-edge-type="hub-target" />
-    `;
+    svgHtml += `<path d="${d}" class="${lineClass}" data-to-target="${escapeHtml(targetId)}" data-holder-id="${escapeHtml(holderId)}" data-edge-type="hub-target" />`;
   });
 
   dom.routingSvgLayer.innerHTML = svgHtml;
@@ -1579,8 +1582,7 @@ function attachRouteHighlightEvents() {
 
 function highlightSessionRoutes(sessionId) {
   if (!dom.routingSvgLayer) return;
-  const paths = dom.routingSvgLayer.querySelectorAll('.route-path');
-  paths.forEach(p => {
+  dom.routingSvgLayer.querySelectorAll('.route-path').forEach(p => {
     const fromSession = p.dataset.fromSession;
     const holderId = p.dataset.holderId;
     if (fromSession === sessionId || holderId === sessionId) {
@@ -1593,18 +1595,14 @@ function highlightSessionRoutes(sessionId) {
   });
 
   dom.routingTargetsContainer?.querySelectorAll('.target-route-card').forEach(tc => {
-    if (tc.dataset.holderId === sessionId) {
-      tc.classList.add('card-highlighted');
-    } else {
-      tc.classList.add('card-dimmed');
-    }
+    if (tc.dataset.holderId === sessionId) tc.classList.add('card-highlighted');
+    else tc.classList.add('card-dimmed');
   });
 }
 
 function highlightTargetRoutes(targetId, holderId) {
   if (!dom.routingSvgLayer) return;
-  const paths = dom.routingSvgLayer.querySelectorAll('.route-path');
-  paths.forEach(p => {
+  dom.routingSvgLayer.querySelectorAll('.route-path').forEach(p => {
     const toTarget = p.dataset.toTarget;
     const fromSession = p.dataset.fromSession;
     if (toTarget === targetId || (holderId && fromSession === holderId)) {
@@ -1618,11 +1616,8 @@ function highlightTargetRoutes(targetId, holderId) {
 
   if (holderId) {
     dom.routingSessionsContainer?.querySelectorAll('.session-route-card').forEach(sc => {
-      if (sc.dataset.sessionId === holderId) {
-        sc.classList.add('card-highlighted');
-      } else {
-        sc.classList.add('card-dimmed');
-      }
+      if (sc.dataset.sessionId === holderId) sc.classList.add('card-highlighted');
+      else sc.classList.add('card-dimmed');
     });
   }
 }
@@ -1649,8 +1644,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
     const type = item.event_type || item.type || '';
     const desc = item.description || item.detail || '';
     const agent = item.agent_id || 'system';
-    const resolvedAgent = resolveAgentName(agent, item.agent_name);
-    const agentDisplay = escapeHtml(resolvedAgent);
+    const agentDisplay = escapeHtml(resolveAgentName(agent, item.agent_name));
     const rawTs = item.created_at || item.timestamp;
     const time = rawTs ? new Date(rawTs).toLocaleTimeString() : new Date().toLocaleTimeString();
 
@@ -1658,70 +1652,60 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
       decisions.push({
         type: 'grant',
         time,
-        badge: 'GRANT 授权',
-        title: `独占租约授予: 会话 <strong class="decision-agent" title="完整会话标识: ${escapeHtml(agent)}">${agentDisplay}</strong>`,
-        detail: escapeHtml(desc || '零冲突快速放行，写入租约已下发')
+        badge: '授权',
+        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 获得租约`,
+        detail: escapeHtml(desc)
       });
     } else if (type.includes('conflict') || type.includes('intercept') || type.includes('blocked') || type.includes('waiting') || desc.includes('冲突') || desc.includes('拦截') || desc.includes('WAITING')) {
       decisions.push({
         type: 'intercept',
         time,
-        badge: 'INTERCEPT 拦截',
-        title: `并发写入拦截: 会话 <strong class="decision-agent" title="完整会话标识: ${escapeHtml(agent)}">${agentDisplay}</strong>`,
-        detail: escapeHtml(desc || '检测到文件写冲突，已安全挂起至排队队列')
+        badge: '拦截',
+        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 写入被拦截`,
+        detail: escapeHtml(desc)
       });
     } else if (type.includes('freed') || type.includes('release') || desc.includes('释放') || desc.includes('PostToolUse')) {
       decisions.push({
         type: 'release',
         time,
-        badge: 'RELEASE 释放',
-        title: `毫秒级租约释放: 会话 <strong class="decision-agent" title="完整会话标识: ${escapeHtml(agent)}">${agentDisplay}</strong>`,
-        detail: escapeHtml(desc || 'PostToolUse 触发毫秒级锁回收，并自动唤醒队首排队者')
+        badge: '释放',
+        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 释放租约`,
+        detail: escapeHtml(desc)
       });
     }
   });
 
   if (decisions.length === 0) {
-    if ((activeClaims || []).length > 0) {
-      activeClaims.forEach(c => {
-        const pathInfo = splitPathForDisplay(c.claim_target || c.path);
-        const resolvedAgent = resolveAgentName(c.agent_id, c.agent_name);
-        const agentDisplay = escapeHtml(resolvedAgent);
-        decisions.push({
-          type: 'grant',
-          time: new Date().toLocaleTimeString(),
-          badge: 'GRANT 授权',
-          title: `当前活跃独占租约: <strong class="decision-agent" title="完整会话标识: ${escapeHtml(c.agent_id)}">${agentDisplay}</strong>`,
-          detail: `锁定目标 <code>${escapeHtml(pathInfo.name)}</code> <span class="decision-path-dir">${escapeHtml(pathInfo.dir)}</span> · 滑动窗口 TTL 续期中`
-        });
+    (activeClaims || []).forEach(c => {
+      const pathInfo = splitPathForDisplay(c.claim_target || c.path);
+      decisions.push({
+        type: 'grant',
+        time: new Date().toLocaleTimeString(),
+        badge: '授权',
+        title: `<strong class="decision-agent" title="${escapeHtml(c.agent_id)}">${escapeHtml(resolveAgentName(c.agent_id, c.agent_name))}</strong> 持有租约`,
+        detail: `<code>${escapeHtml(pathInfo.name)}</code> <span class="decision-path-dir">${escapeHtml(pathInfo.dir)}</span>`
       });
-    }
-    if ((waitQueue || []).length > 0) {
-      waitQueue.forEach(w => {
-        const pathInfo = splitPathForDisplay(w.summary || w.target || '');
-        const resolvedAgent = resolveAgentName(w.agent_id, w.agent_name);
-        const agentDisplay = escapeHtml(resolvedAgent);
-        decisions.push({
-          type: 'intercept',
-          time: new Date().toLocaleTimeString(),
-          badge: 'INTERCEPT 拦截',
-          title: `排队避障中: <strong class="decision-agent" title="完整会话标识: ${escapeHtml(w.agent_id)}">${agentDisplay}</strong>`,
-          detail: `目标 <code>${escapeHtml(pathInfo.name)}</code> 受保护 · 等待当前持有者释放`
-        });
+    });
+    (waitQueue || []).forEach(w => {
+      const pathInfo = splitPathForDisplay(w.summary || w.target || '');
+      decisions.push({
+        type: 'intercept',
+        time: new Date().toLocaleTimeString(),
+        badge: '拦截',
+        title: `<strong class="decision-agent" title="${escapeHtml(w.agent_id)}">${escapeHtml(resolveAgentName(w.agent_id, w.agent_name))}</strong> 排队中`,
+        detail: `<code>${escapeHtml(pathInfo.name)}</code> 等待释放`
       });
-    }
+    });
   }
 
   const filtered = currentDecisionFilter === 'all'
     ? decisions
     : decisions.filter(d => d.type === currentDecisionFilter);
 
-  if (dom.decisionsCountBadge) {
-    dom.decisionsCountBadge.textContent = `${filtered.length} 条`;
-  }
+  if (dom.decisionsCountBadge) dom.decisionsCountBadge.textContent = String(filtered.length);
 
   if (filtered.length === 0) {
-    dom.routingDecisionsStream.innerHTML = '<div class="empty-hint">暂无符合条件的路由裁决记录</div>';
+    dom.routingDecisionsStream.innerHTML = '<div class="empty-hint">暂无裁决</div>';
     return;
   }
 
@@ -1743,47 +1727,36 @@ if (dom.decisionsFilterBtns) {
       dom.decisionsFilterBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentDecisionFilter = btn.dataset.filter || 'all';
-      if (lastRoutingData) {
-        renderRoutingDiagram(lastRoutingData);
-      }
+      if (lastRoutingData) renderRoutingDiagram(lastRoutingData);
     };
   });
 }
 
 if (window.ResizeObserver && dom.routingCanvasWrapper) {
   const ro = new ResizeObserver(() => {
-    if (dom.viewRouting?.classList.contains('active')) {
-      requestAnimationFrame(drawRoutingConnectors);
-    }
+    if (dom.viewRouting?.classList.contains('active')) requestAnimationFrame(drawRoutingConnectors);
   });
   ro.observe(dom.routingCanvasWrapper);
 }
 window.addEventListener('resize', () => {
-  if (dom.viewRouting?.classList.contains('active')) {
-    requestAnimationFrame(drawRoutingConnectors);
-  }
+  if (dom.viewRouting?.classList.contains('active')) requestAnimationFrame(drawRoutingConnectors);
 });
 
 if (dom.routingTargetsContainer) {
   dom.routingTargetsContainer.addEventListener('scroll', () => {
-    if (dom.viewRouting?.classList.contains('active')) {
-      requestAnimationFrame(drawRoutingConnectors);
-    }
+    if (dom.viewRouting?.classList.contains('active')) requestAnimationFrame(drawRoutingConnectors);
   });
 }
 if (dom.routingSessionsContainer) {
   dom.routingSessionsContainer.addEventListener('scroll', () => {
-    if (dom.viewRouting?.classList.contains('active')) {
-      requestAnimationFrame(drawRoutingConnectors);
-    }
+    if (dom.viewRouting?.classList.contains('active')) requestAnimationFrame(drawRoutingConnectors);
   });
 }
 
 // =============================================================================
-// Panel Split-Resizers & Dynamic Layout Manager
+// 面板拖拽
 // =============================================================================
 function setupPanelResizers() {
-  // 1. View 2: 底部裁决决策面板纵向拖拽与折叠 (#resizer-routing-decisions)
   const resizerDecisions = dom.resizerRoutingDecisions;
   const decisionsPanel = dom.routingDecisionsPanel;
   const toggleBtn = dom.btnToggleDecisions;
@@ -1813,11 +1786,9 @@ function setupPanelResizers() {
   }
 
   if (resizerDecisions && decisionsPanel && routingPanelCard) {
-    resizerDecisions.addEventListener('dblclick', () => {
-      toggleDecisionsPanel();
-    });
+    resizerDecisions.addEventListener('dblclick', toggleDecisionsPanel);
 
-    const onPointerDown = (e) => {
+    resizerDecisions.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       const startY = e.clientY;
@@ -1861,20 +1832,15 @@ function setupPanelResizers() {
       resizerDecisions.addEventListener('pointermove', onPointerMove);
       resizerDecisions.addEventListener('pointerup', onPointerUp);
       resizerDecisions.addEventListener('pointercancel', onPointerUp);
-    };
-
-    resizerDecisions.addEventListener('pointerdown', onPointerDown);
+    });
   }
 
-  // 2. View 1: 会话列表与独占锁分割条 (#resizer-agents-locks)
   const resizerAgentsLocks = dom.resizerAgentsLocks;
   const paneLeft = dom.paneLeft;
   const flexAgents = dom.flexAgents;
 
   const savedAgentsH = localStorage.getItem('nexus_agents_section_height');
-  if (savedAgentsH) {
-    document.documentElement.style.setProperty('--agents-section-height', savedAgentsH);
-  }
+  if (savedAgentsH) document.documentElement.style.setProperty('--agents-section-height', savedAgentsH);
 
   if (resizerAgentsLocks && paneLeft && flexAgents) {
     resizerAgentsLocks.addEventListener('dblclick', () => {
@@ -1918,14 +1884,11 @@ function setupPanelResizers() {
     });
   }
 
-  // 3. View 1: 左右两栏横向分割条 (#resizer-sessions-split)
   const resizerSessionsSplit = dom.resizerSessionsSplit;
   const splitLayout = document.getElementById('sessions-split-layout');
 
   const savedSessionsW = localStorage.getItem('nexus_sessions_left_width');
-  if (savedSessionsW) {
-    document.documentElement.style.setProperty('--sessions-left-width', savedSessionsW);
-  }
+  if (savedSessionsW) document.documentElement.style.setProperty('--sessions-left-width', savedSessionsW);
 
   if (resizerSessionsSplit && splitLayout && paneLeft) {
     resizerSessionsSplit.addEventListener('dblclick', () => {
@@ -1945,9 +1908,7 @@ function setupPanelResizers() {
 
       const onPointerMove = (mEvt) => {
         const delta = mEvt.clientX - startX;
-        const minW = 260;
-        const maxW = containerW - 260;
-        const newW = Math.min(maxW, Math.max(minW, startW + delta));
+        const newW = Math.min(containerW - 260, Math.max(260, startW + delta));
         const pct = Math.round((newW / containerW) * 100);
         document.documentElement.style.setProperty('--sessions-left-width', `${pct}%`);
       };
@@ -1969,15 +1930,12 @@ function setupPanelResizers() {
     });
   }
 
-  // 4. View 3: 接力与记忆左右两栏横向分割条 (#resizer-memory-split)
   const resizerMemorySplit = dom.resizerMemorySplit;
   const memorySplitLayout = document.getElementById('memory-split-layout');
   const paneMemoryLeft = dom.paneMemoryLeft;
 
   const savedMemoryW = localStorage.getItem('nexus_memory_left_width');
-  if (savedMemoryW) {
-    document.documentElement.style.setProperty('--memory-left-width', savedMemoryW);
-  }
+  if (savedMemoryW) document.documentElement.style.setProperty('--memory-left-width', savedMemoryW);
 
   if (resizerMemorySplit && memorySplitLayout && paneMemoryLeft) {
     resizerMemorySplit.addEventListener('dblclick', () => {
@@ -1997,9 +1955,7 @@ function setupPanelResizers() {
 
       const onPointerMove = (mEvt) => {
         const delta = mEvt.clientX - startX;
-        const minW = 240;
-        const maxW = containerW - 240;
-        const newW = Math.min(maxW, Math.max(minW, startW + delta));
+        const newW = Math.min(containerW - 240, Math.max(240, startW + delta));
         const pct = Math.round((newW / containerW) * 100);
         document.documentElement.style.setProperty('--memory-left-width', `${pct}%`);
       };
@@ -2023,12 +1979,13 @@ function setupPanelResizers() {
 }
 
 // =============================================================================
-// Full-Duplex WebSocket Long Connection & Event Stream
+// WebSocket
 // =============================================================================
 let activeWs = null;
 let isWsConnected = false;
 let fallbackPollTimer = null;
 let wsPingTimer = null;
+let gatewayPollTimer = null;
 
 const debouncedFetchDashboard = debounce(fetchDashboard, 500);
 const debouncedFetchHandoffs = debounce(fetchHandoffs, 500);
@@ -2037,16 +1994,14 @@ const debouncedFetchMemories = debounce(() => {
 }, 500);
 
 function updateConnectionIndicators(connected, customStatus = null) {
-  if (dom.liveDot) {
-    dom.liveDot.classList.toggle('disconnected', !connected);
-  }
+  if (dom.liveDot) dom.liveDot.classList.toggle('disconnected', !connected);
   if (dom.daemonStatus) {
     if (customStatus) {
       dom.daemonStatus.textContent = customStatus;
       dom.daemonStatus.style.cursor = 'pointer';
       dom.daemonStatus.onclick = () => showTokenPrompt();
     } else {
-      dom.daemonStatus.textContent = connected ? '守护就绪' : '脱机重连中';
+      dom.daemonStatus.textContent = connected ? '已连接' : '重连中';
       dom.daemonStatus.style.cursor = connected ? 'default' : 'pointer';
       dom.daemonStatus.onclick = connected ? null : () => showTokenPrompt();
     }
@@ -2058,6 +2013,7 @@ function startFallbackPolling() {
   fallbackPollTimer = setInterval(() => {
     if (isWsConnected) return;
     fetchDashboard();
+    fetchGateway();
   }, 10000);
 }
 
@@ -2073,15 +2029,14 @@ function connectWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = getNexusToken();
     if (!token) {
-      updateConnectionIndicators(false, '需要令牌 (点击配置)');
+      updateConnectionIndicators(false, '需要令牌');
       showTokenPrompt('missing');
       return;
     }
     const params = new URLSearchParams();
     params.set('token', token);
     if (currentProjectId) params.set('project', currentProjectId);
-    const qs = params.toString();
-    const wsUrl = `${protocol}//${location.host}/?${qs}`;
+    const wsUrl = `${protocol}//${location.host}/?${params.toString()}`;
 
     const ws = new WebSocket(wsUrl);
     activeWs = ws;
@@ -2103,9 +2058,7 @@ function connectWebSocket() {
         }
       }, 4000);
 
-      try {
-        ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId }));
-      } catch {}
+      try { ws.send(JSON.stringify({ type: 'sync:request', project_id: currentProjectId })); } catch {}
     };
 
     ws.onmessage = (event) => {
@@ -2136,31 +2089,24 @@ function connectWebSocket() {
         if (payload.type === 'agent:telemetry' || payload.type === 'agent:status' || payload.type === 'resource:freed' || payload.type === 'agent:woken') {
           debouncedFetchDashboard();
           debouncedLoadProjects();
-          if (dom.viewRouting?.classList.contains('active')) {
-            debouncedFetchRoutingTopology();
-          }
+          if (dom.viewRouting?.classList.contains('active')) debouncedFetchRoutingTopology();
           return;
         }
 
         if (payload.type === 'handoff:created' || payload.type === 'handoff:consumed' || payload.type === 'node:status') {
           debouncedFetchDashboard();
-          if (dom.viewMemory?.classList.contains('active')) {
-            debouncedFetchHandoffs();
-          }
+          if (payload.type === 'node:status') debouncedFetchGateway();
+          if (dom.viewMemory?.classList.contains('active')) debouncedFetchHandoffs();
           return;
         }
 
         if (payload.type === 'memory:saved' || payload.type === 'memory:deleted') {
-          if (dom.viewMemory?.classList.contains('active')) {
-            debouncedFetchMemories();
-          }
+          if (dom.viewMemory?.classList.contains('active')) debouncedFetchMemories();
           return;
         }
 
         debouncedFetchDashboard();
-        if (dom.viewRouting?.classList.contains('active')) {
-          debouncedFetchRoutingTopology();
-        }
+        if (dom.viewRouting?.classList.contains('active')) debouncedFetchRoutingTopology();
         if (dom.viewMemory?.classList.contains('active')) {
           debouncedFetchHandoffs();
           debouncedFetchMemories();
@@ -2178,7 +2124,7 @@ function connectWebSocket() {
       }
       const token = getNexusToken();
       if (!token) {
-        updateConnectionIndicators(false, '需要令牌 (点击配置)');
+        updateConnectionIndicators(false, '需要令牌');
         showTokenPrompt('missing');
         return;
       }
@@ -2187,9 +2133,7 @@ function connectWebSocket() {
       setTimeout(connectWebSocket, 3000);
     };
 
-    ws.onerror = () => {
-      ws.close();
-    };
+    ws.onerror = () => ws.close();
   } catch (err) {
     console.error('WebSocket connection error:', err);
     isWsConnected = false;
@@ -2199,8 +2143,10 @@ function connectWebSocket() {
   }
 }
 
+const debouncedFetchGateway = debounce(() => fetchGateway(), 400);
+
 // =============================================================================
-// Bootstrap Execution
+// 启动
 // =============================================================================
 setupPanelResizers();
 
@@ -2210,15 +2156,15 @@ if (initialView && ['sessions', 'routing', 'memory'].includes(initialView)) {
 }
 
 async function initApp() {
-  try {
-    const pill = document.querySelector('.hub-status-pill');
-    if (pill && location?.host) {
-      pill.textContent = location.host;
-      pill.title = `Nexus Hub 端点: ${location.host}`;
-    }
-  } catch {}
+  if (dom.hubEndpoint && location?.host) {
+    dom.hubEndpoint.textContent = location.host;
+    dom.hubEndpoint.title = `Hub 端点 ${location.host}`;
+  }
   await loadProjects();
+  fetchGateway();
   connectWebSocket();
+  if (gatewayPollTimer) clearInterval(gatewayPollTimer);
+  gatewayPollTimer = setInterval(() => fetchGateway(), 15000);
 }
 
 initApp();

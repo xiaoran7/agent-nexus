@@ -8,6 +8,7 @@ import { ProjectRegistry } from '../domain/project-registry.js';
 import { ProjectMemoryService } from '../domain/memory.js';
 import { ClusterNodeService } from '../domain/cluster-nodes.js';
 import { ProjectHandoffService } from '../domain/handoff.js';
+import { getSharedCpaGatewayService } from '../domain/cpa-gateway.js';
 import { createRestRouter } from '../transport/rest.js';
 import { createWsServer } from '../transport/ws.js';
 import { TokenStore, generateToken, getSessionTokenPath, readSessionToken, readHubConfig } from '../transport/auth.js';
@@ -36,6 +37,8 @@ export function startDaemon(options = {}) {
   coordinator.clusterNodeService = clusterNodeService;
   coordinator.handoffService = handoffService;
   const projectRegistry = new ProjectRegistry(db, coordinator);
+  // CPA 网关只读观测：默认关闭于测试环境，避免单测去连宿主机的真实管理端口。
+  const cpaGatewayService = isRunningInTest ? null : getSharedCpaGatewayService();
 
   try {
     coordinator.syncClaudeSessions();
@@ -62,7 +65,8 @@ export function startDaemon(options = {}) {
     projectRegistry,
     memoryService,
     handoffService,
-    clusterNodeService
+    clusterNodeService,
+    cpaGatewayService
   });
   const server = createServer(handleRest);
   server.keepAliveTimeout = 65000;

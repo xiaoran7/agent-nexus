@@ -111,7 +111,7 @@ test('主动通知总线与 SSE 实时事件流', async (t) => {
     const cssRes = await fetchPath('/style.css');
     assert.equal(cssRes.status, 200);
     assert.match(cssRes.headers['content-type'], /text\/css/);
-    assert.match(cssRes.body, /--schale-sky/);
+    assert.match(cssRes.body, /--surface-1/);
 
     const jsRes = await fetchPath('/app.js');
     assert.equal(jsRes.status, 200);
