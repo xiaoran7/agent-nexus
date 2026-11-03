@@ -27,6 +27,7 @@
   │  │  - ClusterNodeService: 多机算力节点注册表与在线健康度                       │  │
   │  │  - ProjectHandoffService: 跨机阶段工作交接工单合成与按 Agent 投递去重       │  │
   │  │  - ProjectMemoryService: 跨机全局工程记忆 (architecture/rule/gotcha/...)   │  │
+  │  │  - CpaGatewayService: CPA 管理接口只读观测 (账号池/供应商/近期请求)         │  │
   │  └──────────────────────────────────────▲─────────────────────────────────────┘  │
   │                                         │                                        │
   │  ┌──────────────────────────────────────▼─────────────────────────────────────┐  │
@@ -47,6 +48,7 @@
    - `cluster-nodes.js`：常驻算力节点拓扑（Hub 与各 Edge 节点心跳、在线/离线状态）。
    - `handoff.js`：跨机阶段工作交接工单管理（`pending` -> `in_progress` -> `completed`），支持按 `forHostId` 与 `delivered_to_agents` 精确投递去重。
    - `memory.js`：跨机全局长期工程记忆（`architecture` / `rule` / `gotcha` / `milestone` / `general`）。
+   - `cpa-gateway.js`：CPA（cliproxyapi）管理接口只读观测器，汇总账号池、冷却、供应商与近期请求成败，供面板如实展示；端点与密钥走 `NEXUS_CPA_MGMT_URL` / `NEXUS_CPA_HOST` / `NEXUS_CPA_PORT` / `NEXUS_CPA_MGMT_SECRET`，8 秒缓存，不写入不重启，Nexus 不参与模型流量转发。
    - `errors.js`：`ValidationError`，调用方非法输入的唯一异常类型，REST 层统一映射为 400 且不留脏数据。
 3. **Transport & MCP Layer (`src/transport/`, `src/mcp/`)**：
    - `rest.js`：纯标准库 HTTP 路由，内置静态资源内存缓存、SSE 实时流（`/api/events`）与认证校验。
@@ -57,7 +59,7 @@
    - `nexus-hook.mjs`：Claude Code 全局 `PreToolUse` 与 `PostToolUse` 钩子，负责写入判冲、排他命令锁推导、命令完工即时释放、`git commit`/`push` 自动释放与 `hookSpecificOutput.additionalContext` 上下文注入。
    - `probe/index.js` & `bridge.js`：支持本机 Hub 探针与远端无状态 Edge 探针的开机自启、端口反查（含纯 `/proc/net/tcp` 容器兜底）与会话快照同步。
 5. **UI & Desktop Client (`src/ui/`, `desktop/`)**：
-   - `src/ui/`：三栏高密度控制台（`会话与防撞`、`协同路由`、`接力与记忆`），真实展示在席会话、独占文件锁、排他命令锁、冲突等待队列、跨机交接工单与工程记忆。
+   - `src/ui/`：三视图控制台（`会话`、`路由`、`接力`），展示在席会话、文件/资源租约、冲突等待、跨机交接工单、工程记忆与本机 CPA 网关健康度；统计与列表共用同一份视图模型，文案只陈述可核验事实。
    - `desktop/`：纯客户端 Electron 托盘外壳，绝不自拉起冲突进程。
 
 ---

@@ -82,7 +82,14 @@
 ### 1. 算力节点与远端会话同步
 - **`GET /api/nodes`**：列出集群内所有常驻算力节点（Hub 与 Edge）及其在线状态。
 - **`POST /api/nodes/heartbeat`**：边缘节点上报心跳。
-- **`POST /api/agents/sync-remote`**：边缘探针（`nexus probe --edge` 或 `nexus bridge`）批量推送远端机器上已验活的 Claude 会话快照。
+- **`POST /api/agents/sync-remote`**：边缘探针（`nexus probe --edge` 或 `nexus bridge`）批量推送远端机器上已验活的 Claude 会话快照；可选 `gateway` 字段随快照上报本机 CPA 健康度，Hub 存入该节点的 `metadata.gateway`。
+
+### 1.1 CPA 网关只读观测
+- **`GET /api/gateway?refresh=1`**：返回本机 CPA（cliproxyapi）管理接口的观测结果，以及各边缘探针上报的同名字段。
+  - 本机字段：`reachable`、`baseUrl`、`unauthorized`、`auth { totalAccounts, enabledAccounts, disabledAccounts, coolingAccounts, failedCount, providers[], recentRequests { success, failed } }`、`config { apiKeyCount, routedModelCount, requestLogEnabled }`、`observedAt`、`cached`；
+  - 节点字段：`peers[] { node_id, display_name, status, last_seen_sec, gateway { reachable, unauthorized, totalAccounts, enabledAccounts, coolingAccounts, providers[], observedAt } }`；
+  - 端点由 `NEXUS_CPA_MGMT_URL` 或 `NEXUS_CPA_HOST` + `NEXUS_CPA_PORT`（默认 `127.0.0.1:8316`）决定，鉴权用 `NEXUS_CPA_MGMT_SECRET` 或 `CPA_MGMT_SECRET`；结果缓存 8 秒；
+  - **只读**：不写入 CPA 配置、不重启容器、不返回凭据明文。Nexus 不参与模型流量转发。
 
 ### 2. 跨机阶段工作交接工单 (Work Handoffs)
 - **`GET /api/handoffs?project_id=default`**：查询当前项目（含同源关联项目）的交接工单列表。
