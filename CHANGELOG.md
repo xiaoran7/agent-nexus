@@ -29,6 +29,12 @@
   - `startDaemon` 支持注入 `cpaGatewayService`，测试可指向假接口而不连宿主机；
   - 修正静态资源测试中指向已删除 CSS 变量的过期断言。
 
+### 部署
+
+- 东京 Hub（`/opt/agent-nexus`，systemd user unit）与三台边缘探针（`portable-pc`、`us-zenix`、`us-zenix99`）全部升级至 v0.3.1，升级前各自保留 `agent-nexus.bak-<时间戳>` 备份。
+- 东京 Hub 通过 systemd drop-in `cpa-gateway.conf` 注入 `NEXUS_CPA_MGMT_URL` / `NEXUS_CPA_MGMT_SECRET`，密钥取自容器环境，不写入仓库；`/api/gateway` 实测读到 28 个账号（25 可用、6 冷却）。
+- 其余节点未配置管理密钥时如实上报“无 CPA”或“鉴权失败”，面板不显示臆造数据。
+
 ---
 
 ## 2026-11-02 全量功能合理性审计与冗余子系统深度瘦身 (v0.3.0)
