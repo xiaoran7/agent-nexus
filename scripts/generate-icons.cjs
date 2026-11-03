@@ -149,32 +149,85 @@ async function main() {
       new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
+          const w = 1024, h = 1024;
           const c1024 = document.createElement('canvas');
-          c1024.width = 1024;
-          c1024.height = 1024;
+          c1024.width = w; c1024.height = h;
           const ctx1024 = c1024.getContext('2d');
-          ctx1024.drawImage(img, 0, 0, 1024, 1024);
+          ctx1024.drawImage(img, 0, 0, w, h);
 
-          const imgData = ctx1024.getImageData(0, 0, 1024, 1024);
-          const d = imgData.data;
-          const threshold = 246;
+          const rawData = ctx1024.getImageData(0, 0, w, h);
+          const raw = rawData.data;
 
-          for (let i = 0; i < d.length; i += 4) {
-            const r = d[i], g = d[i+1], b = d[i+2];
-            const minChannel = Math.min(r, g, b);
-            if (minChannel >= threshold) {
-              d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 0;
+          const outData = ctx1024.createImageData(w, h);
+          const out = outData.data;
+          const threshold = 244;
+
+          for (let i = 0; i < raw.length; i += 4) {
+            const r = raw[i], g = raw[i+1], b = raw[i+2];
+            const minC = Math.min(r, g, b);
+
+            if (minC >= threshold) {
+              out[i] = 0; out[i+1] = 0; out[i+2] = 0; out[i+3] = 0;
             } else {
-              const alphaNorm = 1 - (minChannel / threshold);
-              const alpha = Math.min(1, Math.max(0, Math.pow(alphaNorm, 0.85)));
-              const unblend = (c) => Math.max(0, Math.min(255, Math.round((c - 255 * (1 - alpha)) / alpha)));
-              d[i] = unblend(r);
-              d[i+1] = unblend(g);
-              d[i+2] = unblend(b);
-              d[i+3] = Math.round(alpha * 255);
+              const norm = 1 - (minC / threshold);
+              // 强化笔触透明度饱和曲线，杜绝过淡发虚
+              const alpha = Math.min(1.0, Math.pow(norm, 0.5) * 1.6);
+
+              let ur = Math.max(0, Math.min(255, (r - 255 * (1 - norm)) / Math.max(norm, 0.05)));
+              let ug = Math.max(0, Math.min(255, (g - 255 * (1 - norm)) / Math.max(norm, 0.05)));
+              let ub = Math.max(0, Math.min(255, (b - 255 * (1 - norm)) / Math.max(norm, 0.05)));
+
+              const isGold = (ur > 140 && ug > 80 && ub < 110);
+              if (isGold) {
+                // 暖琥珀金饱和度与亮度增益
+                ur = Math.min(255, Math.round(ur * 1.25 + 25));
+                ug = Math.min(255, Math.round(ug * 1.25 + 15));
+                ub = Math.max(0, Math.round(ub * 0.6));
+              } else {
+                // 青蓝/湖蓝主线条饱和度与明度增益：压低杂色红，提升亮丽青蓝
+                ur = Math.max(0, Math.round(ur * 0.65));
+                ug = Math.min(255, Math.round(ug * 1.35 + 30));
+                ub = Math.min(255, Math.round(ub * 1.35 + 40));
+              }
+
+              out[i] = ur;
+              out[i+1] = ug;
+              out[i+2] = ub;
+              out[i+3] = Math.round(alpha * 255);
             }
           }
-          ctx1024.putImageData(imgData, 0, 0);
+
+          // 1px 笔触丰润膨胀（Dilation），确保缩小至 26px / 32px / 16px 时线条依然清晰饱满
+          const dilatedData = ctx1024.createImageData(w, h);
+          const dil = dilatedData.data;
+
+          for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+              const idx = (y * w + x) * 4;
+              let maxA = out[idx + 3];
+              let bestR = out[idx], bestG = out[idx + 1], bestB = out[idx + 2];
+
+              const neighbors = [
+                ((y - 1) * w + x) * 4,
+                ((y + 1) * w + x) * 4,
+                (y * w + (x - 1)) * 4,
+                (y * w + (x + 1)) * 4
+              ];
+              for (const n of neighbors) {
+                if (out[n + 3] > maxA) {
+                  maxA = out[n + 3];
+                  bestR = out[n]; bestG = out[n + 1]; bestB = out[n + 2];
+                }
+              }
+
+              dil[idx] = bestR;
+              dil[idx + 1] = bestG;
+              dil[idx + 2] = bestB;
+              dil[idx + 3] = Math.max(out[idx + 3], Math.round(maxA * 0.92));
+            }
+          }
+
+          ctx1024.putImageData(dilatedData, 0, 0);
 
           function renderResized(size, overlay = null) {
             const cvs = document.createElement('canvas');
@@ -191,14 +244,14 @@ async function main() {
             return cvs.toDataURL('image/png').split(',')[1];
           }
 
-          const out = {};
+          const outDict = {};
           for (const s of [256, 128, 64, 48, 32, 16]) {
-            out['app_' + s] = renderResized(s);
+            outDict['app_' + s] = renderResized(s);
           }
 
-          out['tray_idle'] = renderResized(32);
+          outDict['tray_idle'] = renderResized(32);
 
-          out['tray_active'] = renderResized(32, (ctx, s) => {
+          outDict['tray_active'] = renderResized(32, (ctx, s) => {
             ctx.beginPath();
             ctx.arc(s - 5.5, s - 5.5, 4.5, 0, Math.PI * 2);
             ctx.fillStyle = '#0f172a';
@@ -209,7 +262,7 @@ async function main() {
             ctx.fill();
           });
 
-          out['tray_busy'] = renderResized(32, (ctx, s) => {
+          outDict['tray_busy'] = renderResized(32, (ctx, s) => {
             ctx.beginPath();
             ctx.arc(s - 5.5, s - 5.5, 4.5, 0, Math.PI * 2);
             ctx.fillStyle = '#0f172a';
@@ -220,13 +273,13 @@ async function main() {
             ctx.fill();
           });
 
-          resolve(out);
+          resolve(outDict);
         };
         img.src = 'data:image/jpeg;base64,${base64Jpg}';
       })
     `;
 
-    console.log('[Icon Generator] Extracting pure alpha channel and generating resolutions...');
+    console.log('[Icon Generator] Extracting high-contrast vibrant alpha channel and generating resolutions...');
     const evalRes = await send('Runtime.evaluate', {
       expression: renderScript,
       awaitPromise: true,
@@ -243,7 +296,7 @@ async function main() {
         console.warn(`[Warning] Generated ${s}x${s} is not RGBA (colorType=${b[25]})`);
       }
       pngBuffers.push({ width: s, height: s, buffer: b });
-      console.log(`[Icon Generator] Generated ${s}x${s} transparent PNG (${b.length} bytes)`);
+      console.log(`[Icon Generator] Generated ${s}x${s} high-contrast transparent PNG (${b.length} bytes)`);
     }
 
     const png256 = pngBuffers[0].buffer;
@@ -278,7 +331,7 @@ async function main() {
     fs.writeFileSync(path.resolve(UI_DIR, 'favicon.svg'), svgContent, 'utf8');
     console.log('[Icon Generator] Saved favicon.svg');
 
-    console.log('[Icon Generator] All icons successfully generated and saved.');
+    console.log('[Icon Generator] All high-contrast icons successfully generated and saved.');
   } finally {
     ws.close();
     edge.kill();
