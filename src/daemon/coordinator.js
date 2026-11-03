@@ -2184,6 +2184,172 @@ export class CoordinatorEngine {
    * 这两张表只用于展示与追溯，无限增长会让快照查询与磁盘占用随会话数线性膨胀。
    * 每个进程每小时最多执行一次，避免每次快照都扫表。
    */
+  /**
+   * 子代理派发登记 (SubagentStart)。
+   *
+   * 只记录真实发生过的事件：没有 SubagentStart 就没有这一行，绝不根据
+   * Agent 工具调用的存在去推测一个子代理。id 由 host/session/agent 三段拼成，
+   * 同一子代理重复上报是幂等的（后台子代理可能被多次唤醒）。
+   */
+  recordAgentSpawn(params = {}) {
+    const now = params.at && Number.isFinite(Number(params.at)) ? Number(params.at) : Date.now();
+    const hostId = normalizeNodeId(params.hostId || params.host_id || this.localNodeId);
+    const sessionId = params.sessionId || params.session_id ? String(params.sessionId || params.session_id) : null;
+    const rawAgentId = params.agentId || params.agent_id;
+    if (!sessionId || !rawAgentId) return null;
+
+    // Hook 载荷里 agent_id 可能带 "agent-" 前缀（文档示例即如此），
+    // 而磁盘上的 meta.json / jsonl 用的是裸 id。有前缀就去掉，保持全链路同一个键。
+    const agentKey = String(rawAgentId).replace(/^agent-/, '');
+    const id = `${hostId}:${sessionId}:${agentKey}`;
+    const projectId = params.projectId || params.project_id || 'default';
+    const parentRaw = params.parentAgentId || params.parent_agent_id || null;
+    const parentAgentId = parentRaw ? String(parentRaw).replace(/^agent-/, '') : null;
+
+    const existing = this._get('SELECT id, status FROM agent_spawns WHERE id = ?', [id]);
+    const agentType = cleanUtf8String(params.agentType || params.agent_type, null);
+    const description = cleanUtf8String(params.description, null);
+    const model = cleanUtf8String(params.model, null);
+    const background = params.runInBackground ?? params.run_in_background;
+    const runInBackground = background === undefined || background === null ? null : (background ? 1 : 0);
+    const depth = Number.isInteger(Number(params.spawnDepth ?? params.spawn_depth))
+      ? Number(params.spawnDepth ?? params.spawn_depth)
+      : (parentAgentId ? 2 : 1);
+
+    if (!existing) {
+      this._run(`
+        INSERT INTO agent_spawns
+          (id, project_id, host_id, session_id, parent_agent_id, parent_session_id,
+           agent_type, description, model, run_in_background, spawn_depth,
+           status, started_at, ended_at, last_seen_at, stop_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, NULL, ?, NULL)
+      `, [id, projectId, hostId, sessionId, parentAgentId, parentAgentId ? null : sessionId,
+          agentType, description, model, runInBackground, depth, now, now]);
+      this.eventBus?.emit?.('agent:spawned', { id, session_id: sessionId, agent_type: agentType, project_id: projectId });
+    } else {
+      // 重复上报只补全元数据，不回退已经开始计时的时间戳。
+      this._run(`
+        UPDATE agent_spawns SET
+          project_id = COALESCE(?, project_id),
+          agent_type = COALESCE(?, agent_type),
+          description = COALESCE(?, description),
+          model = COALESCE(?, model),
+          run_in_background = COALESCE(?, run_in_background),
+          parent_agent_id = COALESCE(?, parent_agent_id),
+          spawn_depth = COALESCE(?, spawn_depth),
+          status = CASE WHEN status = 'done' THEN status ELSE 'running' END,
+          last_seen_at = ?
+        WHERE id = ?
+      `, [projectId, agentType, description, model, runInBackground, parentAgentId, depth, now, id]);
+    }
+    return this._get('SELECT * FROM agent_spawns WHERE id = ?', [id]);
+  }
+
+  /**
+   * 子代理收工登记 (SubagentStop)。
+   *
+   * 这是「已完成」唯一的证据来源——没有收到 SubagentStop 的子代理一律显示
+   * 为运行中，到点转 lost，绝不靠猜来标成功或失败。若此前没收到 SubagentStart
+   * （例如守护重启跨过了一次派发），用转录文件的首条时间戳补上真实开始时间，
+   * 而不是拿当前时刻冒充。
+   */
+  recordAgentStop(params = {}) {
+    const now = params.at && Number.isFinite(Number(params.at)) ? Number(params.at) : Date.now();
+    const hostId = normalizeNodeId(params.hostId || params.host_id || this.localNodeId);
+    const sessionId = params.sessionId || params.session_id ? String(params.sessionId || params.session_id) : null;
+    const rawAgentId = params.agentId || params.agent_id;
+    if (!sessionId || !rawAgentId) return null;
+    const agentKey = String(rawAgentId).replace(/^agent-/, '');
+    const id = `${hostId}:${sessionId}:${agentKey}`;
+
+    const existing = this._get('SELECT id FROM agent_spawns WHERE id = ?', [id]);
+    if (!existing) {
+      const startedAtRaw = Number(params.startedAt || params.started_at);
+      const startedAt = Number.isFinite(startedAtRaw) && startedAtRaw > 0 && startedAtRaw <= now ? startedAtRaw : now;
+      const parentRaw = params.parentAgentId || params.parent_agent_id || null;
+      const parentAgentId = parentRaw ? String(parentRaw).replace(/^agent-/, '') : null;
+      this._run(`
+        INSERT INTO agent_spawns
+          (id, project_id, host_id, session_id, parent_agent_id, parent_session_id,
+           agent_type, description, model, run_in_background, spawn_depth,
+           status, started_at, ended_at, last_seen_at, stop_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'done', ?, ?, ?, ?)
+      `, [id,
+          params.projectId || params.project_id || 'default',
+          hostId, sessionId, parentAgentId, parentAgentId ? null : sessionId,
+          cleanUtf8String(params.agentType || params.agent_type, null),
+          cleanUtf8String(params.description, null),
+          cleanUtf8String(params.model, null),
+          params.runInBackground === true ? 1 : null,
+          Number.isInteger(Number(params.spawnDepth)) ? Number(params.spawnDepth) : (parentAgentId ? 2 : 1),
+          startedAt, now, now,
+          cleanUtf8String(params.stopReason || params.stop_reason, null)]);
+    } else {
+      this._run(`
+        UPDATE agent_spawns SET
+          status = 'done',
+          ended_at = COALESCE(ended_at, ?),
+          last_seen_at = ?,
+          description = COALESCE(description, ?),
+          model = COALESCE(model, ?),
+          stop_reason = COALESCE(?, stop_reason)
+        WHERE id = ?
+      `, [now, now,
+          cleanUtf8String(params.description, null),
+          cleanUtf8String(params.model, null),
+          cleanUtf8String(params.stopReason || params.stop_reason, null),
+          id]);
+    }
+    this.eventBus?.emit?.('agent:spawned', { id, session_id: sessionId, status: 'done' });
+    return this._get('SELECT * FROM agent_spawns WHERE id = ?', [id]);
+  }
+
+  /** 子代理内部发生工具调用时刷新活跃时间与最近动作，供树形卡片显示真实进展。 */
+  touchAgentSpawn(params = {}) {
+    const hostId = normalizeNodeId(params.hostId || params.host_id || this.localNodeId);
+    const sessionId = params.sessionId || params.session_id ? String(params.sessionId || params.session_id) : null;
+    const rawAgentId = params.agentId || params.agent_id;
+    if (!sessionId || !rawAgentId) return null;
+    const id = `${hostId}:${sessionId}:${String(rawAgentId).replace(/^agent-/, '')}`;
+    const now = Date.now();
+    const cleanTool = cleanUtf8String(params.toolName || params.tool || params.lastTool, null);
+    const cleanAction = cleanUtf8String(params.toolAction || params.action || params.lastAction, cleanTool);
+    const cleanTarget = cleanUtf8String(params.toolTarget || params.target || params.lastTarget, null);
+    // 只更新已存在的行：没收到 SubagentStart 就不该凭空造出一条子代理记录。
+    const result = this._run(`
+      UPDATE agent_spawns
+      SET last_seen_at = ?, last_tool = ?, last_action = ?, last_target = ?
+      WHERE id = ? AND status = 'running'
+    `, [now, cleanTool, cleanAction, cleanTarget, id]);
+    return result.changes > 0 ? id : null;
+  }
+
+  /**
+   * 派发树快照：按会话分组返回，父节点是子代理而非会话。
+   *
+   * 只返回近期窗口内的记录，避免看板被历史淹没：运行中的看全部（数量天然有限），
+   * 已结束的只看最近 2 小时，整体封顶 limit 行。
+   */
+  listAgentSpawns({ projectId = null, windowMs = 2 * 3600000, limit = 200, now = Date.now() } = {}) {
+    const clauses = ["(status = 'running' OR started_at >= ?)"];
+    const params = [now - windowMs];
+    if (projectId && projectId !== 'all') {
+      clauses.push('project_id = ?');
+      params.push(projectId);
+    }
+    params.push(limit);
+    return this._all(`
+      SELECT id, project_id, host_id, session_id, parent_agent_id, parent_session_id,
+             agent_type, description, model, run_in_background, spawn_depth,
+             status, started_at, ended_at, last_seen_at, stop_reason,
+             last_tool, last_action, last_target
+      FROM agent_spawns
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY started_at ASC
+      LIMIT ?
+    `, params);
+  }
+
   housekeeping(now = Date.now()) {
     const lastRun = this._lastHousekeepingAt || 0;
     if (now - lastRun < 3600000) return { pruned: false };
@@ -2197,7 +2363,14 @@ export class CoordinatorEngine {
         WHERE created_at < ? AND status IN ('completed', 'aborted', 'released')
           AND id NOT IN (SELECT intent_id FROM leases)
       `).run(cutoff);
-      return { pruned: true, logs: logs.changes, intents: intents.changes };
+      // 子代理记录同样 7 天清理。running 且长时间无更新的行先按「失联」收敛，
+      // 免得一个没等到 SubagentStop 的子代理在库里永远显示"运行中"。
+      this.db.prepare(`
+        UPDATE agent_spawns SET status = 'lost', ended_at = COALESCE(ended_at, last_seen_at)
+        WHERE status = 'running' AND (? - COALESCE(last_seen_at, started_at)) > ?
+      `).run(now, 6 * 3600000);
+      const spawns = this.db.prepare('DELETE FROM agent_spawns WHERE started_at < ?').run(cutoff);
+      return { pruned: true, logs: logs.changes, intents: intents.changes, spawns: spawns.changes };
     } catch {
       return { pruned: false };
     }
@@ -2377,6 +2550,7 @@ export class CoordinatorEngine {
 
     const clusterNodes = this.clusterNodeService ? this.clusterNodeService.listNodes(finalProjectId) : [];
     const activeHandoffs = this.handoffService ? this.handoffService.list(finalProjectId, { limit: 5 }) : [];
+    const agentSpawns = this.buildAgentSpawnTrees({ projectId: finalProjectId, now, liveSessions: agents });
 
     return {
       localNodeId: this.localNodeId,
@@ -2385,8 +2559,100 @@ export class CoordinatorEngine {
       timeline,
       waitQueue,
       clusterNodes,
-      activeHandoffs
+      activeHandoffs,
+      agentSpawns
     };
+  }
+
+  /**
+   * 把派发记录组装成「会话 → 子代理 → 孙代理」的树。
+   *
+   * 关键取舍：父节点永远是另一个子代理，不是会话。会话只是容器，
+   * 我们没有会话之间的从属数据，也不去编造。一级子代理挂到它所属的会话卡片下。
+   */
+  buildAgentSpawnTrees({ projectId = null, now = Date.now(), liveSessions = null } = {}) {
+    const rows = this.listAgentSpawns({ projectId, now });
+    if (rows.length === 0) return [];
+
+    // 会话名沿用看板里同一套去机械名逻辑：拿不到就留空，前端退回会话 id 前缀。
+    const liveBySession = new Map();
+    for (const a of (liveSessions || [])) {
+      if (!a.session_id) continue;
+      const key = `${normalizeNodeId(a.host_id || this.localNodeId)}:${a.session_id}`;
+      if (!liveBySession.has(key)) liveBySession.set(key, a);
+    }
+
+    const nodes = rows.map((r) => {
+      const live = r.status === 'running';
+      return {
+        id: r.id,
+        agent_key: r.id.split(':').pop(),
+        session_id: r.session_id,
+        host_id: r.host_id,
+        parent_agent_id: r.parent_agent_id,
+        project_id: r.project_id,
+        agent_type: r.agent_type,
+        description: r.description,
+        model: r.model,
+        run_in_background: r.run_in_background === 1,
+        spawn_depth: r.spawn_depth || 1,
+        status: r.status,
+        started_at: r.started_at,
+        ended_at: r.ended_at,
+        last_seen_at: r.last_seen_at,
+        last_tool: cleanUtf8String(r.last_tool, null),
+        last_action: cleanUtf8String(r.last_action, null),
+        duration_ms: Math.max(0, (r.ended_at || (live ? now : r.last_seen_at || r.started_at)) - r.started_at),
+        children: []
+      };
+    });
+
+    // 父键匹配同时接受「裸 id」与「全限定 id」两种写法，因为嵌套子代理的
+    // parentAgentId 来自 CLI 的 meta 文件（裸 id），而库里存的是全限定键。
+    const byKey = new Map();
+    for (const n of nodes) byKey.set(n.id, n);
+    const roots = [];
+    for (const n of nodes) {
+      const parent = n.parent_agent_id
+        ? (byKey.get(n.parent_agent_id) || byKey.get(`${n.host_id}:${n.session_id}:${n.parent_agent_id}`))
+        : null;
+      if (parent && parent !== n) parent.children.push(n);
+      else roots.push(n);
+    }
+
+    const sessions = new Map();
+    for (const n of roots) {
+      const key = `${n.host_id}:${n.session_id}`;
+      if (!sessions.has(key)) {
+        sessions.set(key, {
+          session_id: n.session_id,
+          host_id: n.host_id,
+          project_id: n.project_id,
+          agent_id: null,
+          session_name: null,
+          is_live: true,
+          roots: []
+        });
+      }
+      sessions.get(key).roots.push(n);
+    }
+
+    // 会话停靠在哪个 agent 行上：前后端用同一套 id 规则，直接找对应的在席会话。
+    // 没有对应在席行时保留树，但如实标注会话已不在席，不假装它还活着。
+    for (const s of sessions.values()) {
+      const match = liveBySession.get(`${s.host_id}:${s.session_id}`) || null;
+      if (match) {
+        s.agent_id = match.id;
+        s.session_name = match.name || null;
+      }
+      s.is_live = liveSessions === null ? true : Boolean(match);
+    }
+
+    return Array.from(sessions.values()).sort((a, b) => {
+      const at = a.roots[0]?.started_at || 0;
+      const bt = b.roots[0]?.started_at || 0;
+      return bt - at;
+    });
   }
 
   // 7. 实时多 Session 协同图谱 (Live Collaboration Graph)

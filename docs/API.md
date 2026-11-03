@@ -19,7 +19,7 @@
 |---|---|---|---|
 | `GET` | `/health` | 公开 | 健康探针，返回 `{ status: "healthy", service: "agent-nexus", version }` |
 | `GET` | `/api/status` | 公开 | 轻量在席计数（`active_agents_count`, `working`, `waiting`, `idle`, `active_leases`, `waiting_intents`），供桌面托盘轮询 |
-| `GET` | `/api/dashboard` | 需令牌 | 返回指定项目（`?project_id=all` 或具体 ID）的在席 `agents`、`activeClaims`、`waitQueue`、`timeline`、`clusterNodes` 与 `activeHandoffs` |
+| `GET` | `/api/dashboard` | 需令牌 | 返回指定项目（`?project_id=all` 或具体 ID）的在席 `agents`、`activeClaims`、`waitQueue`、`timeline`、`clusterNodes`、`activeHandoffs` 与 `agentSpawns` 派发树 |
 | `GET` | `/api/cockpit` | 需令牌 | 返回协同路由视图所需的聚合数据（`metrics`、`lockContention`、`dashboard`、`collab`） |
 | `GET` | `/api/events` | 需令牌 | SSE 实时事件流（转发 `timeline:event`、`agent:status`、`agent:woken`、`resource:freed`、`memory:saved`、`handoff:created`、`handoff:consumed`、`node:status`） |
 | `GET` | `/api/projects` | 需令牌 | 列出已登记的所有工程及其实时在席会话数（`online_agents_count`） |
@@ -74,6 +74,8 @@
 - **`POST /api/hook/check`**：供 `PreToolUse` 调用，支持文件锁与命令资源锁极速校验、自动补报租约、捎带 `peer_sessions` 同步，并在同源工程存在待接力工单时返回 `handoff_context`。
 - **`POST /api/hook/resource-release`**：供 `PostToolUse` 在排他命令执行完毕后毫秒级释放资源锁。
 - **`POST /api/hook/telemetry`**：供 Hook 上报非阻塞工具活动遥测。
+- **`POST /api/hook/subagent-start`**：供 `SubagentStart` 钩子上报子代理派发事件（`agent_id`, `session_id`, `agent_type`, `description`, `model`, `run_in_background`, `parent_agent_id`, `spawn_depth`）。
+- **`POST /api/hook/subagent-stop`**：供 `SubagentStop` 钩子上报子代理结束事件（`agent_id`, `session_id`, `started_at`, `stop_reason`）。未收到该事件的节点维持 `running`，不做主观推测。
 
 ---
 

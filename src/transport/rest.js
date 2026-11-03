@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { ValidationError, LEASE_POLICY } from '../daemon/coordinator.js';
 import { extractBearer, extractQueryToken, verifySecret, generateToken, readSessionToken } from './auth.js';
 
-let APP_VERSION = '0.3.1';
+let APP_VERSION = '0.3.2';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) APP_VERSION = pkg.version;
@@ -497,7 +497,62 @@ export function createRestRouter(
           pid: data.pid || null,
           livenessVerified: Boolean(data.liveness_verified)
         });
+        // 子代理内部发起的工具调用带着 agent_id。刷新它那一行的活跃时间与最近动作，
+        // 树上的卡片才有真实进展可显示；没登记过的子代理不会被凭空造出来。
+        if (data.subagent_id) {
+          try {
+            coordinator.touchAgentSpawn({
+              agentId: data.subagent_id,
+              sessionId: data.session_id || null,
+              hostId: data.host_id || null,
+              toolName: data.tool || data.tool_name,
+              toolAction: data.action || data.tool_action,
+              toolTarget: data.target || data.tool_target || data.file_path
+            });
+          } catch {}
+        }
         return sendJson(200, result);
+      }
+
+      // 6.2 子代理生命周期上报 (SubagentStart / SubagentStop)
+      // 只接受真实事件：没有 SubagentStart 不建行，没有 SubagentStop 不标完成。
+      if (url.pathname === '/api/hook/subagent-start' && req.method === 'POST') {
+        const data = await readJson();
+        const record = coordinator.recordAgentSpawn({
+          agentId: data.agent_id,
+          parentAgentId: data.parent_agent_id || null,
+          sessionId: data.session_id || null,
+          hostId: data.host_id || null,
+          projectId: data.project_id || 'default',
+          agentType: data.agent_type || null,
+          description: data.description || null,
+          model: data.model || null,
+          runInBackground: data.run_in_background,
+          spawnDepth: data.spawn_depth,
+          at: data.at || null
+        });
+        if (!record) return sendJson(400, { error: 'Missing required field: agent_id / session_id' });
+        return sendJson(200, { success: true, id: record.id });
+      }
+
+      if (url.pathname === '/api/hook/subagent-stop' && req.method === 'POST') {
+        const data = await readJson();
+        const record = coordinator.recordAgentStop({
+          agentId: data.agent_id,
+          parentAgentId: data.parent_agent_id || null,
+          sessionId: data.session_id || null,
+          hostId: data.host_id || null,
+          projectId: data.project_id || 'default',
+          agentType: data.agent_type || null,
+          description: data.description || null,
+          model: data.model || null,
+          spawnDepth: data.spawn_depth,
+          startedAt: data.started_at || null,
+          stopReason: data.stop_reason || null,
+          at: data.at || null
+        });
+        if (!record) return sendJson(400, { error: 'Missing required field: agent_id / session_id' });
+        return sendJson(200, { success: true, id: record.id });
       }
 
       // 6.1 显式命名资源锁接口 (Resource Locks)

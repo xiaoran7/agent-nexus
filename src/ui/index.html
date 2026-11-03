@@ -50,6 +50,15 @@
         </svg>
         <span>路由</span>
       </button>
+      <button class="seg-btn" data-view="agents" id="tab-agents">
+        <svg class="seg-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="5" rx="1.5"></rect>
+          <rect x="2" y="17" width="6" height="5" rx="1.5"></rect>
+          <rect x="16" y="17" width="6" height="5" rx="1.5"></rect>
+          <path d="M12 7v4M5 17v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span>派发</span>
+      </button>
       <button class="seg-btn" data-view="memory" id="tab-memory">
         <svg class="seg-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
@@ -283,7 +292,32 @@
       </section>
     </div>
 
-    <!-- VIEW 3: 接力与记忆 -->
+    <!-- VIEW 3: 派发树 -->
+    <div id="view-agents" class="view-panel">
+      <section class="panel-card spawn-panel-card">
+        <div class="panel-head spawn-head">
+          <div class="spawn-head-left">
+            <span class="panel-title">子代理派发</span>
+            <span class="spawn-summary" id="spawn-summary">—</span>
+          </div>
+          <div class="spawn-legend">
+            <span class="spawn-legend-item"><i class="spawn-legend-dot dot-running"></i>运行中</span>
+            <span class="spawn-legend-item"><i class="spawn-legend-dot dot-done"></i>已完成</span>
+            <span class="spawn-legend-item"><i class="spawn-legend-dot dot-lost"></i>失联</span>
+          </div>
+        </div>
+
+        <div class="spawn-body scroll-container" id="spawn-container">
+          <div class="empty-hint" id="spawn-empty">暂无子代理派发记录</div>
+        </div>
+
+        <div class="spawn-foot" id="spawn-foot">
+          数据来自 SubagentStart / SubagentStop 事件。未收到结束事件的子代理保持运行中，不做推测。
+        </div>
+      </section>
+    </div>
+
+    <!-- VIEW 4: 接力与记忆 -->
     <div id="view-memory" class="view-panel">
       <div class="split-layout" id="memory-split-layout">
         <div class="pane-left" id="pane-memory-left">

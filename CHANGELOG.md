@@ -4,7 +4,33 @@
 
 ---
 
-## 2026-11-03 面板文案诚实化、CPA 网关真实联动与扁平化视觉重构 (v0.3.1)
+## 2026-11-03 子代理派发树 (Agent Spawn Tree) 与事件驱动生命周期上报 (v0.3.2)
+
+参考 Flo (@flohoeller) "Agent tree component" 交互范式，基于 Claude Code 原生 `SubagentStart` / `SubagentStop` 钩子事件与 `.meta.json` 元数据构建子代理派发树，替代低效轮询。严格遵循事实陈述准则：不臆造会话父子关系（会话平级，父节点仅限于上级子代理），不估算不存在的 Token 费用，不猜测成功/失败（仅陈述"运行中"、"已完成"与"失联"）。
+
+### 改了什么
+
+- **数据层新增 `agent_spawns` 真实派发总账 (`src/storage/database.js`)**：
+  - 新增 `agent_spawns` 表（`id` 为 `host:session:agent`，记录 `parent_agent_id`、`agent_type`、`description`、`model`、`run_in_background`、`spawn_depth`、`status`、`started_at`、`ended_at`、`last_tool` 等字段）；
+  - `housekeeping` 自动为 6 小时无更新的未结束子代理收敛为 `lost`（失联），7 天自动清理过期历史记录。
+- **Coordinator 采集与树聚合核心 (`src/daemon/coordinator.js`)**：
+  - 新增 `recordAgentSpawn`（SubagentStart）、`recordAgentStop`（SubagentStop）与 `touchAgentSpawn`（子代理内工具调用刷新）；
+  - 新增 `buildAgentSpawnTrees`：按 `parent_agent_id` 自动拼装嵌套孙代理（如 Explore 挂在 Plan 下），一级子代理锚定在其所属宿主会话，会话之间保持平级；
+  - `/api/dashboard` 快照中透出 `agentSpawns` 数组。
+- **REST 传输层与 Hook 生命周期对接 (`src/transport/rest.js`, `src/hook/nexus-hook.mjs`)**：
+  - 新增 `POST /api/hook/subagent-start` 与 `POST /api/hook/subagent-stop` 接口；
+  - 全局 Hook 读取转录目录下的 `agent-<id>.meta.json` 获取派发时写入的真实 `description` 与 `model`，漏上报时自动以转录首条记录时间戳补全 `started_at`；
+  - Hook 默认开关隔离：`NEXUS_TRACK_AGENTS=1` 启用，未启用时不产生任何网络往返与副作用。
+- **CLI 安装器支持全事件生命周期管理 (`src/installer/index.js`, `src/cli.js`)**：
+  - `nexus hook:install` 幂等纳管 `PreToolUse`、`PostToolUse`、`SubagentStart` 与 `SubagentStop` 四项事件，防止旧安装器覆盖新钩子。
+- **前端新增"派发"树视图 (`src/ui/index.html`, `src/ui/app.js`, `src/ui/style.css`)**：
+  - 顶栏分段导航新增"派发"（`agents`）视图，展示"会话 → 子代理 → 孙代理"层级；
+  - 采用 @ohayou792 扁平视觉准则与参考推文的圆角折线接线器（`spawn-elbow`）和状态关节点（`spawn-joint`）；
+  - 节点仅对刚挂载的新子代理触发 `is-fresh` 入场动画，避免定时刷新时全树反复闪烁；
+  - 状态标识严格基于证据：运行中（蓝色）、已完成（绿色）、失联（黄色），不显示 `$` 费用，不虚构失败原因；
+  - 移动端 375px 自适应收敛（单列舒展，隐藏多余标签）。
+- **自动化测试 (`test/agent-spawns.test.js`)**：
+  - 新增 9 组完整单测，覆盖空上报防幽灵、生命周期状态转移、嵌套层级拼装、漏报首条时间戳兜底、重复上报幂等性、工具活跃刷新与工程隔离；全量测试 283 passed 零失败。
 
 按"最小文案、不许说过头话"的原则重写整个控制台，并把 CPA 网关从"面板上看不见"变成"有真实数据可核验"，同时按外部设计准则把视觉从渐变阴影玻璃风改成扁平表面。
 

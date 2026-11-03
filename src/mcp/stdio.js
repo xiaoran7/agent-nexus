@@ -8,7 +8,7 @@ import { resolveProject } from '../domain/project.js';
 import { ALL_NEXUS_TOOLS, handleMcpTool } from './server.js';
 import { readSessionToken, readRemoteConfig, resolveNexusEndpoint } from '../transport/auth.js';
 
-let MCP_VERSION = '0.3.1';
+let MCP_VERSION = '0.3.2';
 try {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   if (pkg.version) MCP_VERSION = pkg.version;

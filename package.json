@@ -1,6 +1,6 @@
 {
   "name": "@xiaoran7/agent-nexus",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Zero-overhead Multi-Agent Concurrency Coordinator & Cross-Machine Context Relay for Claude Code. Prevents file edit collisions, Git worktree conflicts, and cross-node race conditions.",
   "main": "src/daemon/index.js",
   "type": "module",

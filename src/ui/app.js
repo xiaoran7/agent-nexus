@@ -288,6 +288,11 @@ const dom = {
   gatewayPeers: document.getElementById('gateway-peers'),
   gatewayNote: document.getElementById('gateway-note'),
 
+  // 子代理派发树
+  spawnContainer: document.getElementById('spawn-container'),
+  spawnSummary: document.getElementById('spawn-summary'),
+  viewAgents: document.getElementById('view-agents'),
+
   clusterNodesBar: document.getElementById('cluster-nodes-bar'),
   handoffAlertBanner: document.getElementById('handoff-alert-banner'),
 
@@ -366,6 +371,8 @@ function switchView(viewName) {
     fetchRoutingTopology();
     fetchGateway();
     setTimeout(() => requestAnimationFrame(drawRoutingConnectors), 60);
+  } else if (viewName === 'agents') {
+    fetchDashboard();
   } else if (viewName === 'memory') {
     fetchHandoffs();
     fetchMemories();
@@ -548,6 +555,7 @@ function renderDashboardSnapshot(data) {
   renderActiveAgents(agentViews);
   renderActiveLocks(activeClaims, agents);
   renderLiveTimeline(timeline);
+  renderAgentSpawns(data.agentSpawns || []);
 
   if (data.clusterNodes) renderClusterNodes(data.clusterNodes);
   renderHandoffAlertBanner(data.activeHandoffs || []);
@@ -764,6 +772,183 @@ dom.streamFilterBtns.forEach(btn => {
     renderLiveTimeline(currentTimelineData);
   });
 });
+
+// =============================================================================
+// 子代理派发树
+//
+// 树上的每一项都来自后端的真实派发记录（SubagentStart / SubagentStop）。
+// 状态只有三种，全部有据可查：
+//   running —— 收到了开始事件，还没收到结束事件
+//   done    —— 收到了结束事件
+//   lost    —— 开始后长时间无活动，由后端收敛（界面照实说"失联"）
+// 不显示成本、不猜成功失败：我们没有这些数据。
+// =============================================================================
+let currentAgentSpawns = [];
+// 已经绘制过的节点 id。看板每次轮询都会重渲染整棵树，
+// 只有真的新出现的节点才播入场动画，否则面板每隔几秒闪一次。
+let seenSpawnIds = new Set();
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const totalSec = Math.floor(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min < 60) return sec ? `${min}m ${sec}s` : `${min}m`;
+  const hr = Math.floor(min / 60);
+  const restMin = min % 60;
+  return restMin ? `${hr}h ${restMin}m` : `${hr}h`;
+}
+
+function spawnStatusLabel(status) {
+  if (status === 'done') return '已完成';
+  if (status === 'lost') return '失联';
+  return '运行中';
+}
+
+const AGENT_TYPE_ICON = {
+  Explore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>',
+  Plan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"></path><rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 11h8M8 15h5"></path></svg>',
+  'general-purpose': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>',
+  default: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7.5 12 12l9-4.5L12 3z"></path><path d="M3 16.5 12 21l9-4.5"></path></svg>'
+};
+
+function agentTypeIcon(agentType) {
+  return AGENT_TYPE_ICON[agentType] || AGENT_TYPE_ICON.default;
+}
+
+function toolIcon(tool) {
+  const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
+  switch (tool) {
+    case 'Read': return `<svg ${common}><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"></path><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"></path></svg>`;
+    case 'Grep': return `<svg ${common}><circle cx="11" cy="11" r="6.5"></circle><path d="m20 20-4-4"></path></svg>`;
+    case 'Glob': return `<svg ${common}><path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg>`;
+    case 'Bash': return `<svg ${common}><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>`;
+    case 'Edit': case 'Write': case 'MultiEdit': return `<svg ${common}><path d="M4 20h4l10-10a2.8 2.8 0 1 0-4-4L4 16z"></path></svg>`;
+    case 'WebFetch': case 'WebSearch': return `<svg ${common}><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16M12 4a14 14 0 0 1 0 16 14 14 0 0 1 0-16z"></path></svg>`;
+    default: return `<svg ${common}><path d="M14.5 5.5 18.5 9.5 8 20H4v-4z"></path></svg>`;
+  }
+}
+
+function renderSpawnNode(node, depth, freshIds) {
+  const status = node.status || 'running';
+  const duration = formatDuration(node.duration_ms);
+  const typeLabel = node.agent_type ? escapeHtml(node.agent_type) : '未知类型';
+  const modelLabel = node.model ? escapeHtml(node.model) : null;
+  const isFresh = freshIds.has(node.id);
+
+  const taskLine = node.description
+    ? escapeHtml(node.description)
+    : '<span class="spawn-task-missing">未记录任务描述</span>';
+
+  const toolChip = node.last_tool
+    ? `<span class="spawn-tool" title="${escapeHtml(node.last_action || node.last_tool)}">${toolIcon(node.last_tool)}${escapeHtml(node.last_tool)}</span>`
+    : '';
+
+  const bgChip = node.run_in_background ? '<span class="spawn-flag">后台</span>' : '';
+
+  const childHtml = Array.isArray(node.children) && node.children.length
+    ? `<div class="spawn-children">${node.children.map(c => renderSpawnNode(c, depth + 1, freshIds)).join('')}</div>`
+    : '';
+
+  return `
+    <div class="spawn-node${isFresh ? ' is-fresh' : ''}" data-status="${status}" data-depth="${depth}" data-node-id="${escapeHtml(node.id)}">
+      <div class="spawn-elbow" aria-hidden="true"><i class="spawn-joint"></i></div>
+      <div class="spawn-card">
+        <div class="spawn-card-top">
+          <span class="spawn-icon">${agentTypeIcon(node.agent_type)}</span>
+          <span class="spawn-type">${typeLabel}</span>
+          ${modelLabel ? `<span class="spawn-model">${modelLabel}</span>` : ''}
+          ${bgChip}
+          <span class="spawn-spacer"></span>
+          <span class="spawn-status" data-status="${status}">
+            <i class="spawn-status-dot"></i>${spawnStatusLabel(status)}
+          </span>
+        </div>
+        <div class="spawn-task">${taskLine}</div>
+        <div class="spawn-card-bottom">
+          ${toolChip}
+          <span class="spawn-duration" title="${node.started_at ? new Date(node.started_at).toLocaleString() : ''}">${duration}</span>
+        </div>
+      </div>
+      ${childHtml}
+    </div>
+  `;
+}
+
+function countSpawnNodes(nodes, predicate) {
+  let n = 0;
+  const walk = (list) => {
+    for (const node of (list || [])) {
+      if (predicate(node)) n++;
+      if (node.children) walk(node.children);
+    }
+  };
+  walk(nodes);
+  return n;
+}
+
+function renderAgentSpawns(trees) {
+  if (!dom.spawnContainer) return;
+  currentAgentSpawns = Array.isArray(trees) ? trees : [];
+
+  // 统计必须数子代理节点本身，不是数树。每棵树的根在 roots 里，status 只在节点上。
+  const allNodes = currentAgentSpawns.flatMap(t => (Array.isArray(t.roots) ? t.roots : []));
+  const running = countSpawnNodes(allNodes, n => n.status === 'running');
+  const done = countSpawnNodes(allNodes, n => n.status === 'done');
+  const lost = countSpawnNodes(allNodes, n => n.status === 'lost');
+
+  if (dom.spawnSummary) {
+    const total = running + done + lost;
+    dom.spawnSummary.textContent = total === 0
+      ? '暂无记录'
+      : `${total} 个 · 运行中 ${running} · 完成 ${done}${lost ? ` · 失联 ${lost}` : ''}`;
+  }
+
+  if (currentAgentSpawns.length === 0) {
+    dom.spawnContainer.innerHTML = '<div class="empty-hint" id="spawn-empty">暂无子代理派发记录</div>';
+    seenSpawnIds = new Set();
+    return;
+  }
+
+  // 只给这一轮真正新增的节点播入场动画。
+  const allIds = new Set();
+  const collectIds = (list) => {
+    for (const n of (list || [])) {
+      allIds.add(n.id);
+      if (n.children) collectIds(n.children);
+    }
+  };
+  currentAgentSpawns.forEach(t => collectIds(t.roots));
+  const freshIds = new Set([...allIds].filter(id => !seenSpawnIds.has(id)));
+  seenSpawnIds = allIds;
+
+  dom.spawnContainer.innerHTML = currentAgentSpawns.map((tree) => {
+    const sessionKey = String(tree.session_id || '');
+    const sessionName = tree.session_name
+      ? tree.session_name
+      : (tree.agent_id ? resolveAgentName(tree.agent_id, null) : `会话 ${sessionKey.slice(0, 8)}`);
+    const roots = Array.isArray(tree.roots) ? tree.roots : [];
+    const rootCount = countSpawnNodes(roots, () => true);
+    const liveTag = tree.is_live ? '' : '<span class="spawn-session-flag">会话已离席</span>';
+    const hostTag = tree.host_id && tree.host_id !== 'local' ? `<span class="spawn-session-host">${escapeHtml(tree.host_id)}</span>` : '';
+
+    return `
+      <article class="spawn-tree" data-session="${escapeHtml(sessionKey)}">
+        <header class="spawn-session">
+          <span class="spawn-session-name" title="${escapeHtml(sessionKey)}">${escapeHtml(sessionName)}</span>
+          ${hostTag}
+          ${liveTag}
+          <span class="spawn-spacer"></span>
+          <span class="spawn-session-count">${rootCount} 个子代理</span>
+        </header>
+        <div class="spawn-roots">
+          ${roots.map(r => renderSpawnNode(r, 1, freshIds)).join('')}
+        </div>
+      </article>
+    `;
+  }).join('');
+}
 
 // =============================================================================
 // CPA 网关（只读观测）
@@ -2154,7 +2339,7 @@ const debouncedFetchGateway = debounce(() => fetchGateway(), 400);
 setupPanelResizers();
 
 const initialView = new URLSearchParams(location.search).get('view') || new URLSearchParams(location.search).get('tab');
-if (initialView && ['sessions', 'routing', 'memory'].includes(initialView)) {
+if (initialView && ['sessions', 'routing', 'agents', 'memory'].includes(initialView)) {
   switchView(initialView);
 }
 

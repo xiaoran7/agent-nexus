@@ -1888,6 +1888,365 @@ body.resizing-col { user-select: none; }
 .nexus-modal-hint { font-size: 11px; color: var(--text-3); }
 .nexus-modal-hint code { font-family: var(--font-mono); font-size: 11px; }
 
+/* ===================================================== 子代理派发树 (spawn) */
+
+.spawn-panel-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.spawn-head {
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.spawn-head-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.spawn-summary {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.spawn-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.spawn-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.spawn-legend-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* 状态只用色相区分，形状一致：避免用图标编码状态造成额外噪音 */
+.dot-running { background: var(--accent); }
+.dot-done { background: var(--ok); }
+.dot-lost { background: var(--warn); }
+
+.spawn-body {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.spawn-foot {
+  padding: 10px 20px 14px;
+  border-top: 0.5px solid var(--border-1);
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.spawn-tree {
+  border: 0.5px solid var(--border-1);
+  border-radius: var(--radius-card);
+  background: var(--surface-1);
+  padding: 14px 16px 16px;
+}
+
+.spawn-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 0.5px solid var(--border-1);
+  margin-bottom: 12px;
+}
+
+.spawn-session-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-1);
+  letter-spacing: 0.01em;
+}
+
+.spawn-session-flag {
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--neutral-soft);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.spawn-session-host {
+  font-size: 11px;
+  color: var(--text-3);
+  border: 0.5px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  font-family: var(--font-mono);
+}
+
+.spawn-session-count {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.spawn-spacer { flex: 1 1 auto; }
+
+.spawn-roots {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 每个节点自己的左边留给连接线，右边是卡片 */
+.spawn-node {
+  position: relative;
+  padding-left: 28px;
+}
+
+.spawn-children {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding-left: 6px;
+  /* 子级整体再缩进一档，树干更清楚 */
+  border-left: 0.5px solid var(--border-1);
+  margin-left: 12px;
+}
+
+/* 圆角折线：竖线从上方下来，转 90° 接进卡片。
+   竖线和弧线都锚定在卡片自身的顶边（y = card-top），
+   而不是拉伸到节点容器高度——容器高度随子树增长，用它做基准会把线拉穿整列。 */
+.spawn-elbow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 40px;
+  pointer-events: none;
+}
+
+.spawn-elbow::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: -14px;
+  height: 45px;
+  width: 0.5px;
+  background: var(--border-2);
+}
+
+.spawn-elbow::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 26px;
+  width: 14px;
+  height: 14px;
+  border-left: 0.5px solid var(--border-2);
+  border-bottom: 0.5px solid var(--border-2);
+  border-bottom-left-radius: 9px;
+}
+
+/* 折线与卡片接缝处的小圆点 —— 推文里的关节 */
+.spawn-joint {
+  position: absolute;
+  left: 25px;
+  top: 33px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-2);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px var(--surface-1);
+}
+
+/* 运行中节点的连线与卡片同色系；连线上色调克制，避免整列都在发光 */
+.spawn-node[data-status="running"] > .spawn-elbow::after {
+  border-color: var(--accent);
+  opacity: 0.55;
+}
+
+.spawn-node[data-status="running"] > .spawn-elbow > .spawn-joint {
+  background: var(--accent);
+}
+
+.spawn-node[data-status="done"] > .spawn-elbow > .spawn-joint {
+  background: var(--ok);
+}
+
+.spawn-node[data-status="lost"] > .spawn-elbow > .spawn-joint {
+  background: var(--warn);
+}
+
+/* 一级节点的折线从会话标题处开始，不需要上一段竖线 */
+.spawn-roots > .spawn-node[data-depth="1"]:first-child > .spawn-elbow::before { display: none; }
+
+.spawn-card {
+  border: 0.5px solid var(--border-1);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.spawn-card:hover {
+  border-color: var(--border-2);
+  background: var(--surface-hover);
+}
+
+.spawn-node[data-status="running"] > .spawn-card {
+  border-color: var(--accent-soft);
+}
+
+.spawn-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.spawn-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+
+.spawn-icon svg { width: 14px; height: 14px; }
+
+.spawn-type {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spawn-model {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.spawn-flag {
+  font-size: 11px;
+  color: var(--text-3);
+  border: 0.5px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.spawn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.spawn-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.spawn-status[data-status="running"] { color: var(--accent-text); }
+.spawn-status[data-status="running"] .spawn-status-dot { background: var(--accent); }
+.spawn-status[data-status="done"] { color: var(--ok); }
+.spawn-status[data-status="lost"] { color: var(--warn); }
+
+.spawn-task {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.spawn-task-missing { color: var(--text-3); font-style: normal; }
+
+.spawn-card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 16px;
+}
+
+.spawn-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.spawn-tool svg { width: 12px; height: 12px; }
+
+.spawn-duration {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* 新节点淡入 + 连接线向下生长：只对刚挂载的新节点且在动效允许时播放 */
+@media (prefers-reduced-motion: no-preference) {
+  .spawn-node.is-fresh {
+    animation: spawn-fade-in 240ms ease-out both;
+  }
+  .spawn-node.is-fresh > .spawn-elbow::after {
+    animation: spawn-elbow-grow 280ms ease-out both;
+    transform-origin: top left;
+  }
+}
+
+@keyframes spawn-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spawn-elbow-grow {
+  from { opacity: 0; clip-path: inset(0 100% 0 0); }
+  to { opacity: 1; clip-path: inset(0 0 0 0); }
+}
+
+@media (max-width: 680px) {
+  .spawn-body { padding: 12px; }
+  .spawn-tree { padding: 12px; }
+  .spawn-node { padding-left: 22px; }
+  .spawn-legend { display: none; }
+  .spawn-model { display: none; }
+}
+
 /* --------------------------------------------------------- responsiveness */
 
 @media (max-width: 900px) {

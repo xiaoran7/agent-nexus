@@ -132,7 +132,33 @@ export function createDatabase(customPath = null) {
       updated_at INTEGER NOT NULL
     );
 
-    -- 9. 跨机与跨会话工作交接簿 (PowerContext Work Handoffs)
+    -- 9. 子代理派发记录 (Subagent Spawns)
+    -- 一行 = 一次真实的 SubagentStart 事件。没有这行就不显示，绝不推测。
+    -- 树形归属由 parent_agent_id 表达：一级子代理的父是空（父即会话本身），
+    -- 嵌套子代理的父是派发它的那个子代理。会话级的父子关系不存在，也绝不臆造。
+    CREATE TABLE IF NOT EXISTS agent_spawns (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default',
+      host_id TEXT NOT NULL DEFAULT 'local',
+      session_id TEXT NOT NULL,
+      parent_agent_id TEXT,
+      parent_session_id TEXT,
+      agent_type TEXT,
+      description TEXT,
+      model TEXT,
+      run_in_background INTEGER,
+      spawn_depth INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'running',
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      last_seen_at INTEGER,
+      last_tool TEXT,
+      last_action TEXT,
+      last_target TEXT,
+      stop_reason TEXT
+    );
+
+    -- 10. 跨机与跨会话工作交接簿 (PowerContext Work Handoffs)
     CREATE TABLE IF NOT EXISTS project_handoffs (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default',
@@ -176,6 +202,10 @@ export function createDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_cluster_nodes_status ON cluster_nodes(status, last_heartbeat);
     CREATE INDEX IF NOT EXISTS idx_project_handoffs_proj_status ON project_handoffs(project_id, status);
     CREATE INDEX IF NOT EXISTS idx_project_handoffs_created ON project_handoffs(project_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_spawns_session ON agent_spawns(session_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_spawns_project ON agent_spawns(project_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_spawns_status ON agent_spawns(status, last_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_spawns_parent ON agent_spawns(parent_agent_id);
   `);
 
   return db;

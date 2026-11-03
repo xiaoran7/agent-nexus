@@ -6,7 +6,7 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveProject } from '../domain/project.js';
@@ -469,6 +469,112 @@ function notifyResourceRelease(payload) {
 
 let stdoutHandoffEmitted = false;
 
+// =============================================================================
+// 子代理生命周期 (SubagentStart / SubagentStop)
+// =============================================================================
+// 启用开关：默认关闭，NEXUS_TRACK_AGENTS=1 才上报。关闭时不发任何请求，
+// 也不改变原有 Hook 行为，回退只要删掉这个环境变量。
+const TRACK_AGENTS = process.env.NEXUS_TRACK_AGENTS === '1';
+
+/**
+ * 从子代理转录文件读取元数据。
+ *
+ * SubagentStart 的载荷只有 agent_id 和 agent_type，没有描述和模型。
+ * 但 CLI 会在派发时就写好 <agentId>.meta.json，里面有 description / model /
+ * parentAgentId / spawnDepth —— 这些正是树上要显示的真实信息。
+ * 读不到就留空，界面上显示"未记录"，绝不拿 agent_type 冒充任务描述。
+ */
+function readSubagentMeta(transcriptPath, agentId) {
+  if (!transcriptPath || !agentId) return null;
+  try {
+    const dir = join(dirname(transcriptPath), 'subagents');
+    const key = String(agentId).replace(/^agent-/, '');
+    const candidates = [`agent-${key}.meta.json`, `${key}.meta.json`];
+    for (const name of candidates) {
+      const full = join(dir, name);
+      if (!existsSync(full)) continue;
+      const parsed = JSON.parse(readFileSync(full, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') continue;
+      return {
+        description: typeof parsed.description === 'string' ? parsed.description : null,
+        model: typeof parsed.model === 'string' ? parsed.model : null,
+        parentAgentId: typeof parsed.parentAgentId === 'string' ? parsed.parentAgentId : null,
+        spawnDepth: Number.isInteger(parsed.spawnDepth) ? parsed.spawnDepth : null,
+        agentType: typeof parsed.agentType === 'string' ? parsed.agentType : null,
+        requestShape: typeof parsed.requestShape === 'string' ? parsed.requestShape : null
+      };
+    }
+  } catch {}
+  return null;
+}
+
+/** 子代理转录文件的首条记录时间 = 真实开工时刻，用于补全漏掉 SubagentStart 的情况。 */
+function readSubagentStartTime(transcriptPath, agentId) {
+  if (!transcriptPath || !agentId) return null;
+  try {
+    const key = String(agentId).replace(/^agent-/, '');
+    const full = join(dirname(transcriptPath), 'subagents', `agent-${key}.jsonl`);
+    if (!existsSync(full)) return null;
+    // 只读文件开头几 KB：首条记录就是最老的一条，没必要读整份转录。
+    const fd = openSync(full, 'r');
+    try {
+      const buf = Buffer.alloc(8192);
+      const n = readSync(fd, buf, 0, buf.length, 0);
+      const head = buf.subarray(0, n).toString('utf8');
+      const line = head.split('\n').find((l) => l.trim());
+      if (!line) return null;
+      const first = JSON.parse(line.replace(/\}[\s\S]*$/, '}'));
+      const ts = Date.parse(first?.timestamp);
+      return Number.isFinite(ts) ? ts : null;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * SubagentStart / SubagentStop 上报。
+ *
+ * 这是子代理唯一的可信来源：只有在 CLI 真的开始/结束一个子代理时才会触发，
+ * 不是我们去猜哪个 Agent 工具调用产生了子代理。失败静默，绝不阻塞工具调用。
+ */
+function notifySubagentEvent(endpoint, payload, extra) {
+  return new Promise((resolvePromise) => {
+    try {
+      const data = JSON.stringify({ ...payload, ...extra });
+      const req = doRequest({
+        host: HOST,
+        port: PORT,
+        path: endpoint,
+        method: 'POST',
+        family: 4,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {})
+        },
+        timeout: IS_REMOTE_HUB ? 2500 : 1200
+      }, (res) => {
+        let buf = '';
+        res.on('data', (c) => buf += c);
+        res.on('end', () => {
+          try { resolvePromise(JSON.parse(buf)); } catch { resolvePromise({ success: true }); }
+        });
+      });
+      req.on('error', () => resolvePromise({ success: false, offline: true }));
+      req.on('timeout', () => {
+        req.destroy();
+        resolvePromise({ success: false, timeout: true });
+      });
+      req.write(data);
+      req.end();
+    } catch {
+      resolvePromise(false);
+    }
+  });
+}
+
 function printPendingHandoff(h, sessionId = 'global', hookEventName = 'PreToolUse') {
   if (!h || !h.id) return;
   const cachePath = join(homedir(), '.agent-nexus', '.notified-handoffs.json');
@@ -632,6 +738,37 @@ async function main() {
   const identity = resolveAgentIdentity(payload);
   const projectInfo = resolveProject(workspaceDir);
 
+  // 0.0 子代理生命周期事件：先于一切判冲逻辑处理，直接上报后退出。
+  //     这两个事件不携带 tool_name，也不该触发任何租约动作。
+  const hookEvent = payload.hook_event_name || payload.event || null;
+  if (TRACK_AGENTS && (hookEvent === 'SubagentStart' || hookEvent === 'SubagentStop')) {
+    const subId = payload.agent_id || null;
+    const meta = readSubagentMeta(payload.transcript_path, subId);
+    const common = {
+      agent_id: subId,
+      session_id: payload.session_id || identity.sessionId,
+      host_id: NODE_ID,
+      project_id: projectInfo.projectId,
+      agent_type: payload.agent_type || meta?.agentType || null,
+      description: meta?.description || null,
+      model: meta?.model || null,
+      parent_agent_id: meta?.parentAgentId || null,
+      spawn_depth: meta?.spawnDepth || null,
+      run_in_background: meta?.requestShape === 'background',
+      at: Date.now()
+    };
+    if (hookEvent === 'SubagentStart') {
+      await notifySubagentEvent('/api/hook/subagent-start', common);
+    } else {
+      await notifySubagentEvent('/api/hook/subagent-stop', {
+        ...common,
+        started_at: readSubagentStartTime(payload.transcript_path, subId),
+        stop_reason: payload.stop_hook_active ? 'hook_active' : null
+      });
+    }
+    process.exit(0);
+  }
+
   // 0. PostToolUse 闭环处理：命令执行完毕后的毫秒级排他资源释放与提交收尾
   const isPost = process.argv.includes('--post') ||
                  payload.hook_event_name === 'PostToolUse' ||
@@ -733,6 +870,7 @@ async function main() {
         project_id: projectInfo.projectId,
         pid: identity.pid,
         liveness_verified: identity.livenessVerified,
+        ...(payload.agent_id ? { subagent_id: payload.agent_id } : {}),
         ...(peerSessions ? { peer_sessions: peerSessions } : {})
       });
       if (telRes && telRes.pendingHandoff) {
