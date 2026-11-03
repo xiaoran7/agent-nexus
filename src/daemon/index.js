@@ -38,7 +38,8 @@ export function startDaemon(options = {}) {
   coordinator.handoffService = handoffService;
   const projectRegistry = new ProjectRegistry(db, coordinator);
   // CPA 网关只读观测：默认关闭于测试环境，避免单测去连宿主机的真实管理端口。
-  const cpaGatewayService = isRunningInTest ? null : getSharedCpaGatewayService();
+  const cpaGatewayService = options.cpaGatewayService
+    ?? (isRunningInTest ? null : getSharedCpaGatewayService());
 
   try {
     coordinator.syncClaudeSessions();

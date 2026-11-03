@@ -23,8 +23,10 @@
   - 会话统计与列表改用同一份视图模型 `buildAgentViews`，消除状态条与列表数量对不上的假象；状态徽章已表达的信息不再在下一行重复；
   - 新增网关统计胶囊与网关面板（管理接口地址、账号/可用/冷却、供应商、各节点网关、近期请求），无数据时显示"本机未发现 CPA，探针也未上报网关"，不再假装在线；
   - 视觉按外部准则重构：去梯度、去阴影、去模糊与发光，0.5px 边框，6/8/12px 圆角，仅 400/500 字重，正文不小于 11px，全部颜色走 CSS 变量，暗色与亮色均为一等公民。
-- **工程与测试 (`scripts/ui-preview.mjs`, `.claude/launch.json`, `test/notification.test.js`)**：
+- **工程与测试 (`scripts/ui-preview.mjs`, `.claude/launch.json`, `test/notification.test.js`, `test/cpa-gateway.test.js`)**：
   - 新增 `nexus-ui-demo` 预览入口（内存库、固定令牌、网关观测不触外网），供本地核对界面与接口联动；
+  - 新增 `test/cpa-gateway.test.js`：覆盖鉴权成功/失败、端口不可达、8 秒缓存与 `force` 刷新，以及 `/api/gateway` 的节点聚合（Hub 不混入 peers）；
+  - `startDaemon` 支持注入 `cpaGatewayService`，测试可指向假接口而不连宿主机；
   - 修正静态资源测试中指向已删除 CSS 变量的过期断言。
 
 ---
