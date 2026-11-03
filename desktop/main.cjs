@@ -293,18 +293,18 @@ async function startStatusPolling() {
       const waitingCount = data.waiting_intents || 0;
       const activeAgents = data.active_agents || data.active_agents_count || 0;
 
-      let tip = 'Agent-Nexus: 待命就绪 (无活跃锁)';
+      let tip = 'Agent-Nexus: 待命就绪 (无文件锁)';
       let iconPath = icons.idle;
-      let statusText = `在线 (${activeAgents} 个智能体)`;
+      let statusText = `在线 (${activeAgents} 个会话)`;
 
       if (waitingCount > 0) {
-        tip = `Agent-Nexus: 冲突等待中 (${waitingCount} 个排队 / ${activeLeases} 个活跃锁)`;
+        tip = `Agent-Nexus: 冲突等待中 (${waitingCount} 个排队 / ${activeLeases} 个文件锁)`;
         iconPath = icons.busy;
         statusText = `等待排队: ${waitingCount}`;
       } else if (activeLeases > 0) {
-        tip = `Agent-Nexus: 协同施工中 (${activeLeases} 个活跃锁 / ${activeAgents} 个活跃智能体)`;
+        tip = `Agent-Nexus: 协同保护中 (${activeLeases} 个文件锁 / ${activeAgents} 个活跃会话)`;
         iconPath = icons.active;
-        statusText = `施工中: ${activeLeases} 个锁`;
+        statusText = `协同中: ${activeLeases} 个文件锁`;
       }
 
       if (tray) {

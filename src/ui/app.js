@@ -604,7 +604,7 @@ function buildAgentViews(agents, claims) {
     const isWorking = a.lifecycle_state === 'working' || a.status === 'running' || owned.length > 0;
     const isWaiting = !isWorking && (a.lifecycle_state === 'waiting' || a.status === 'waiting' || !!a.blocked_reason);
     const uiState = isWorking ? 'working' : (isWaiting ? 'waiting' : 'idle');
-    const badgeText = uiState === 'working' ? '施工' : (uiState === 'waiting' ? '排队' : '待命');
+    const badgeText = uiState === 'working' ? '修改中' : (uiState === 'waiting' ? '排队' : '待命');
     views.push({ ...a, resolvedClaims: owned, uiState, badgeText });
   }
   return views;
@@ -711,7 +711,7 @@ function renderActiveAgents(validAgents) {
 
         ${claims.length > 0 ? `
           <div class="agent-card-footer">
-            租约 ${claims.length} 项：${claims.map(c => escapeHtml(c.claim_target.split(/[\/\\]/).pop())).join('，')}
+            锁定 ${claims.length} 项：${claims.map(c => escapeHtml(c.claim_target.split(/[\/\\]/).pop())).join('，')}
           </div>
         ` : ''}
       </div>
@@ -735,7 +735,7 @@ function renderActiveLocks(claims, agents) {
       dom.conflictAlert.style.display = 'flex';
       const waiter = waitingAgents[0];
       const waiterName = escapeHtml(formatAgentDisplayName(waiter.name, waiter.id));
-      const reason = escapeHtml(waiter.blocked_reason || '等待租约释放');
+      const reason = escapeHtml(waiter.blocked_reason || '等待文件解锁');
       dom.conflictAlert.innerHTML = `
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
@@ -748,7 +748,7 @@ function renderActiveLocks(claims, agents) {
   }
 
   if (!claims || claims.length === 0) {
-    dom.locksContainer.innerHTML = makeEmptyHint('lock', '当前没有生效的租约', '会话编辑代码时自动声明文件锁');
+    dom.locksContainer.innerHTML = makeEmptyHint('lock', '当前没有生效的文件锁', '会话编辑代码时自动独占锁定');
     return;
   }
 
@@ -801,14 +801,14 @@ function renderLiveTimeline(timeline) {
   }
 
   if (filtered.length === 0) {
-    dom.timelineContainer.innerHTML = makeEmptyHint('stream', '暂无协调事件', '冲突拦截与租约释放流水将在此流式展现');
+    dom.timelineContainer.innerHTML = makeEmptyHint('stream', '暂无协同事件', '冲突拦截与文件解锁流水将在此实时展现');
     return;
   }
 
   dom.timelineContainer.innerHTML = filtered.map(item => {
     const timeStr = escapeHtml(new Date(item.created_at).toTimeString().split(' ')[0]);
     let badgeClass = 'badge-grant';
-    let badgeLabel = '授权';
+    let badgeLabel = '锁定';
 
     const evt = item.event_type || '';
     if (evt.includes('blocked') || evt.includes('conflict') || evt.includes('waiting')) {
@@ -816,7 +816,7 @@ function renderLiveTimeline(timeline) {
       badgeLabel = '拦截';
     } else if (evt.includes('release') || evt.includes('freed')) {
       badgeClass = 'badge-release';
-      badgeLabel = '释放';
+      badgeLabel = '解锁';
     } else if (evt.includes('handoff')) {
       badgeClass = '';
       badgeLabel = '接力';
@@ -1611,16 +1611,16 @@ function renderRoutingDiagram(cockpitData) {
   if (dom.routingSummaryMeta) {
     const cpaSnippet = currentGatewayStatus?.auth ? ` · CPA 算力 ${currentGatewayStatus.auth.enabledAccounts}/${currentGatewayStatus.auth.totalAccounts}` : '';
     dom.routingSummaryMeta.textContent =
-      `${validAgents.length} 会话 · ${activeClaims.length + resourceLocks.length} 租约 · ${waitQueue.length} 等待${cpaSnippet}`;
+      `${validAgents.length} 会话 · ${activeClaims.length + resourceLocks.length} 项锁定 · ${waitQueue.length} 处等待${cpaSnippet}`;
   }
   if (dom.badgeSessionsCount) dom.badgeSessionsCount.textContent = validAgents.length;
 
   if (dom.hubStatusText) {
     if (waitQueue.length > 0) {
-      dom.hubStatusText.textContent = `仲裁中 · ${waitQueue.length} 处等待`;
+      dom.hubStatusText.textContent = `协调中 · ${waitQueue.length} 处等待`;
       dom.hubStatusDot?.classList.add('dot-waiting');
     } else {
-      dom.hubStatusText.textContent = '租约仲裁';
+      dom.hubStatusText.textContent = '协同调度';
       dom.hubStatusDot?.classList.remove('dot-waiting');
     }
   }
@@ -1649,7 +1649,7 @@ function renderRoutingDiagram(cockpitData) {
 
         let statusBadge = '<span class="session-status-tag status-idle"><span class="dot"></span>待命</span>';
         if (a.uiState === 'working') {
-          statusBadge = '<span class="session-status-tag status-working"><span class="dot"></span>施工</span>';
+          statusBadge = '<span class="session-status-tag status-working"><span class="dot"></span>修改中</span>';
         } else if (a.uiState === 'waiting') {
           statusBadge = '<span class="session-status-tag status-waiting"><span class="dot"></span>排队</span>';
         }
@@ -1675,7 +1675,7 @@ function renderRoutingDiagram(cockpitData) {
             ${(toolSafe || claimsCount > 0) ? `
             <div class="route-card-footer">
               ${toolSafe ? `<span class="route-action-tag"><code>${toolSafe}</code></span>` : '<span></span>'}
-              ${claimsCount > 0 ? `<span class="route-leases-tag">${claimsCount} 项租约</span>` : ''}
+              ${claimsCount > 0 ? `<span class="route-leases-tag">${claimsCount} 项锁定</span>` : ''}
             </div>` : ''}
           </div>
         `;
@@ -1690,7 +1690,7 @@ function renderRoutingDiagram(cockpitData) {
     let targetsHtml = '';
 
     if (activeClaims.length > 0) {
-      targetsHtml += `<div class="target-group-label">文件租约 ${activeClaims.length}</div>`;
+      targetsHtml += `<div class="target-group-label">文件锁定 ${activeClaims.length}</div>`;
       activeClaims.forEach(c => {
         const rawPath = c.claim_target || c.path || '';
         const pathSafe = escapeHtml(rawPath);
@@ -1714,7 +1714,7 @@ function renderRoutingDiagram(cockpitData) {
                 <span class="target-file-name">${escapeHtml(pathInfo.name)}</span>
                 ${pathInfo.dir ? `<span class="target-file-dir">${escapeHtml(pathInfo.dir)}</span>` : ''}
               </div>
-              <span class="target-status-badge badge-locked">租约</span>
+              <span class="target-status-badge badge-locked">已锁定</span>
             </div>
             <div class="target-card-meta">
               <span class="target-holder" title="${agentSafe}">${holderDisplay}</span>
@@ -1761,8 +1761,8 @@ function renderRoutingDiagram(cockpitData) {
     if (waitQueue.length > 0) {
       targetsHtml += `<div class="target-group-label">等待队列 ${waitQueue.length}</div>`;
       waitQueue.forEach(w => {
-        const summarySafe = escapeHtml(w.summary || w.target || '等待租约释放');
-        const reasonSafe = escapeHtml(w.blocked_reason || '等待前序租约释放');
+        const summarySafe = escapeHtml(w.summary || w.target || '等待文件解锁');
+        const reasonSafe = escapeHtml(w.blocked_reason || '等待前序操作解锁');
         const agentSafe = escapeHtml(w.agent_id);
         const waiterDisplay = escapeHtml(resolveAgentName(w.agent_id, w.agent_name));
         const resKey = `res:wait:${escapeHtml(w.intent_id || w.agent_id)}`;
@@ -1792,7 +1792,7 @@ function renderRoutingDiagram(cockpitData) {
     }
 
     if (!targetsHtml) {
-      targetsHtml = makeEmptyHint('lock', '暂无活跃租约', '当前没有资源被锁定或等待');
+      targetsHtml = makeEmptyHint('lock', '暂无文件锁定', '当前没有文件被独占或排队');
     }
     dom.routingTargetsContainer.innerHTML = targetsHtml;
   }
@@ -1963,12 +1963,12 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
     const rawTs = item.created_at || item.timestamp;
     const time = rawTs ? new Date(rawTs).toLocaleTimeString() : new Date().toLocaleTimeString();
 
-    if (type.includes('grant') || type.includes('claim') || desc.includes('拿到租约') || desc.includes('声明')) {
+    if (type.includes('grant') || type.includes('claim') || desc.includes('拿到租约') || desc.includes('声明') || desc.includes('锁定')) {
       decisions.push({
         type: 'grant',
         time,
-        badge: '授权',
-        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 获得租约`,
+        badge: '锁定',
+        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 锁定文件`,
         detail: escapeHtml(desc)
       });
     } else if (type.includes('conflict') || type.includes('intercept') || type.includes('blocked') || type.includes('waiting') || desc.includes('冲突') || desc.includes('拦截') || desc.includes('WAITING')) {
@@ -1979,12 +1979,12 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
         title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 写入被拦截`,
         detail: escapeHtml(desc)
       });
-    } else if (type.includes('freed') || type.includes('release') || desc.includes('释放') || desc.includes('PostToolUse')) {
+    } else if (type.includes('freed') || type.includes('release') || desc.includes('释放') || desc.includes('解锁') || desc.includes('PostToolUse')) {
       decisions.push({
         type: 'release',
         time,
-        badge: '释放',
-        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 释放租约`,
+        badge: '解锁',
+        title: `<strong class="decision-agent" title="${escapeHtml(agent)}">${agentDisplay}</strong> 释放文件锁`,
         detail: escapeHtml(desc)
       });
     }
@@ -1996,8 +1996,8 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
       decisions.push({
         type: 'grant',
         time: new Date().toLocaleTimeString(),
-        badge: '授权',
-        title: `<strong class="decision-agent" title="${escapeHtml(c.agent_id)}">${escapeHtml(resolveAgentName(c.agent_id, c.agent_name))}</strong> 持有租约`,
+        badge: '锁定',
+        title: `<strong class="decision-agent" title="${escapeHtml(c.agent_id)}">${escapeHtml(resolveAgentName(c.agent_id, c.agent_name))}</strong> 锁定中`,
         detail: `<code>${escapeHtml(pathInfo.name)}</code> <span class="decision-path-dir">${escapeHtml(pathInfo.dir)}</span>`
       });
     });
@@ -2008,7 +2008,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
         time: new Date().toLocaleTimeString(),
         badge: '拦截',
         title: `<strong class="decision-agent" title="${escapeHtml(w.agent_id)}">${escapeHtml(resolveAgentName(w.agent_id, w.agent_name))}</strong> 排队中`,
-        detail: `<code>${escapeHtml(pathInfo.name)}</code> 等待释放`
+        detail: `<code>${escapeHtml(pathInfo.name)}</code> 等待解锁`
       });
     });
   }
@@ -2020,7 +2020,7 @@ function renderRoutingDecisions(timeline, activeClaims, waitQueue) {
   if (dom.decisionsCountBadge) dom.decisionsCountBadge.textContent = String(filtered.length);
 
   if (filtered.length === 0) {
-    dom.routingDecisionsStream.innerHTML = makeEmptyHint('stream', '暂无裁决记录', '冲突拦截与授权释放流水将在此留痕');
+    dom.routingDecisionsStream.innerHTML = makeEmptyHint('stream', '暂无调度记录', '冲突拦截与文件解锁动态将在此实时展现');
     return;
   }
 

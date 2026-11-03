@@ -19,7 +19,7 @@
 
 | 核心诉求 / 业务模块 | 关键源码入口 | 权威单测验证 |
 |---|---|---|
-| **资源冲突判决与等待唤醒** | `src/daemon/coordinator.js` | `test/comprehensive.test.js` |
+| **资源冲突协调与等待唤醒** | `src/daemon/coordinator.js` | `test/comprehensive.test.js` |
 | **Git Worktree 共同根与相对化对齐 (`crewmates`)** | `src/domain/project.js` | `test/project.test.js` |
 | **常驻算力节点拓扑与边缘心跳** | `src/domain/cluster-nodes.js`, `src/probe/index.js` | `test/probe.test.js`, `test/cluster-handoff.test.js` |
 | **跨机阶段工作交接工单 (`Handoff`)** | `src/domain/handoff.js` | `test/cluster-handoff.test.js` |

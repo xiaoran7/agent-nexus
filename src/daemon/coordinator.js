@@ -2803,7 +2803,7 @@ export class CoordinatorEngine {
           source: c.agent_id,
           target: resKey,
           type: 'holds_lease',
-          label: `持有租约 (~${Math.max(0, Math.ceil((c.expires_at - now) / 1000))}s)`
+          label: `锁定中 (~${Math.max(0, Math.ceil((c.expires_at - now) / 1000))}s)`
         });
       } else if (c.intent_status === 'waiting') {
         edges.push({

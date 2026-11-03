@@ -24,7 +24,7 @@
       <div class="brand" title="Agent-Nexus 算力集群协同中枢">
         <img class="brand-icon" src="/icon.png" width="28" height="28" alt="Nexus" />
         <span class="brand-name">Nexus</span>
-        <span class="brand-version">v0.3.3</span>
+        <span class="brand-version">v0.3.5</span>
       </div>
       <div class="status-capsule" title="协调服务连接状态">
         <span class="pulse-dot" id="live-dot"></span>
@@ -94,19 +94,19 @@
 
   <div class="status-ribbon">
     <div class="ribbon-stats">
-      <div class="stat-pill pill-working" title="持有租约、正在改文件的会话">
+      <div class="stat-pill pill-working" title="正在修改文件的会话">
         <span class="pill-dot"></span>
-        <span class="pill-label">施工</span>
+        <span class="pill-label">修改中</span>
         <b id="stat-working" class="pill-num">0</b>
       </div>
-      <div class="stat-pill pill-waiting" title="因冲突正在排队的会话">
+      <div class="stat-pill pill-waiting" title="因文件被锁定正在排队的会话">
         <span class="pill-dot"></span>
         <span class="pill-label">排队</span>
         <b id="stat-waiting" class="pill-num">0</b>
       </div>
-      <div class="stat-pill pill-locks" title="当前生效的文件与资源租约">
+      <div class="stat-pill pill-locks" title="当前生效的文件锁与资源锁">
         <span class="pill-dot"></span>
-        <span class="pill-label">租约</span>
+        <span class="pill-label">文件锁</span>
         <b id="stat-locks" class="pill-num">0</b>
       </div>
       <div class="stat-pill pill-spawns" id="stat-spawns-pill" title="子代理派发树（点击查看）" onclick="switchToSpawnsView()" style="cursor: pointer;">
@@ -147,12 +147,12 @@
 
           <section class="panel-card flex-locks" id="section-locks">
             <div class="panel-head">
-              <span class="panel-title">租约</span>
+              <span class="panel-title">文件锁</span>
               <span class="panel-meta" id="locks-meta">0 项</span>
             </div>
             <div id="conflict-alert" class="conflict-banner" style="display: none;"></div>
             <div class="scroll-container" id="locks-container">
-              <div class="empty-hint">当前没有生效的租约</div>
+              <div class="empty-hint">当前没有生效的文件锁</div>
             </div>
           </section>
         </div>
@@ -203,8 +203,8 @@
     <div id="view-routing" class="view-panel">
       <section class="panel-card routing-panel-card">
         <div class="panel-head routing-head">
-          <span class="panel-title">会话与租约路由</span>
-          <span class="panel-meta" id="routing-summary-meta">0 会话 · 0 租约 · 0 等待</span>
+          <span class="panel-title">会话与文件锁定</span>
+          <span class="panel-meta" id="routing-summary-meta">0 会话 · 0 项锁定 · 0 处等待</span>
         </div>
 
         <div class="routing-canvas-wrapper" id="routing-canvas-wrapper">
@@ -240,7 +240,7 @@
                   <div class="hub-status-strip">
                     <div class="hub-status-indicator">
                       <span class="pulse-dot-sm" id="hub-status-dot"></span>
-                      <span id="hub-status-text">租约仲裁</span>
+                      <span id="hub-status-text">协同调度</span>
                     </div>
                     <div class="hub-cpa-indicator" id="hub-cpa-indicator" title="CPA 算力网关（只读观测）">
                       <span class="pulse-dot-sm" id="hub-cpa-dot"></span>
@@ -257,11 +257,11 @@
 
             <div class="routing-lane lane-targets" id="lane-targets">
               <div class="lane-header">
-                <span class="lane-title">租约与等待</span>
+                <span class="lane-title">文件锁与排队</span>
                 <span class="lane-badge" id="badge-targets-count">0</span>
               </div>
               <div class="lane-content scroll-container" id="routing-targets-container">
-                <div class="empty-hint">无租约</div>
+                <div class="empty-hint">无文件锁</div>
               </div>
             </div>
           </div>
@@ -279,18 +279,18 @@
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
               </button>
-              <span class="decisions-title">裁决记录</span>
+              <span class="decisions-title">调度记录</span>
               <span class="decisions-badge" id="decisions-count-badge">0</span>
             </div>
             <div class="decisions-filters">
               <button class="d-filter-btn active" data-filter="all">全部</button>
-              <button class="d-filter-btn" data-filter="grant">授权</button>
+              <button class="d-filter-btn" data-filter="grant">锁定</button>
               <button class="d-filter-btn" data-filter="intercept">拦截</button>
-              <button class="d-filter-btn" data-filter="release">释放</button>
+              <button class="d-filter-btn" data-filter="release">解锁</button>
             </div>
           </div>
           <div class="decisions-stream scroll-container" id="routing-decisions-stream">
-            <div class="empty-hint">暂无裁决</div>
+            <div class="empty-hint">暂无记录</div>
           </div>
         </div>
       </section>
