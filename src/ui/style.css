@@ -1403,6 +1403,15 @@ body.resizing-col { user-select: none; }
   flex: none;
 }
 
+.hub-avatar .hub-brand-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: drop-shadow(0 1.5px 5px rgba(14, 165, 233, 0.45));
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 .hub-info { min-width: 0; flex: 1 1 auto; }
 
 .hub-title-row { display: flex; align-items: center; gap: 6px; }
@@ -1433,9 +1442,13 @@ body.resizing-col { user-select: none; }
 .hub-status-strip {
   padding-top: 9px;
   border-top: 0.5px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.hub-status-indicator {
+.hub-status-indicator,
+.hub-cpa-indicator {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1445,6 +1458,10 @@ body.resizing-col { user-select: none; }
 
 .hub-status-indicator.dot-waiting .pulse-dot-sm,
 #hub-status-dot.dot-waiting { background: var(--warn); }
+
+#hub-cpa-dot.dot-online { background: var(--success); }
+#hub-cpa-dot.dot-warning { background: var(--warn); }
+#hub-cpa-dot.dot-offline { background: var(--text-3); opacity: 0.6; }
 
 .hub-card-footer {
   display: flex;

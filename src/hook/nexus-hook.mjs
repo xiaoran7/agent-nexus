@@ -472,9 +472,9 @@ let stdoutHandoffEmitted = false;
 // =============================================================================
 // 子代理生命周期 (SubagentStart / SubagentStop)
 // =============================================================================
-// 启用开关：默认关闭，NEXUS_TRACK_AGENTS=1 才上报。关闭时不发任何请求，
-// 也不改变原有 Hook 行为，回退只要删掉这个环境变量。
-const TRACK_AGENTS = process.env.NEXUS_TRACK_AGENTS === '1';
+// 启用开关：默认开启子代理生命周期追踪，自动上报派发树。
+// 若需关闭，可设置环境变量 NEXUS_TRACK_AGENTS=0。
+const TRACK_AGENTS = process.env.NEXUS_TRACK_AGENTS !== '0';
 
 /**
  * 从子代理转录文件读取元数据。

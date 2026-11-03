@@ -271,6 +271,9 @@ const dom = {
   hubEndpoint: document.getElementById('hub-endpoint'),
   hubStatusText: document.getElementById('hub-status-text'),
   hubStatusDot: document.getElementById('hub-status-dot'),
+  hubCpaDot: document.getElementById('hub-cpa-dot'),
+  hubCpaText: document.getElementById('hub-cpa-text'),
+  hubCpaIndicator: document.getElementById('hub-cpa-indicator'),
   routingTargetsContainer: document.getElementById('routing-targets-container'),
   badgeTargetsCount: document.getElementById('badge-targets-count'),
   routingDecisionsPanel: document.getElementById('routing-decisions-panel'),
@@ -1056,6 +1059,40 @@ function gatewayAccountLabel(status) {
   return `${auth.enabledAccounts}/${auth.totalAccounts}`;
 }
 
+function updateHubCpaDisplay(status) {
+  if (!dom.hubCpaText) return;
+  const reachable = Boolean(status?.reachable);
+  const unauthorized = Boolean(status?.unauthorized);
+  const auth = status?.auth || null;
+  const peers = Array.isArray(status?.peers) ? status.peers : [];
+  const peersUp = peers.filter(p => p.gateway?.reachable && !p.gateway?.unauthorized && p.gateway?.enabledAccounts != null);
+
+  if (reachable && !unauthorized && auth) {
+    const topP = auth.providers?.[0] ? ` · ${auth.providers[0].name}` : '';
+    dom.hubCpaText.textContent = `CPA 算力: ${auth.enabledAccounts}/${auth.totalAccounts} 账号可用${topP}`;
+    dom.hubCpaDot?.classList.remove('dot-offline', 'dot-warning');
+    dom.hubCpaDot?.classList.add('dot-online');
+    if (dom.hubCpaIndicator) {
+      dom.hubCpaIndicator.title = `CPA 接口: ${status.baseUrl}\n可用: ${auth.enabledAccounts}/${auth.totalAccounts} | 冷却: ${auth.coolingAccounts || 0}\n近期请求: ${auth.recentRequests?.success || 0} 成功 / ${auth.recentRequests?.failed || 0} 失败`;
+    }
+  } else if (peersUp.length > 0) {
+    dom.hubCpaText.textContent = `CPA 算力: 远端 ${peersUp.length} 节点在线`;
+    dom.hubCpaDot?.classList.remove('dot-offline', 'dot-warning');
+    dom.hubCpaDot?.classList.add('dot-online');
+    if (dom.hubCpaIndicator) {
+      dom.hubCpaIndicator.title = `远端 ${peersUp.length} 个节点运行 CPA 算力网关`;
+    }
+  } else if (reachable && unauthorized) {
+    dom.hubCpaText.textContent = 'CPA 算力: 鉴权失败';
+    dom.hubCpaDot?.classList.remove('dot-online');
+    dom.hubCpaDot?.classList.add('dot-warning');
+  } else {
+    dom.hubCpaText.textContent = 'CPA 算力: 未检测到网关';
+    dom.hubCpaDot?.classList.remove('dot-online');
+    dom.hubCpaDot?.classList.add('dot-offline');
+  }
+}
+
 function renderGateway(status) {
   const reachable = Boolean(status?.reachable);
   const unauthorized = Boolean(status?.unauthorized);
@@ -1147,13 +1184,21 @@ function renderGateway(status) {
       dom.gatewayNote.textContent = `近期无请求记录 · ${observed}`;
     }
   }
+
+  updateHubCpaDisplay(status);
+  if (lastClusterNodes && dom.clusterNodesBar) {
+    renderClusterNodes(lastClusterNodes);
+  }
 }
 
 // =============================================================================
 // 集群节点
 // =============================================================================
+let lastClusterNodes = null;
+
 function renderClusterNodes(nodes) {
   if (!dom.clusterNodesBar) return;
+  lastClusterNodes = nodes;
   if (!Array.isArray(nodes) || nodes.length === 0) {
     dom.clusterNodesBar.innerHTML = '';
     return;
@@ -1168,9 +1213,9 @@ function renderClusterNodes(nodes) {
     const roleSafe = isHub ? 'Hub' : 'Edge';
     const timeDiff = Math.max(0, Math.round((Date.now() - (node.last_heartbeat || Date.now())) / 1000));
 
-    const gw = node.metadata?.gateway;
+    const gw = node.metadata?.gateway || (isHub && currentGatewayStatus?.reachable && currentGatewayStatus.auth ? currentGatewayStatus.auth : null);
     let gwText = '';
-    if (gw && gw.reachable && !gw.unauthorized && gw.enabledAccounts != null) {
+    if (gw && gw.reachable !== false && !gw.unauthorized && gw.enabledAccounts != null) {
       gwText = `<span class="node-chip-gw" title="该节点 CPA 账号池">${gw.enabledAccounts}/${gw.totalAccounts}</span>`;
     }
 
@@ -1564,8 +1609,9 @@ function renderRoutingDiagram(cockpitData) {
   const validAgents = buildAgentViews(rawAgents, [...activeClaims, ...resourceLocks]);
 
   if (dom.routingSummaryMeta) {
+    const cpaSnippet = currentGatewayStatus?.auth ? ` · CPA 算力 ${currentGatewayStatus.auth.enabledAccounts}/${currentGatewayStatus.auth.totalAccounts}` : '';
     dom.routingSummaryMeta.textContent =
-      `${validAgents.length} 会话 · ${activeClaims.length + resourceLocks.length} 租约 · ${waitQueue.length} 等待`;
+      `${validAgents.length} 会话 · ${activeClaims.length + resourceLocks.length} 租约 · ${waitQueue.length} 等待${cpaSnippet}`;
   }
   if (dom.badgeSessionsCount) dom.badgeSessionsCount.textContent = validAgents.length;
 
@@ -1578,6 +1624,8 @@ function renderRoutingDiagram(cockpitData) {
       dom.hubStatusDot?.classList.remove('dot-waiting');
     }
   }
+
+  updateHubCpaDisplay(currentGatewayStatus);
 
   // 会话列
   if (dom.routingSessionsContainer) {

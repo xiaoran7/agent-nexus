@@ -104,7 +104,7 @@ export function installClaudeHook(customClaudeDir = null) {
   if (results.some((r) => r.added || r.upgraded)) {
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
     console.log(`[Agent-Nexus] Installed PreToolUse / PostToolUse / SubagentStart / SubagentStop hooks (${settingsPath})`);
-    console.log(`[Agent-Nexus] Subagent tracking is opt-in: set NEXUS_TRACK_AGENTS=1 to report it.`);
+    console.log(`[Agent-Nexus] Subagent tracking is active by default (set NEXUS_TRACK_AGENTS=0 to disable).`);
   } else {
     console.log(`[Agent-Nexus] Coding Assistant hooks already installed.`);
   }
