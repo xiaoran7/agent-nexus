@@ -1325,8 +1325,9 @@ function renderRoutingDiagram(cockpitData) {
         const resolvedName = resolveAgentName(a.id, a.name);
         const nameSafe = escapeHtml(resolvedName);
         const providerSafe = escapeHtml(a.provider || (a.id.includes('claude') ? 'Claude' : 'Agent'));
-        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || (a.uiState === 'idle' ? '待命' : '执行中'));
-        const toolSafe = escapeHtml(a.last_tool || a.last_action || (a.uiState === 'working' ? 'file:edit' : 'idle'));
+        // 没有真实意图就留空，状态徽章已经说明在做什么，不补占位话术。
+        const intentSafe = escapeHtml(a.current_intent_summary || a.current_intent || '');
+        const toolSafe = a.last_tool || a.last_action ? escapeHtml(a.last_tool || a.last_action) : '';
         const claimsCount = a.resolvedClaims.length;
         const projName = getProjectDisplayName(a.project_id, a.workspace_dir);
         const projSafe = escapeHtml(projName);
@@ -1351,17 +1352,19 @@ function renderRoutingDiagram(cockpitData) {
               </div>
               ${statusBadge}
             </div>
+            ${intentSafe ? `
             <div class="route-card-intent" title="${intentSafe}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 20h9"></path>
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
               </svg>
               <span>${intentSafe}</span>
-            </div>
+            </div>` : ''}
+            ${(toolSafe || claimsCount > 0) ? `
             <div class="route-card-footer">
-              <span class="route-action-tag"><code>${toolSafe}</code></span>
-              <span class="route-leases-tag">${claimsCount > 0 ? `${claimsCount} 项租约` : '无租约'}</span>
-            </div>
+              ${toolSafe ? `<span class="route-action-tag"><code>${toolSafe}</code></span>` : '<span></span>'}
+              ${claimsCount > 0 ? `<span class="route-leases-tag">${claimsCount} 项租约</span>` : ''}
+            </div>` : ''}
           </div>
         `;
       }).join('');
