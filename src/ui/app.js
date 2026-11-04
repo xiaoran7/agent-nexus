@@ -881,7 +881,7 @@ function formatDuration(ms) {
 
 function spawnStatusLabel(status) {
   if (status === 'done') return '已完成';
-  if (status === 'lost') return '失联';
+  if (status === 'lost') return '已中断';
   return '运行中';
 }
 
@@ -981,7 +981,7 @@ function renderAgentSpawns(trees) {
     const total = running + done + lost;
     dom.spawnSummary.textContent = total === 0
       ? '暂无记录'
-      : `${total} 个 · 运行中 ${running} · 完成 ${done}${lost ? ` · 失联 ${lost}` : ''}`;
+      : `${total} 个 · 运行中 ${running} · 完成 ${done}${lost ? ` · 已中断 ${lost}` : ''}`;
   }
 
   if (currentAgentSpawns.length === 0) {

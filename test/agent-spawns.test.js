@@ -199,4 +199,43 @@ test('子代理派发树 (agent spawns)', async (t) => {
     const all = (await call('GET', '/api/dashboard?project_id=all')).body;
     assert.equal(all.agentSpawns.length, 2);
   });
+
+  await t.test('宿主会话离席后，派发树回补历史名称并自动将 running 子代理收敛为 lost', async (t2) => {
+    const { daemon, call } = await startTestDaemon(t2);
+
+    // 1. 模拟一个曾经在线的历史会话，登记了真实名称
+    daemon.coordinator.registerAgent({
+      id: 'claude-sess-blog',
+      session_id: 'sess-blog',
+      name: 'zenix99 博客项目',
+      provider: 'claude',
+      projectId: 'proj-blog'
+    });
+    // 会话进入离席状态
+    daemon.coordinator.db.prepare("UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE session_id = 'sess-blog'").run();
+
+    // 2. 该会话离席前派发了一个子代理，但因进程异常退出没能触发 SubagentStop
+    await call('POST', '/api/hook/subagent-start', {
+      agent_id: 'sub-explorer',
+      session_id: 'sess-blog',
+      agent_type: 'Explore',
+      description: '离席前未退出的探测任务',
+      project_id: 'proj-blog'
+    });
+
+    const dashboard = (await call('GET', '/api/dashboard?project_id=proj-blog')).body;
+    assert.equal(dashboard.agentSpawns.length, 1);
+    const tree = dashboard.agentSpawns[0];
+
+    // 会话虽然不在席，但名字必须成功回补，不能退化为纯代码/UUID
+    assert.equal(tree.is_live, false, '宿主会话应标注为已离席');
+    assert.equal(tree.session_name, 'zenix99 博客项目', '离席会话应能从历史表回溯真实中文名');
+
+    // 依附于该离席进程的子代理，状态必须自动收敛为 lost，不能继续显示 running
+    assert.equal(tree.roots.length, 1);
+    const orphanNode = tree.roots[0];
+    assert.equal(orphanNode.status, 'lost', '离席会话名下的未收工子代理应自动收敛为 lost');
+    assert.ok(orphanNode.ended_at !== null, '失联子代理应有截至结束时间');
+    assert.ok(orphanNode.duration_ms >= 0);
+  });
 });

@@ -792,7 +792,7 @@ export class CoordinatorEngine {
     // 45 秒宽限可容忍十几帧漏检；本帧还在、只是没验活的会话同样算「见过」，不消耗宽限。
     if (fullSnapshot) {
       const existingRows = this.db.prepare(`
-        SELECT id, project_id, pid, liveness_verified_at FROM agents
+        SELECT id, session_id, project_id, pid, liveness_verified_at FROM agents
         WHERE host_id = ? AND provider = 'claude' AND status != 'departed'
       `).all(cleanHost);
       for (const row of existingRows) {
@@ -810,6 +810,13 @@ export class CoordinatorEngine {
           scope: 'all'
         });
         this.db.prepare(`UPDATE agents SET status = 'departed', liveness_verified_at = NULL WHERE id = ?`).run(row.id);
+        if (row.session_id) {
+          this.db.prepare(`
+            UPDATE agent_spawns
+            SET status = 'lost', ended_at = COALESCE(ended_at, last_seen_at, ?)
+            WHERE session_id = ? AND status = 'running'
+          `).run(now, row.session_id);
+        }
         this.eventBus?.emit?.('agent:status', { agent_id: row.id, host_id: cleanHost, status: 'departed' });
         departed.push(row.id);
       }
@@ -1792,7 +1799,7 @@ export class CoordinatorEngine {
       //    注册表管道刚验证过的会话不受 10 分钟门禁限制：它确实活着，只是暂时没调用工具。
       //    远端会话若仍持有活跃租约也不提前标记 departed，等租约正常释放或到期。
       const unconfirmedAgents = this.db.prepare(`
-        SELECT id, pid, host_id, last_heartbeat, liveness_verified_at,
+        SELECT id, session_id, pid, host_id, last_heartbeat, liveness_verified_at,
                (SELECT count(*) FROM leases l WHERE l.agent_id = agents.id AND l.expires_at > ?) as active_leases_count
         FROM agents
         WHERE status IN ('running', 'waiting', 'idle') AND (? - last_heartbeat) > 120000
@@ -1806,6 +1813,13 @@ export class CoordinatorEngine {
         const alive = verified || hasRemoteLease || (isLocal && ag.pid && isPidAlive(ag.pid) && heartbeatAge <= 600000);
         if (!alive) {
           this.db.prepare(`UPDATE agents SET status = 'departed' WHERE id = ?`).run(ag.id);
+          if (ag.session_id) {
+            this.db.prepare(`
+              UPDATE agent_spawns
+              SET status = 'lost', ended_at = COALESCE(ended_at, last_seen_at, ?)
+              WHERE session_id = ? AND status = 'running'
+            `).run(now, ag.session_id);
+          }
           this.eventBus?.emit?.('agent:status', { agent_id: ag.id, host_id: ag.host_id || this.localNodeId, status: 'departed' });
         } else if (isLocal && ag.pid) {
           this.db.prepare(`UPDATE agents SET last_heartbeat = ? WHERE id = ?`).run(now, ag.id);
@@ -2641,11 +2655,47 @@ export class CoordinatorEngine {
     // 没有对应在席行时保留树，但如实标注会话已不在席，不假装它还活着。
     for (const s of sessions.values()) {
       const match = liveBySession.get(`${s.host_id}:${s.session_id}`) || null;
+      let hist = null;
       if (match) {
         s.agent_id = match.id;
         s.session_name = match.name || null;
+      } else {
+        // 会话已不在在线列表，从 agents 历史表中回查最后记录的真实名称与状态
+        hist = this._get(
+          'SELECT id, name, status FROM agents WHERE host_id = ? AND session_id = ? ORDER BY last_heartbeat DESC LIMIT 1',
+          [s.host_id, s.session_id]
+        );
+        if (hist) {
+          s.agent_id = hist.id;
+          s.session_name = hist.name || null;
+        }
       }
-      s.is_live = liveSessions === null ? true : Boolean(match);
+
+      const isConfirmedDeparted = Boolean(hist && hist.status === 'departed');
+      s.is_live = liveSessions === null
+        ? true
+        : (match ? true : (!isConfirmedDeparted && s.roots.some(r => (now - (r.last_seen_at || r.started_at)) < 120_000)));
+
+      // 若宿主会话明确已离席，或者子代理在该离席会话下已停止心跳，将其收敛为 lost
+      if (isConfirmedDeparted || !s.is_live) {
+        const convergeLost = (nodeList) => {
+          for (const node of (nodeList || [])) {
+            if (node.status === 'running') {
+              const age = now - (node.last_seen_at || node.started_at);
+              if (isConfirmedDeparted || age >= 120_000) {
+                node.status = 'lost';
+                const cutoff = node.ended_at || node.last_seen_at || node.started_at;
+                node.ended_at = cutoff;
+                node.duration_ms = Math.max(0, cutoff - node.started_at);
+              }
+            }
+            if (node.children && node.children.length > 0) {
+              convergeLost(node.children);
+            }
+          }
+        };
+        convergeLost(s.roots);
+      }
     }
 
     return Array.from(sessions.values()).sort((a, b) => {
