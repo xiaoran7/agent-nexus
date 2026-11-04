@@ -2,7 +2,7 @@
 // 只用于在浏览器里核对界面与接口联动，不写磁盘、不占生产端口。
 import { startDaemon } from '../src/daemon/index.js';
 
-const port = Number(process.env.NEXUS_PREVIEW_PORT || 4400);
+const port = Number(process.env.NEXUS_PREVIEW_PORT || 4420);
 process.env.NEXUS_PORT = String(port);
 process.env.NEXUS_HOST = '127.0.0.1';
 process.env.NEXUS_ADMIN_TOKEN = 'nexus-preview-token';
