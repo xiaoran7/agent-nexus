@@ -2469,43 +2469,109 @@ body.resizing-col { user-select: none; }
 .agent-spawns-link-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding: 0 7px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  border: 0.5px solid rgba(56, 189, 248, 0.25);
+  gap: 4.5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
-  transition: transform var(--tr-fast), background var(--tr-fast), border-color var(--tr-fast);
+  border: 0.5px solid transparent;
+  transition: transform var(--tr-fast), background var(--tr-fast), border-color var(--tr-fast), box-shadow var(--tr-fast);
 }
 
-.agent-spawns-link-btn:hover {
+.agent-spawns-link-btn.is-running {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.agent-spawns-link-btn.is-running:hover {
   transform: translateY(-1px);
-  background: rgba(56, 189, 248, 0.22);
+  background: rgba(56, 189, 248, 0.24);
   border-color: var(--accent);
+  box-shadow: 0 2px 8px -2px rgba(56, 189, 248, 0.3);
+}
+
+.agent-spawns-link-btn.is-done {
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-color: var(--border-1);
+}
+
+.agent-spawns-link-btn.is-done:hover {
+  transform: translateY(-1px);
+  background: var(--surface-hover);
+  border-color: var(--border-2);
+  color: var(--text-1);
 }
 
 .agent-spawns-link-btn:active {
   transform: scale(0.96);
 }
 
+.spawns-btn-icon {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.spawns-btn-label {
+  line-height: 1;
+}
+
+.spawns-btn-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.spawns-btn-num-done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  border: 0.5px solid var(--border-1);
+}
+
 .seg-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 5px;
-  border-radius: 10px;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5.5px;
+  border-radius: 999px;
   background: var(--accent);
   color: #ffffff;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   line-height: 1;
-  margin-left: 5px;
+  margin-left: 6px;
 }
 
 .pill-spawns {
@@ -2517,6 +2583,12 @@ body.resizing-col { user-select: none; }
   transform: translateY(-1px);
   border-color: var(--accent);
   background: var(--surface-hover);
+}
+
+.pill-spawns.has-running {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .highlight-target {

@@ -570,15 +570,22 @@ function renderDashboardSnapshot(data) {
   const waitingCount = agentViews.filter(a => a.uiState === 'waiting').length;
 
   const allSpawnNodes = (data.agentSpawns || []).flatMap(t => (Array.isArray(t.roots) ? t.roots : []));
+  const runningSpawns = countSpawnNodes(allSpawnNodes, n => n.status === 'running');
   const totalSpawns = countSpawnNodes(allSpawnNodes, () => true);
 
   if (dom.statWorking) dom.statWorking.textContent = workingCount;
   if (dom.statWaiting) dom.statWaiting.textContent = waitingCount;
   if (dom.statLocks) dom.statLocks.textContent = activeClaims.length;
-  if (dom.statSpawns) dom.statSpawns.textContent = totalSpawns;
+  if (dom.statSpawns) {
+    dom.statSpawns.textContent = runningSpawns;
+    if (dom.statSpawnsPill) {
+      dom.statSpawnsPill.title = `子代理派发 · ${runningSpawns} 运行中 · 累计 ${totalSpawns} 个（点击查看）`;
+      dom.statSpawnsPill.classList.toggle('has-running', runningSpawns > 0);
+    }
+  }
   if (dom.tabSpawnsBadge) {
-    if (totalSpawns > 0) {
-      dom.tabSpawnsBadge.textContent = totalSpawns;
+    if (runningSpawns > 0) {
+      dom.tabSpawnsBadge.textContent = runningSpawns;
       dom.tabSpawnsBadge.style.display = 'inline-flex';
     } else {
       dom.tabSpawnsBadge.style.display = 'none';
@@ -676,18 +683,36 @@ function renderActiveAgents(validAgents) {
     const hostSafe = a.is_remote && a.host_id ? escapeHtml(a.host_id) : '';
     const showHost = Boolean(hostSafe) && (!showProj || !projName.includes(`[${a.host_id}]`));
     const spawnTree = (currentAgentSpawns || []).find(t => t.session_id === a.id || t.agent_id === a.id || t.session_name === a.name);
-    const spawnCount = spawnTree && Array.isArray(spawnTree.roots) ? countSpawnNodes(spawnTree.roots, () => true) : 0;
-    const spawnBtn = spawnCount > 0 ? `
-      <button class="agent-spawns-link-btn" onclick="switchToSpawnsView('${escapeHtml(spawnTree.session_id || a.id)}')" title="查看该会话的子代理派发树">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="9" y="2" width="6" height="5" rx="1.5"></rect>
-          <rect x="2" y="17" width="6" height="5" rx="1.5"></rect>
-          <rect x="16" y="17" width="6" height="5" rx="1.5"></rect>
-          <path d="M12 7v4M5 17v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"></path>
-        </svg>
-        <span>派发树 ${spawnCount}</span>
-      </button>
-    ` : '';
+    const runningSpawns = spawnTree && Array.isArray(spawnTree.roots) ? countSpawnNodes(spawnTree.roots, n => n.status === 'running') : 0;
+    const totalSpawns = spawnTree && Array.isArray(spawnTree.roots) ? countSpawnNodes(spawnTree.roots, () => true) : 0;
+    let spawnBtn = '';
+    if (runningSpawns > 0) {
+      spawnBtn = `
+        <button class="agent-spawns-link-btn is-running" onclick="switchToSpawnsView('${escapeHtml(spawnTree.session_id || a.id)}')" title="查看派发树 · 当前 ${runningSpawns} 个正在运行（累计 ${totalSpawns}）">
+          <svg class="spawns-btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="2" width="6" height="5" rx="1.5"></rect>
+            <rect x="2" y="17" width="6" height="5" rx="1.5"></rect>
+            <rect x="16" y="17" width="6" height="5" rx="1.5"></rect>
+            <path d="M12 7v4M5 17v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          <span class="spawns-btn-label">派发中</span>
+          <span class="spawns-btn-num">${runningSpawns}</span>
+        </button>
+      `;
+    } else if (totalSpawns > 0) {
+      spawnBtn = `
+        <button class="agent-spawns-link-btn is-done" onclick="switchToSpawnsView('${escapeHtml(spawnTree.session_id || a.id)}')" title="查看派发树 · 任务已全部完成（共 ${totalSpawns} 项）">
+          <svg class="spawns-btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="2" width="6" height="5" rx="1.5"></rect>
+            <rect x="2" y="17" width="6" height="5" rx="1.5"></rect>
+            <rect x="16" y="17" width="6" height="5" rx="1.5"></rect>
+            <path d="M12 7v4M5 17v-2a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          <span class="spawns-btn-label">派发树</span>
+          <span class="spawns-btn-num-done">${totalSpawns}</span>
+        </button>
+      `;
+    }
 
     return `
       <div class="agent-card-item is-${a.uiState}">
@@ -1211,19 +1236,30 @@ function renderClusterNodes(nodes) {
     const isHub = node.role === 'hub';
     const nameSafe = escapeHtml(node.display_name || node.id);
     const roleSafe = isHub ? 'Hub' : 'Edge';
+    const roleClass = isHub ? 'role-hub' : 'role-edge';
     const timeDiff = Math.max(0, Math.round((Date.now() - (node.last_heartbeat || Date.now())) / 1000));
 
     const gw = node.metadata?.gateway || (isHub && currentGatewayStatus?.reachable && currentGatewayStatus.auth ? currentGatewayStatus.auth : null);
     let gwText = '';
     if (gw && gw.reachable !== false && !gw.unauthorized && gw.enabledAccounts != null) {
-      gwText = `<span class="node-chip-gw" title="该节点 CPA 账号池">${gw.enabledAccounts}/${gw.totalAccounts}</span>`;
+      gwText = `
+        <span class="node-chip-gw" title="该节点 CPA 账号池：${gw.enabledAccounts} 可用 / ${gw.totalAccounts} 总计">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span>${gw.enabledAccounts}/${gw.totalAccounts}</span>
+        </span>
+      `;
     }
 
     return `
       <div class="node-chip ${statusClass}" title="节点 ${escapeHtml(node.id)} · ${escapeHtml(node.platform || 'node')} · 心跳 ${timeDiff}s 前">
         <span class="node-status-dot"></span>
         <span class="node-chip-name">${nameSafe}</span>
-        <span class="node-chip-role">${roleSafe}</span>
+        <span class="node-chip-role ${roleClass}">${roleSafe}</span>
         ${gwText}
       </div>
     `;
