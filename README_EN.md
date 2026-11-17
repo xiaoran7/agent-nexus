@@ -27,6 +27,12 @@
 
 ---
 
+## Screenshot
+
+![Agent-Nexus live dashboard showing a file lock, a queued session, and a pending handoff](docs/screenshots/session-coordination.png)
+
+Captured from a running local Hub with demo sessions. Codex holds the file lock, Claude Code queues for the same file, and a handoff to a Linux node is ready to claim.
+
 ## Quick Start
 
 ### 1. Run via npx or Source

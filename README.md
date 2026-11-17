@@ -27,6 +27,12 @@ Agent-Nexus 专为解决多并发 AI 编程会话与跨机开发环境下的**�
 
 ---
 
+## 使用截图
+
+![Agent-Nexus 会话面板显示文件锁、冲突排队与待认领接力](docs/screenshots/session-coordination.png)
+
+在本地运行 Hub 并用示例会话声明同一文件的修改意图。面板显示 Codex 持有文件锁、Claude Code 排队等待，以及发往 Linux 节点的接力任务。
+
 ## 启动与验证
 
 ### 1. 免安装启动或源码运行
